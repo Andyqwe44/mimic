@@ -9,7 +9,7 @@
  * Game-agnostic: no game-specific knowledge. Pure token → OS event translation.
  */
 #pragma once
-#include "../input/input.hpp"
+#include "../../input/src/input.hpp"
 #include <vector>
 #include <string>
 

@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
-#include "../common/types.hpp"
+#include "../../common/types.hpp"
 
 struct FrameBuffer {
     int width = 0;

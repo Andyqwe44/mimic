@@ -10,10 +10,10 @@
  */
 #include "agent.hpp"
 #include "action_mapper.hpp"
-#include "../common/signals.hpp"
-#include "../capture/capture.hpp"
-#include "../capture/preprocess.hpp"
-#include "../input/input.hpp"
+#include "../../common/signals.hpp"
+#include "../../capture/src/capture.hpp"
+#include "../../capture/src/preprocess.hpp"
+#include "../../input/src/input.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
   #define WIN32_LEAN_AND_MEAN

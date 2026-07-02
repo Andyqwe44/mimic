@@ -6,45 +6,34 @@
 
 ```
 tictactoe/
-├── common/                  # 共享工具
+├── common/                  # 共享 C++ 工具
 │   ├── types.hpp            # Rect, sleep_ms
 │   └── signals.hpp/cpp      # g_quit_flag, 信号处理
 │
-├── game/                    # C++ 井字棋 (终端游戏)
-│   ├── main.cpp             # 入口
-│   ├── config.cpp/h         # 配置 & 命令行解析
-│   ├── board.cpp/h          # 棋盘 & 规则
-│   ├── network.cpp/h        # TCP 客户端 (Winsock)
-│   ├── build.cmd            # MSVC 构建
-│   └── Makefile             # MinGW 构建
+├── game/                    # 井字棋 (TUI, 方向键操作)
+│   ├── src/                 # 源代码
+│   ├── build/               # 构建产物 (gitignored)
+│   └── build.cmd            # MSVC 构建
 │
-├── capture/                 # C++ 屏幕截图
-│   ├── capture.hpp          # ICaptureBackend 抽象接口
-│   ├── capture_dxgi.cpp     # DXGI Desktop Duplication (1-2ms)
-│   ├── capture_gdi.cpp      # GDI BitBlt 回退 (5-10ms)
-│   ├── preprocess.cpp/h     # resize/gray/normalize/stack → 84x84
-│   ├── test_capture.cpp     # 测试程序
+├── capture/                 # 屏幕截图 (DXGI + GDI)
+│   ├── src/
+│   ├── build/
 │   └── build.cmd
 │
-├── input/                   # C++ 输入模拟
-│   ├── input.hpp            # IInputBackend 抽象接口
-│   ├── input_sendinput.cpp  # SendInput 默认后端
-│   ├── input_interception.cpp # Interception 驱动 (绕过反作弊)
-│   ├── test_input.cpp       # 测试程序
+├── input/                   # 输入模拟 (SendInput + Interception)
+│   ├── src/
+│   ├── build/
 │   └── build.cmd
 │
-├── agent/                   # C++ 智能体
-│   ├── agent.hpp            # AgentConfig
-│   ├── agent.cpp            # capture → send → recv → act 主循环
-│   ├── action_mapper.cpp/hpp # 通用动作映射 (token → 鼠标/键盘)
-│   ├── main.cpp             # CLI 入口
+├── agent/                   # AI 智能体 (像素→动作)
+│   ├── src/
+│   ├── build/
 │   └── build.cmd
 │
-├── monitor_slint/           # Slint 监控面板 (总控入口)
-│   ├── appwindow.slint      # 声明式 UI (暗色主题, 4标签页)
-│   ├── main.cpp             # C++ 入口 (进程管理, 一键启动/停止)
-│   ├── build.cmd            # 一键构建
-│   └── slint_bin/           # Slint 1.17 SDK (首次需下载)
+├── monitor/                 # Slint 监控面板 (总控入口)
+│   ├── src/                 # .slint UI + C++
+│   ├── build/
+│   └── build.cmd
 │
 ├── model/                   # Python 模型 (通用, 游戏无关)
 │   ├── generic_agent.py     # L3 通用Agent (~947K 参数)
@@ -52,17 +41,14 @@ tictactoe/
 │   ├── action_space.py      # 通用动作空间 (256 token 词汇)
 │   └── __init__.py
 │
-├── ai/                      # 现有 Python AI
-│   ├── net.py               # TicTacToeNet (MLP 26K 参数)
-│   ├── model.py             # 模型封装
+├── ai/                      # Python AI (MLP 文本协议)
+│   ├── net.py               # TicTacToeNet (MLP 26K)
+│   ├── model.py, api.py     # 模型封装, 工具
 │   ├── ai_server.py         # TCP 预测服务
-│   ├── api.py               # 工具函数
 │   ├── train.py             # 训练编排
 │   └── requirements.txt
 │
-├── train/                   # 训练数据工具
-│   └── data_collector.py    # MLP 自对弈 → (截屏, 动作) 数据采集
-│
+├── train/                   # 训练数据采集器
 ├── Makefile                 # 根 Makefile
 └── README.md
 ```
@@ -82,22 +68,22 @@ tictactoe/
 ### 一键构建全部
 
 ```bash
-cd game      && build.cmd    # 井字棋游戏
-cd capture   && build.cmd    # 截屏工具
-cd input     && build.cmd    # 输入模拟工具
-cd agent     && build.cmd    # 智能体
-cd monitor_slint && build.cmd  # 监控面板
+cd game     && build.cmd    # 井字棋游戏
+cd capture  && build.cmd    # 截屏工具
+cd input    && build.cmd    # 输入模拟工具
+cd agent    && build.cmd    # 智能体
+cd monitor  && build.cmd    # 监控面板
 ```
 
 ### 监控面板额外步骤 (首次)
 
 ```bash
-cd monitor_slint
+cd monitor
 
 # 1. 下载 Slint SDK (一次性)
 #    浏览器打开: https://github.com/slint-ui/slint/releases
 #    下载: Slint-cpp-1.17.0-win64-MSVC-AMD64.exe
-#    双击运行, 解压到: monitor_slint/slint_bin/
+#    双击运行, 解压到: monitor/src/slint_bin/
 
 # 2. 构建
 build.cmd
@@ -113,18 +99,18 @@ pip install torch>=2.0 onnx onnxruntime numpy opencv-python
 
 | 文件 | 用途 | 用法 |
 |------|------|------|
-| `game/main.exe` | 井字棋终端游戏 | `./main.exe` (人vs人) / `--server IP PORT` (人vsAI) / `--auto` (机vs机训练) |
-| `capture/capture_test.exe` | 截屏测试 | `./capture_test.exe` 全屏 / `./capture_test.exe "窗口标题"` |
-| `input/input_test.exe` | 输入模拟测试 | `./input_test.exe` 查看后端 / `./input_test.exe --execute` 实际点击 |
-| `agent/agent.exe` | AI Agent | `./agent.exe --window "窗口标题"` 视觉采集 / 加 `--dry-run` 不执行输入 |
-| `monitor_slint/monitor.exe` | 监控面板 (总控入口) | `./monitor.exe` GUI, 一键启动/停止任务 |
+| `game/build/main.exe` | 井字棋 TUI | `./main.exe` (人vs人) / `--server IP PORT` (人vsAI) / `--auto` (训练) |
+| `capture/build/capture_test.exe` | 截屏测试 | `./capture_test.exe` 全屏 / `./capture_test.exe "窗口标题"` |
+| `input/build/input_test.exe` | 输入测试 | `./input_test.exe` 查看后端 / `./input_test.exe --execute` 实际点击 |
+| `agent/build/agent.exe` | AI Agent | `./agent.exe --window "窗口标题"` 视觉采集 / `--dry-run` 调试 |
+| `monitor/build/monitor.exe` | 监控面板 | `./monitor.exe` GUI, 一键启动/停止任务 |
 
 ## 使用方法
 
 ### 1. 玩井字棋 (人类 vs 人类)
 
 ```bash
-cd game
+cd game\build
 ./main.exe
 ```
 
@@ -136,7 +122,7 @@ cd ai
 python train.py --iters 50 --games 100
 
 # 终端2: 启动自对弈客户端
-cd game
+cd game\build
 ./main.exe --server 127.0.0.1 9999 --auto --games 5000
 ```
 
@@ -148,7 +134,7 @@ cd ai
 python ai_server.py --model model.pkl
 
 # 终端2: 游戏 (AI=X)
-cd game
+cd game\build
 ./main.exe --server 127.0.0.1 9999
 ```
 

@@ -1,5 +1,5 @@
-# Build outputs
-build/
+# Build outputs (per-module)
+**/build/
 *.exe
 *.obj
 *.o
@@ -10,8 +10,7 @@ build/
 *.ilk
 
 # Slint SDK (downloaded)
-monitor_slint/slint_bin/
-slint_bin/
+**/slint_bin/
 
 # Python
 __pycache__/
@@ -35,6 +34,5 @@ desktop.ini
 ai/logs/
 
 # Misc
-nul
 *.tmp
 *.bak
