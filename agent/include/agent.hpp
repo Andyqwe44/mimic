@@ -10,7 +10,7 @@
 #pragma once
 #include <string>
 #include <memory>
-#include "../../common/types.hpp"
+#include "../../common/include/types.hpp"
 
 struct AgentConfig {
     // Game window

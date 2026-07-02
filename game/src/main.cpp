@@ -10,8 +10,8 @@
 #include "board.hpp"
 #include "network.hpp"
 #include "tui.hpp"
-#include "../../common/types.hpp"
-#include "../../common/signals.hpp"
+#include "../../common/include/types.hpp"
+#include "../../common/include/signals.hpp"
 #include <iostream>
 #include <string>
 #include <chrono>

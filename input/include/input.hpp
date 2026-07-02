@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
-#include "../../common/types.hpp"
+#include "../../common/include/types.hpp"
 
 // --- Action Types ---
 

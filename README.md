@@ -99,18 +99,18 @@ pip install torch>=2.0 onnx onnxruntime numpy opencv-python
 
 | 文件 | 用途 | 用法 |
 |------|------|------|
-| `game/build/main.exe` | 井字棋 TUI | `./main.exe` (人vs人) / `--server IP PORT` (人vsAI) / `--auto` (训练) |
-| `capture/build/capture_test.exe` | 截屏测试 | `./capture_test.exe` 全屏 / `./capture_test.exe "窗口标题"` |
-| `input/build/input_test.exe` | 输入测试 | `./input_test.exe` 查看后端 / `./input_test.exe --execute` 实际点击 |
-| `agent/build/agent.exe` | AI Agent | `./agent.exe --window "窗口标题"` 视觉采集 / `--dry-run` 调试 |
-| `monitor/build/monitor.exe` | 监控面板 | `./monitor.exe` GUI, 一键启动/停止任务 |
+| `game/main.exe` | 井字棋 TUI | `./main.exe` (人vs人) / `--server IP PORT` (人vsAI) / `--auto` (训练) |
+| `capture/capture_test.exe` | 截屏测试 | `./capture_test.exe` 全屏 / `./capture_test.exe "窗口标题"` |
+| `input/input_test.exe` | 输入测试 | `./input_test.exe` 查看后端 / `./input_test.exe --execute` 实际点击 |
+| `agent/agent.exe` | AI Agent | `./agent.exe --window "窗口标题"` 视觉采集 / `--dry-run` 调试 |
+| `monitor/monitor.exe` | 监控面板 | `./monitor.exe` GUI, 一键启动/停止任务 |
 
 ## 使用方法
 
 ### 1. 玩井字棋 (人类 vs 人类)
 
 ```bash
-cd game\build
+cd game
 ./main.exe
 ```
 
@@ -122,7 +122,7 @@ cd ai
 python train.py --iters 50 --games 100
 
 # 终端2: 启动自对弈客户端
-cd game\build
+cd game
 ./main.exe --server 127.0.0.1 9999 --auto --games 5000
 ```
 
@@ -134,7 +134,7 @@ cd ai
 python ai_server.py --model model.pkl
 
 # 终端2: 游戏 (AI=X)
-cd game\build
+cd game
 ./main.exe --server 127.0.0.1 9999
 ```
 

@@ -9,7 +9,7 @@
 #include <cstring>
 #include <cstdio>
 #include <csignal>
-#include "../../common/signals.hpp"
+#include "../../common/include/signals.hpp"
 
 // ==================== RAII Winsock ====================
 
