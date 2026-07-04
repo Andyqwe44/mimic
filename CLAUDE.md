@@ -158,6 +158,13 @@ All components in one file (App.tsx, ~500 lines):
 - JSON output: `{"hwnd":"...", "category":"process", "title":"..."}`
 - No desktop entry — desktop handled by window_list.exe
 
+### capture_single.exe
+- Single-frame screenshot, raw BGRA pixels via binary stdout
+- Usage: `capture_single.exe <hwnd>` (0=desktop DXGI, other=window GDI)
+- Binary format: `[w:4][h:4][ch:4][pixels...]` (little-endian)
+- Rust reads binary, does BGRA→RGBA, scale, PNG encode, base64 → frontend
+- Agent can consume raw pixels directly (no encoding overhead)
+
 ## Current State & Next Steps
 
 1. **DONE**: TicTacToe TUI game, C++ capture, C++ window enumeration, Tauri GUI

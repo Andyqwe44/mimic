@@ -111,8 +111,8 @@ function TopBar({ tab, setTab, running, onStart, onStop }: {
     <div className="flex items-center h-10 bg-bg-secondary border-b border-border select-none shrink-0">
       <div className="flex-1 flex items-center h-full overflow-x-auto px-1">
         {tabs.map(t => (
-          <Tooltip text={`切换到 ${t} 面板`}>
-            <button key={t} onClick={() => setTab(t)}
+          <Tooltip key={t} text={`切换到 ${t} 面板`}>
+            <button onClick={() => setTab(t)}
               className={`group flex items-center h-full px-3 cursor-pointer border-r border-border min-w-[90px] transition-colors
                 ${t === tab ? 'bg-bg-primary text-accent border-b-2 border-b-accent' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover border-b-2 border-b-transparent'}`}>
               <span className="flex-1 truncate text-sm">{t}</span>
@@ -170,6 +170,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
       const { invoke } = await import('@tauri-apps/api/core')
       const list = await invoke<WindowInfo[]>('list_windows')
       setWindows(list)
+      addLog(`Windows loaded: ${list.length} entries`)
     } catch {
       setWindows([{ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }, { title: 'Tic Tac Toe — main.exe', category: 'window', hwnd: 0 }, { title: 'Notepad', category: 'window', hwnd: 0 }, { title: 'Chrome', category: 'window', hwnd: 0 }])
     }
@@ -182,6 +183,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
       const { invoke } = await import('@tauri-apps/api/core')
       const list = await invoke<WindowInfo[]>('list_processes')
       setProcesses(list)
+      addLog(`Processes loaded: ${list.length} entries`)
     } catch {
       setProcesses([{ title: 'svchost.exe', category: 'process', hwnd: 0 }, { title: 'explorer.exe', category: 'process', hwnd: 0 }])
     }
@@ -228,7 +230,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
           ))}
           <div className="flex-1" />
           <Tooltip text="刷新窗口列表">
-            <button onClick={() => { loadWindows(); setProcesses([]) }}
+            <button onClick={() => { loadWindows(); setProcesses([]); addLog('Refreshing windows...') }}
               className={`p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-secondary ${loading ? 'animate-spin' : ''}`}>
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -249,10 +251,15 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
           {loading && filtered.length === 0 ? (
             <div className="flex items-center justify-center py-8 text-sm text-text-muted">Loading...</div>
           ) : (
-            filtered.map((w, i) => (
-              <Tooltip text={`选择: ${w.title}`}>
-                <button key={`${w.hwnd}-${w.category}`} onClick={() => { onSelect(w); onClose() }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-bg-hover transition-colors group">
+            filtered.map((w) => {
+              const self = w.title.includes('Game Agent Monitor')
+              return (
+              <Tooltip key={`${w.hwnd}-${w.category}`} text={self ? '自身窗口，禁止捕获' : `选择: ${w.title}`}>
+                <button
+                  disabled={self}
+                  onClick={() => { onSelect(w); onClose() }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors group
+                  ${self ? 'opacity-40 cursor-not-allowed' : 'hover:bg-bg-hover cursor-pointer'}`}>
                 {w.category === 'desktop' ? <MonitorSmartphone className="w-4 h-4 text-text-muted group-hover:text-accent shrink-0" />
                   : <Monitor className="w-4 h-4 text-text-muted group-hover:text-accent shrink-0" />}
                 <div className="flex-1 min-w-0">
@@ -261,7 +268,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
                 </div>
               </button>
               </Tooltip>
-            ))
+            )})
           )}
         </div>
         <div className="px-4 py-2 border-t border-border text-xs text-text-muted text-center">
@@ -336,30 +343,42 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
   const [imgSrc, setImgSrc] = useState('')
   const [fps, setFps] = useState(0)
   const timerRef = useRef<number>(0)
+  const framesRef = useRef(0)
+  const lastFpsRef = useRef(Date.now())
+
+  const doCapture = async () => {
+    const hwnd = selWin?.hwnd ?? 0
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const b64 = await invoke<string>('capture_window', { hwnd })
+      setImgSrc(`data:image/png;base64,${b64}`)
+      framesRef.current++
+      const now = Date.now(); const elapsed = now - lastFpsRef.current
+      if (elapsed >= 1000) {
+        setFps(Math.round(framesRef.current * 1000 / elapsed))
+        framesRef.current = 0; lastFpsRef.current = now
+      }
+    } catch (e) {
+      if (!previewing) addLog(`Screenshot failed: ${e}`)
+    }
+  }
 
   const togglePreview = () => {
     if (previewing) {
-      setPreviewing(false); setFps(0); setImgSrc('')
+      setPreviewing(false); setFps(0)
       if (timerRef.current) clearInterval(timerRef.current)
       addLog('Preview stopped')
     } else {
       setPreviewing(true)
-      addLog('Starting preview @ 20fps...')
-      let frames = 0; let last = Date.now()
-      const capture = async () => {
-        try {
-          const { invoke } = await import('@tauri-apps/api/core')
-          const b64 = await invoke<string>('capture_screenshot', { monitorIdx: 0 })
-          setImgSrc(`data:image/png;base64,${b64}`)
-          frames++
-          const now = Date.now(); const elapsed = now - last
-          if (elapsed >= 1000) { setFps(Math.round(frames * 1000 / elapsed)); frames = 0; last = now }
-        } catch { /* browser fallback */ }
-      }
-      capture()
-      timerRef.current = window.setInterval(capture, 50)
+      addLog(`Preview @ 20fps target: ${selWin?.title ?? 'desktop'}`)
+      framesRef.current = 0; lastFpsRef.current = Date.now()
+      doCapture()
+      timerRef.current = window.setInterval(doCapture, 50)
     }
   }
+
+  // Cleanup on unmount
+  useEffect(() => { return () => { if (timerRef.current) clearInterval(timerRef.current) } }, [])
 
   return (
     <div className="mt-3 rounded-xl bg-bg-secondary p-4">
@@ -370,7 +389,8 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
             onClick={async () => {
               const hwnd = selWin?.hwnd ?? 0;
               addLog(`Capturing ${hwnd ? 'window' : 'desktop'}...`)
-              try { const { invoke } = await import('@tauri-apps/api/core')
+              try {
+                const { invoke } = await import('@tauri-apps/api/core')
                 const b64 = await invoke<string>('capture_window', { hwnd })
                 setImgSrc(`data:image/png;base64,${b64}`)
                 addLog('Screenshot captured')
@@ -386,13 +406,17 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
         </div>
       </div>
       {expanded && (
-        <div className="min-h-[160px] rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center">
+        <div className="min-h-[160px] rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative">
           {imgSrc ? (
             <img src={imgSrc} className="w-full h-auto object-contain" alt="preview" />
           ) : (
             <span className="text-sm text-text-muted">{previewing ? 'Capturing...' : 'Press Preview'}</span>
           )}
-          {previewing && <div className="absolute bottom-2 right-2 text-xs text-accent bg-bg-primary/80 px-2 py-0.5 rounded">{fps} FPS</div>}
+          {previewing && (
+            <div className="absolute bottom-2 right-2 text-xs text-accent bg-bg-primary/80 px-2 py-0.5 rounded font-mono">
+              {fps} FPS
+            </div>
+          )}
         </div>
       )}
     </div>

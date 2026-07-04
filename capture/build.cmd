@@ -11,3 +11,6 @@ if %ERRORLEVEL% EQU 0 (echo Build OK: capture\build\window_list.exe)
 
 cl.exe /EHsc /std:c++17 /Fo"build\\" /Fe:build\process_list.exe src\process_list.cpp user32.lib
 if %ERRORLEVEL% EQU 0 (echo Build OK: capture\build\process_list.exe)
+
+cl.exe /EHsc /std:c++17 /Fo"build\\" /Fe:build\capture_single.exe src\capture_single.cpp d3d11.lib dxgi.lib windowscodecs.lib user32.lib gdi32.lib ole32.lib
+if %ERRORLEVEL% EQU 0 (echo Build OK: capture\build\capture_single.exe)

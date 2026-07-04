@@ -134,107 +134,129 @@ fn extract_json_str<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     Some(rest)
 }
 
-// ── Single-frame screenshot via GDI → base64 PNG ──
-#[tauri::command]
-fn capture_single() -> String {
+// ── Screenshot via C++ capture_single.exe → raw BGRA → PNG(base64) ──
+
+/// Run capture_single.exe, read raw BGRA pixels from stdout binary
+fn run_capture(hwnd: u64) -> Option<(Vec<u8>, i32, i32)> {
     let t0 = Instant::now();
-    dlog!("capture_single: starting...");
-    let result = unsafe { capture_screen_to_base64() }.unwrap_or_default();
-    dlog!("capture_single: {} bytes in {:.0}ms", result.len(), t0.elapsed().as_millis());
-    result
+    let exe = std::env::current_exe()
+        .map(|p| p.parent().unwrap_or(&p).join("..").join("..").join("..").join("..").join("capture").join("build").join("capture_single.exe"))
+        .unwrap_or_else(|_| "capture/build/capture_single.exe".into());
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+
+    dlog!("run_capture: {} {}", exe.display(), hwnd);
+    let out = match Command::new(&exe).arg(hwnd.to_string()).output() {
+        Ok(o) => o,
+        Err(e) => { dlog!("run_capture: spawn failed: {}", e); return None; }
+    };
+
+    // Log C++ stderr (debug info)
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for line in stderr.lines() {
+        if !line.is_empty() { dlog!("  C++ {}", line); }
+    }
+
+    if !out.status.success() {
+        dlog!("run_capture: C++ exit {}", out.status.code().unwrap_or(-1));
+        return None;
+    }
+
+    let data = out.stdout;
+    if data.len() < 12 {
+        dlog!("run_capture: stdout too short ({} bytes)", data.len());
+        return None;
+    }
+
+    let w = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as i32;
+    let h = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as i32;
+    let ch = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+
+    let expected = w as usize * h as usize * ch as usize;
+    let pixels = data[12..].to_vec();
+    if pixels.len() != expected {
+        dlog!("run_capture: pixel mismatch: got {} expected {}", pixels.len(), expected);
+        return None;
+    }
+    dlog!("run_capture: {}x{} ch={} {}px in {:.0}ms", w, h, ch, pixels.len(), t0.elapsed().as_millis());
+    Some((pixels, w, h))
 }
 
-#[cfg(target_os = "windows")]
-unsafe fn capture_screen_to_base64() -> Option<String> {
-    extern "system" {
-        fn GetDC(hwnd: isize) -> isize;
-        fn ReleaseDC(hwnd: isize, hdc: isize) -> i32;
-        fn GetSystemMetrics(idx: i32) -> i32;
-        fn CreateCompatibleDC(hdc: isize) -> isize;
-        fn CreateCompatibleBitmap(hdc: isize, w: i32, h: i32) -> isize;
-        fn SelectObject(hdc: isize, obj: isize) -> isize;
-        fn DeleteDC(hdc: isize) -> i32;
-        fn DeleteObject(obj: isize) -> i32;
-        fn BitBlt(hdc: isize, x: i32, y: i32, w: i32, h: i32, src: isize, sx: i32, sy: i32, op: u32) -> i32;
-        fn GetDIBits(hdc: isize, bmp: isize, start: u32, lines: u32, bits: *mut u8, bmi: *const u8, usage: u32) -> i32;
-        fn StretchBlt(dst: isize, dx: i32, dy: i32, dw: i32, dh: i32, src: isize, sx: i32, sy: i32, sw: i32, sh: i32, op: u32) -> i32;
-    }
-    const SRCCOPY: u32 = 0x00CC0020;
-    const SM_CXSCREEN: i32 = 0; const SM_CYSCREEN: i32 = 1;
-
-    dlog!("capture: GetDC...");
-    let hdc_screen = GetDC(0);
-    if hdc_screen == 0 { dlog!("capture: GetDC FAILED"); return None; }
-    let w = GetSystemMetrics(SM_CXSCREEN);
-    let h = GetSystemMetrics(SM_CYSCREEN);
-    dlog!("capture: screen {}x{}", w, h);
-
-    // Scale to max 640px wide
+/// Scale BGRA pixels → max 640px wide, BGRA→RGBA, PNG encode, base64
+fn pixels_to_base64(pixels: &[u8], w: i32, h: i32) -> String {
     let scale = (640.0 / w as f32).min(1.0);
     let sw = (w as f32 * scale) as i32;
     let sh = (h as f32 * scale) as i32;
-    dlog!("capture: scaled to {}x{}", sw, sh);
 
-    dlog!("capture: CreateCompatibleDC+Bitmap...");
-    let hdc_mem = CreateCompatibleDC(hdc_screen);
-    let hbmp_small = CreateCompatibleBitmap(hdc_screen, sw, sh);
-    if hbmp_small == 0 { dlog!("capture: CreateCompatibleBitmap FAILED"); ReleaseDC(0, hdc_screen); DeleteDC(hdc_mem); return None; }
-    let old = SelectObject(hdc_mem, hbmp_small);
-
-    // StretchBlt: scales down in one step
-    dlog!("capture: StretchBlt...");
-    StretchBlt(hdc_mem, 0, 0, sw, sh, hdc_screen, 0, 0, w, h, SRCCOPY);
-
-    // GetDIBits from the small bitmap (sw×sh)
-    let mut bmi = [0u8; 44];
-    bmi[0..4].copy_from_slice(&44u32.to_le_bytes());
-    bmi[4..8].copy_from_slice(&(sw as u32).to_le_bytes());
-    bmi[8..12].copy_from_slice(&(-sh as i32).to_le_bytes());
-    bmi[12..14].copy_from_slice(&1u16.to_le_bytes());
-    bmi[14..16].copy_from_slice(&32u16.to_le_bytes());
-    let buf_size = (sw * sh * 4) as usize;
-    let mut pixels: Vec<u8> = vec![0u8; buf_size];
-
-    dlog!("capture: GetDIBits {} bytes...", buf_size);
-    let ret = GetDIBits(hdc_mem, hbmp_small, 0, sh as u32, pixels.as_mut_ptr(), bmi.as_ptr(), 0);
-    if ret == 0 { dlog!("capture: GetDIBits FAILED"); }
-
-    // Cleanup GDI
-    SelectObject(hdc_mem, old); DeleteObject(hbmp_small); DeleteDC(hdc_mem); ReleaseDC(0, hdc_screen);
-    dlog!("capture: GDI cleanup done");
-
-    // BGRA → RGBA
-    let mut rgba = vec![0u8; buf_size];
-    for i in (0..buf_size).step_by(4) {
-        rgba[i] = pixels[i + 2]; rgba[i + 1] = pixels[i + 1]; rgba[i + 2] = pixels[i]; rgba[i + 3] = 255;
+    // Nearest-neighbor scale + BGRA→RGBA
+    let mut rgba = vec![0u8; (sw * sh * 4) as usize];
+    for y in 0..sh {
+        let sy = (y as f32 / scale) as usize;
+        for x in 0..sw {
+            let sx = (x as f32 / scale) as usize;
+            let di = (y * sw + x) as usize * 4;
+            let si = (sy * w as usize + sx) * 4;
+            rgba[di]     = pixels[si + 2]; // B→R
+            rgba[di + 1] = pixels[si + 1]; // G
+            rgba[di + 2] = pixels[si];     // R→B
+            rgba[di + 3] = 255;            // A
+        }
     }
-    dlog!("capture: BGRA->RGBA done, encoding PNG...");
 
+    // PNG encode
     let mut out = Vec::new();
     out.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
-    let mut ihdr_data = Vec::new();
-    ihdr_data.extend_from_slice(&(sw as u32).to_be_bytes());
-    ihdr_data.extend_from_slice(&(sh as u32).to_be_bytes());
-    ihdr_data.extend_from_slice(&[8, 6, 0, 0, 0]);
-    write_png_chunk(&mut out, b"IHDR", &ihdr_data);
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&(sw as u32).to_be_bytes());
+    ihdr.extend_from_slice(&(sh as u32).to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    write_png_chunk(&mut out, b"IHDR", &ihdr);
 
-    let mut raw = Vec::with_capacity(buf_size + sh as usize);
+    let mut raw = Vec::new();
     for y in 0..sh {
         raw.push(0);
-        let row_start = (y * sw) as usize * 4;
-        raw.extend_from_slice(&rgba[row_start..row_start + sw as usize * 4]);
+        raw.extend_from_slice(&rgba[(y * sw) as usize * 4..(y * sw + sw) as usize * 4]);
     }
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
     write_png_chunk(&mut out, b"IDAT", &compressed);
     write_png_chunk(&mut out, b"IEND", &[]);
-    let b64 = base64_encode(&out);
-    dlog!("capture: done, {} bytes base64", b64.len());
-    Some(b64)
+    base64_encode(&out)
 }
 
-#[cfg(not(target_os = "windows"))]
-unsafe fn capture_screen_to_base64() -> Option<String> { None }
+#[tauri::command]
+fn capture_single() -> String {
+    let t0 = Instant::now();
+    dlog!("capture_single: C++ desktop...");
+    if let Some((pixels, w, h)) = run_capture(0) {
+        let t1 = Instant::now();
+        let b64 = pixels_to_base64(&pixels, w, h);
+        let t2 = t1.elapsed().as_millis();
+        dlog!("capture_single: {}x{} → {}b base64, C++={:.0}ms PNG+encode={}ms total={:.0}ms",
+            w, h, b64.len(), t1.duration_since(t0).as_millis(), t2, t0.elapsed().as_millis());
+        b64
+    } else {
+        dlog!("capture_single: FAILED");
+        String::new()
+    }
+}
 
+#[tauri::command]
+fn capture_window(hwnd: u64) -> String {
+    let t0 = Instant::now();
+    dlog!("capture_window: hwnd={} C++...", hwnd);
+    if let Some((pixels, w, h)) = run_capture(hwnd) {
+        let t1 = Instant::now();
+        let b64 = pixels_to_base64(&pixels, w, h);
+        let t2 = t1.elapsed().as_millis();
+        dlog!("capture_window: {}x{} → {}b base64, C++={:.0}ms PNG+encode={}ms total={:.0}ms",
+            w, h, b64.len(), t1.duration_since(t0).as_millis(), t2, t0.elapsed().as_millis());
+        b64
+    } else {
+        dlog!("capture_window: FAILED");
+        String::new()
+    }
+}
+
+// ── PNG helpers ────────────────────────────────────────
 fn write_png_chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     out.extend_from_slice(name);
@@ -267,68 +289,6 @@ fn base64_encode(data: &[u8]) -> String {
     }
     out
 }
-
-#[tauri::command]
-fn capture_window(hwnd: u64) -> String {
-    let t0 = Instant::now();
-    dlog!("capture_window: hwnd={}", hwnd);
-    let result = unsafe { capture_win_to_base64(hwnd as isize) }.unwrap_or_default();
-    dlog!("capture_window: {} bytes in {:.0}ms", result.len(), t0.elapsed().as_millis());
-    result
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn capture_win_to_base64(hwnd: isize) -> Option<String> {
-    extern "system" {
-        fn GetDC(h: isize) -> isize; fn ReleaseDC(h: isize, dc: isize) -> i32;
-        fn CreateCompatibleDC(dc: isize) -> isize; fn CreateCompatibleBitmap(dc: isize, w: i32, h: i32) -> isize;
-        fn SelectObject(dc: isize, o: isize) -> isize;
-        fn DeleteDC(dc: isize) -> i32; fn DeleteObject(o: isize) -> i32;
-        fn BitBlt(d: isize, x: i32, y: i32, w: i32, h: i32, s: isize, sx: i32, sy: i32, op: u32) -> i32;
-        fn StretchBlt(d: isize, dx: i32, dy: i32, dw: i32, dh: i32, s: isize, sx: i32, sy: i32, sw: i32, sh: i32, op: u32) -> i32;
-        fn GetDIBits(dc: isize, bmp: isize, s: u32, l: u32, p: *mut u8, bmi: *const u8, u: u32) -> i32;
-        fn GetWindowRect(hwnd: isize, r: *mut i32) -> i32;
-    }
-    const SRCCOPY: u32 = 0x00CC0020;
-    let (w, h, dc): (i32, i32, isize);
-    if hwnd == 0 {
-        w=1920; h=1080; dc=GetDC(0); if dc==0 { return None; }
-    } else {
-        let mut rect=[0i32;4];
-        if GetWindowRect(hwnd, rect.as_mut_ptr())==0 { return None; }
-        w=rect[2]-rect[0]; h=rect[3]-rect[1];
-        dc=GetDC(hwnd); if dc==0 { return None; }
-    }
-    if w<=0||h<=0 { ReleaseDC(hwnd,dc); return None; }
-    let scale = (640.0/w as f32).min(1.0);
-    let sw = (w as f32*scale) as i32; let sh = (h as f32*scale) as i32;
-    let mdc=CreateCompatibleDC(dc); let bmp=CreateCompatibleBitmap(dc,sw,sh);
-    if bmp==0 { ReleaseDC(hwnd,dc); DeleteDC(mdc); return None; }
-    let old=SelectObject(mdc,bmp);
-    StretchBlt(mdc,0,0,sw,sh,dc,0,0,w,h,SRCCOPY);
-    let mut bmi=[0u8;44];
-    bmi[0..4].copy_from_slice(&44u32.to_le_bytes());
-    bmi[4..8].copy_from_slice(&(sw as u32).to_le_bytes());
-    bmi[8..12].copy_from_slice(&(-sh as i32).to_le_bytes());
-    bmi[12..14].copy_from_slice(&1u16.to_le_bytes());
-    bmi[14..16].copy_from_slice(&32u16.to_le_bytes());
-    let buf=(sw*sh*4) as usize; let mut px=vec![0u8;buf];
-    GetDIBits(mdc,bmp,0,sh as u32,px.as_mut_ptr(),bmi.as_ptr(),0);
-    SelectObject(mdc,old); DeleteObject(bmp); DeleteDC(mdc); ReleaseDC(hwnd,dc);
-    let mut rgba=vec![0u8;buf];
-    for i in (0..buf).step_by(4) { rgba[i]=px[i+2]; rgba[i+1]=px[i+1]; rgba[i+2]=px[i]; rgba[i+3]=255; }
-    let mut out=Vec::new();
-    out.extend_from_slice(&[137,80,78,71,13,10,26,10]);
-    let mut ihdr=Vec::new(); ihdr.extend_from_slice(&(sw as u32).to_be_bytes()); ihdr.extend_from_slice(&(sh as u32).to_be_bytes()); ihdr.extend_from_slice(&[8,6,0,0,0]);
-    write_png_chunk(&mut out,b"IHDR",&ihdr);
-    let mut raw=Vec::new();
-    for y in 0..sh { raw.push(0); raw.extend_from_slice(&rgba[(y*sw) as usize*4..(y*sw+sw) as usize*4]); }
-    write_png_chunk(&mut out,b"IDAT",&miniz_oxide::deflate::compress_to_vec_zlib(&raw,6));
-    write_png_chunk(&mut out,b"IEND",&[]);
-    Some(base64_encode(&out))
-}
-#[cfg(not(target_os = "windows"))]
-unsafe fn capture_win_to_base64(_: isize) -> Option<String> { None }
 
 fn main() {
     init_log(5);  // keep max 5 log files
