@@ -342,45 +342,49 @@ function ConnectionPanel({ onSelect }: { onSelect: (w: WindowInfo) => void }) {
 function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
   const [expanded, setExpanded] = useState(true)
   const [previewing, setPreviewing] = useState(false)
-  const [imgSrc, setImgSrc] = useState('')
+  const [imgSrc, setImgSrc] = useState('')       // single-frame <img> base64
   const [fps, setFps] = useState(0)
-  const timerRef = useRef<number>(0)
+  const previewingRef = useRef(false)
   const framesRef = useRef(0)
   const lastFpsRef = useRef(Date.now())
 
-  const doCapture = async () => {
-    const hwnd = selWin?.hwnd ?? 0
-    try {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const b64 = await invoke<string>('capture_window', { hwnd })
-      setImgSrc(`data:image/png;base64,${b64}`)
-      framesRef.current++
-      const now = Date.now(); const elapsed = now - lastFpsRef.current
-      if (elapsed >= 1000) {
-        setFps(Math.round(framesRef.current * 1000 / elapsed))
-        framesRef.current = 0; lastFpsRef.current = now
-      }
-    } catch (e) {
-      if (!previewing) addLog(`Screenshot failed: ${e}`)
-    }
-  }
+  // ── Preview: stream via Tauri events, PNG img rendering ──
+  const unlistenRef = useRef<(() => void) | null>(null)
+  const [capMethod, setCapMethod] = useState('')
 
-  const togglePreview = () => {
+  const togglePreview = async () => {
     if (previewing) {
-      setPreviewing(false); setFps(0)
-      if (timerRef.current) clearInterval(timerRef.current)
+      previewingRef.current = false; setPreviewing(false); setFps(0); setCapMethod('')
+      if (unlistenRef.current) { unlistenRef.current(); unlistenRef.current = null }
+      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('capture_stream_stop') } catch (_) {}
       addLog('Preview stopped')
     } else {
-      setPreviewing(true)
-      addLog(`Preview @ 20fps target: ${selWin?.title ?? 'desktop'}`)
+      const hwnd = selWin?.hwnd ?? 0
+      addLog(`Preview starting: ${selWin?.title ?? 'desktop'}`)
+      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('capture_stream_start', { hwnd }) }
+      catch (e) { addLog(`Stream start failed: ${e}`); return }
+      previewingRef.current = true; setPreviewing(true); setImgSrc('')
       framesRef.current = 0; lastFpsRef.current = Date.now()
-      doCapture()
-      timerRef.current = window.setInterval(doCapture, 50)
+
+      const { listen } = await import('@tauri-apps/api/event')
+      const unlisten = await listen<{ w: number; h: number; b64: string; method: string }>('stream-frame', (event) => {
+        if (!previewingRef.current) return
+        const { b64, method } = event.payload
+        setImgSrc(`data:image/png;base64,${b64}`)  // browser native PNG decode, no JS loop
+        if (method && method !== capMethod) setCapMethod(method)
+        framesRef.current++
+        const now = Date.now(); const elapsed = now - lastFpsRef.current
+        if (elapsed >= 1000) { setFps(Math.round(framesRef.current * 1000 / elapsed)); framesRef.current = 0; lastFpsRef.current = now }
+      })
+      unlistenRef.current = unlisten
     }
   }
 
-  // Cleanup on unmount
-  useEffect(() => { return () => { if (timerRef.current) clearInterval(timerRef.current) } }, [])
+  // Cleanup
+  useEffect(() => { return () => {
+    previewingRef.current = false
+    if (unlistenRef.current) unlistenRef.current()
+  } }, [])
 
   return (
     <div className="mt-3 rounded-xl bg-bg-secondary p-4">
@@ -412,11 +416,13 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
           {imgSrc ? (
             <img src={imgSrc} className="w-full h-auto object-contain" alt="preview" />
           ) : (
-            <span className="text-sm text-text-muted">{previewing ? 'Capturing...' : 'Press Preview'}</span>
+            <span className="text-sm text-text-muted">{previewing ? 'Waiting...' : 'Press Preview'}</span>
           )}
           {previewing && (
-            <div className="absolute bottom-2 right-2 text-xs text-accent bg-bg-primary/80 px-2 py-0.5 rounded font-mono">
-              {fps} FPS
+            <div className="absolute bottom-2 right-2 flex items-center gap-1.5 text-xs bg-bg-primary/80 px-2 py-0.5 rounded font-mono">
+              {capMethod && <span className={capMethod === 'DXGI' ? 'text-success' : 'text-warning'}>{capMethod}</span>}
+              {capMethod && <span className="text-border">|</span>}
+              <span className="text-accent">{fps} FPS</span>
             </div>
           )}
         </div>

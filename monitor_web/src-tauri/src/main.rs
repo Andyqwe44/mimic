@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::Command;
+use std::process::{Command, Child, Stdio};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Write, BufReader, BufRead, Read};
 use std::sync::Mutex;
+use std::thread;
 use serde::Serialize;
+use tauri::Emitter;
 use std::time::Instant;
 
 // ── Session-based debug logging ──
@@ -256,6 +258,28 @@ fn capture_window(hwnd: u64) -> String {
     }
 }
 
+/// PNG encode RGBA pixels (already BGRA→RGBA converted, no scaling)
+fn encode_png_rgba(rgba: &[u8], w: i32, h: i32) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&(w as u32).to_be_bytes());
+    ihdr.extend_from_slice(&(h as u32).to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    write_png_chunk(&mut out, b"IHDR", &ihdr);
+
+    let mut raw = Vec::new();
+    for y in 0..h {
+        raw.push(0);
+        let row = (y * w) as usize * 4;
+        raw.extend_from_slice(&rgba[row..row + w as usize * 4]);
+    }
+    let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+    write_png_chunk(&mut out, b"IDAT", &compressed);
+    write_png_chunk(&mut out, b"IEND", &[]);
+    out
+}
+
 // ── PNG helpers ────────────────────────────────────────
 fn write_png_chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
@@ -290,12 +314,133 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+// ── Capture Stream (persistent process, event-push, no IPC polling) ──
+
+struct StreamState {
+    child: Option<Child>,
+}
+
+static STREAM: Mutex<Option<StreamState>> = Mutex::new(None);
+
+#[derive(Clone, Serialize)]
+struct StreamFramePayload {
+    w: i32,
+    h: i32,
+    b64: String,    // base64 PNG (RGBA, already scaled)
+    method: String,  // "DXGI" | "GDI" | "PrintWindow" | "DXGI_crop"
+}
+
+#[tauri::command]
+fn capture_stream_start(app: tauri::AppHandle, hwnd: u64) -> Result<String, String> {
+    // Stop any existing stream first
+    let _ = capture_stream_stop();
+
+    let exe = std::env::current_exe()
+        .map(|p| p.parent().unwrap_or(&p).join("..").join("..").join("..").join("..")
+            .join("capture").join("build").join("capture_stream.exe"))
+        .unwrap_or_else(|_| "capture/build/capture_stream.exe".into());
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+
+    dlog!("stream_start: {} {}", exe.display(), hwnd);
+
+    let mut child = Command::new(&exe)
+        .arg(hwnd.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+
+    // Stderr reader
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            if let Ok(l) = line { if !l.is_empty() { dlog!("  C++ stream {}", l); } }
+        }
+    });
+
+    // Frame reader → emit events with PNG encoding
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+
+        // Read handshake line: capture method
+        let mut method = String::new();
+        let _ = reader.read_line(&mut method);
+        let method = method.trim().to_string();
+        dlog!("stream: method={}", method);
+
+        let mut prev_png_b64: String = String::new();
+        let mut frames = 0u64;
+        loop {
+            let mut hdr = [0u8; 16];
+            if reader.read_exact(&mut hdr).is_err() { break; }
+            let w = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as i32;
+            let h = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as i32;
+            let size = u32::from_le_bytes([hdr[12], hdr[13], hdr[14], hdr[15]]) as usize;
+
+            if size == 0 {
+                // Unchanged frame — emit previous PNG again
+                if !prev_png_b64.is_empty() {
+                    let _ = app.emit("stream-frame", StreamFramePayload {
+                        w, h, b64: prev_png_b64.clone(), method: method.clone()
+                    });
+                    frames += 1;
+                }
+                continue;
+            }
+
+            let mut pixels = vec![0u8; size];
+            if reader.read_exact(&mut pixels).is_err() { break; }
+
+            // BGRA → RGBA
+            let mut rgba = vec![0u8; size];
+            for i in (0..size).step_by(4) {
+                rgba[i] = pixels[i + 2]; rgba[i+1] = pixels[i+1];
+                rgba[i+2] = pixels[i]; rgba[i+3] = 255;
+            }
+
+            // PNG encode (3ms for 640×360, was 30ms for 1920×1080)
+            let png = encode_png_rgba(&rgba, w, h);
+            let b64 = base64_encode(&png);
+            prev_png_b64 = b64.clone();
+
+            let _ = app.emit("stream-frame", StreamFramePayload {
+                w, h, b64, method: method.clone()
+            });
+            frames += 1;
+        }
+        dlog!("stream: exited after {} frames", frames);
+    });
+
+    *STREAM.lock().unwrap() = Some(StreamState { child: Some(child) });
+    Ok("started".into())
+}
+
+#[tauri::command]
+fn capture_stream_stop() -> Result<String, String> {
+    let mut state = STREAM.lock().unwrap();
+    if let Some(ref mut s) = *state {
+        if let Some(ref mut child) = s.child {
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = writeln!(stdin, "q");
+                let _ = stdin.flush();
+            }
+            let _ = child.wait();
+            dlog!("stream_stop: process exited");
+        }
+    }
+    *state = None;
+    Ok("stopped".into())
+}
+
 fn main() {
     init_log(5);  // keep max 5 log files
     dlog!("Starting Tauri application...");
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![list_windows, list_processes, capture_single, capture_window])
+        .invoke_handler(tauri::generate_handler![list_windows, list_processes, capture_single, capture_window, capture_stream_start, capture_stream_stop])
         .setup(|_app| {
             dlog!("Tauri setup complete, window created");
             Ok(())
