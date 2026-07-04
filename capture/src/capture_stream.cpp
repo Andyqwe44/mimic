@@ -119,8 +119,6 @@ struct FramePoolCtx {
     winrt::Windows::Graphics::Capture::GraphicsCaptureSession session{nullptr};
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> ctx;
-    winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool::FrameArrived_revoker revoker;
-    HANDLE frame_event = nullptr;
     winrt::Windows::Graphics::Capture::GraphicsCaptureItem item{nullptr};
     bool ok = false;
 };
@@ -174,12 +172,7 @@ static bool framepool_init(HWND hwnd) {
         return false;
     }
 
-    g_fp.frame_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    g_fp.revoker = g_fp.pool.FrameArrived(
-        winrt::auto_revoke,
-        [](auto&, auto&) { SetEvent(g_fp.frame_event); });
-
-    // Start capture
+    // Start capture (no event needed — we poll TryGetNextFrame)
     g_fp.session = g_fp.pool.CreateCaptureSession(g_fp.item);
     g_fp.session.StartCapture();
     g_fp.ok = true;
@@ -189,9 +182,6 @@ static bool framepool_init(HWND hwnd) {
 
 static bool framepool_capture(std::vector<uint8_t>& pixels, int& w, int& h) {
     if (!g_fp.ok) return false;
-
-    DWORD wait = WaitForSingleObject(g_fp.frame_event, 100);
-    if (wait == WAIT_TIMEOUT) return false;
 
     auto frame = g_fp.pool.TryGetNextFrame();
     if (!frame) return false;
@@ -233,10 +223,8 @@ static bool framepool_capture(std::vector<uint8_t>& pixels, int& w, int& h) {
 
 static void framepool_shutdown() {
     if (g_fp.ok) {
-        g_fp.revoker.revoke();
         g_fp.session.Close();
         g_fp.pool.Close();
-        if (g_fp.frame_event) CloseHandle(g_fp.frame_event);
         g_fp.ok = false;
         fprintf(stderr, "[framepool] shutdown\n");
     }
@@ -249,6 +237,7 @@ static void stdin_thread() {
 
 // ── main ────────────────────────────────────────────────
 int main(int argc, char* argv[]) {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
     _setmode(_fileno(stdout),_O_BINARY); _setmode(_fileno(stdin),_O_BINARY);
 
     HWND hwnd=(HWND)0;
