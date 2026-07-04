@@ -101,7 +101,7 @@ function ActionBtn({ icon, label, title, variant, onClick, className }: {
 
 // ═══ TopBar ───
 function TopBar({ tab, setTab, running, onStart, onStop }: {
-  tab: string; setTab: (t: string) => void; running: boolean; onStart: () => void; onStop: () => void
+  tab: string; setTab: (t: 'Monitor'|'Log'|'Config'|'Settings') => void; running: boolean; onStart: () => void; onStop: () => void
 }) {
   const tabs = ['Monitor', 'Log', 'Config'] as const
   return (
@@ -124,7 +124,7 @@ function TopBar({ tab, setTab, running, onStart, onStop }: {
         }
         <div className="mx-1 h-4 w-px bg-border" />
         <ThemeBtn />
-        <IconBtn title="设置" icon={<Settings className="w-4 h-4" />} />
+        <IconBtn title="设置" icon={<Settings className="w-4 h-4" />} onClick={() => setTab('Settings')} />
       </div>
     </div>
   )
@@ -369,6 +369,70 @@ function LogPanel() {
 }
 
 // ═══ App ───
+// ═══ Config Panel (full page) ═══
+function ConfigPanel() {
+  return (
+    <div className="p-6 space-y-4 overflow-y-auto">
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-3">Game Window</div>
+        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-24 shrink-0">Window Title</label><Tooltip text="要捕获的游戏窗口标题"><input defaultValue="Tic Tac Toe" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+      </div>
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-3">Model Server</div>
+        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-24 shrink-0">Host</label><Tooltip text="AI服务器地址"><input defaultValue="127.0.0.1" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+        <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-24 shrink-0">Port</label><Tooltip text="AI服务器端口"><input defaultValue="9999" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+      </div>
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-3">Capture</div>
+        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-24 shrink-0">Backend</label><Tooltip text="截图后端"><select defaultValue="dxgi" className="h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"><option value="dxgi">DXGI (fast)</option><option value="gdi">GDI (fallback)</option></select></Tooltip></div>
+        <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-24 shrink-0">FPS</label><Tooltip text="预览帧率"><input defaultValue="20" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+      </div>
+    </div>
+  )
+}
+
+// ═══ Settings Page ═══
+function SettingsPage() {
+  return (
+    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-2">Update</div>
+        <div className="flex items-center justify-between">
+          <div><div className="text-sm text-text-secondary">Version v0.1.0</div><div className="text-xs text-text-muted">Latest version</div></div>
+          <ActionBtn icon={<Settings className="w-3.5 h-3.5" />} label="Check" title="检查新版本" variant="outline" />
+        </div>
+      </div>
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-2">Log</div>
+        <div className="space-y-2">
+          <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-24 shrink-0">Directory</label><Tooltip text="日志文件存放路径"><input defaultValue="logs/" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+          <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-24 shrink-0">Keep</label><Tooltip text="最多保留日志文件数"><select defaultValue="5" className="h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent">{[3,5,7,10].map(n=><option key={n}>{n} files</option>)}</select></Tooltip></div>
+        </div>
+      </div>
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-2">Model Context</div>
+        <div className="text-xs text-text-muted mb-2">Fine-tuning adapter for specific games.</div>
+        <Tooltip text="基础模型"><input defaultValue="GenericAgent v1" className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent mb-2" /></Tooltip>
+        <Tooltip text="微调权重"><input defaultValue="tictactoe-finetune" className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip>
+      </div>
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-2">Links</div>
+        {[{l:'GitHub',u:'https://github.com/Andyqwe44/tictactoe'},{l:'Slint',u:'https://slint.dev'},{l:'Tauri 2',u:'https://v2.tauri.app'}].map(x=><a key={x.l} href={x.u} className="block text-sm text-accent hover:underline py-0.5">{x.l}</a>)}
+      </div>
+      <div className="rounded-xl bg-bg-secondary p-4">
+        <div className="text-sm font-semibold mb-2">Project</div>
+        <div className="text-xs text-text-muted mb-3">If this project helps you, please star!</div>
+        <ActionBtn icon={<span>★</span>} label="Star on GitHub" title="给项目点Star" variant="primary" />
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="text-xs font-medium text-text-secondary mb-1">Credits</div>
+          <div className="text-xs text-text-muted">Andyqwe44 · Tauri 2 · React · Tailwind · DXGI · Interception · PyTorch</div>
+        </div>
+      </div>
+      <div className="h-4" />
+    </div>
+  )
+}
+
 export default function App() {
   const [tab, setTab] = useState('Monitor')
   const [running, setRunning] = useState(false)
@@ -395,13 +459,18 @@ export default function App() {
         onStart={() => setRunning(true)} onStop={() => setRunning(false)} />
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden border-r border-border" style={{ minWidth: MIN_LEFT_WIDTH }}>
-          <div className="flex-1 flex items-center justify-center p-4">
-            <div className="text-center space-y-3">
-              <div className="text-5xl opacity-20">🎮</div>
-              <div className="text-sm text-text-secondary">{running ? 'Task running...' : 'Press Start to begin the agent'}</div>
-              <div className="text-xs text-text-muted">Target: {selWindow.title}</div>
+          {tab === 'Monitor' && (
+            <div className="flex-1 flex items-center justify-center p-4">
+              <div className="text-center space-y-3">
+                <div className="text-5xl opacity-20">🎮</div>
+                <div className="text-sm text-text-secondary">{running ? 'Task running...' : 'Press Start to begin the agent'}</div>
+                <div className="text-xs text-text-muted">Target: {selWindow.title}</div>
+              </div>
             </div>
-          </div>
+          )}
+          {tab === 'Log' && <div className="flex-1 overflow-hidden"><LogPanel /></div>}
+          {tab === 'Config' && <div className="flex-1 overflow-y-auto"><ConfigPanel /></div>}
+          {tab === 'Settings' && <SettingsPage />}
           <BottomBar running={running} fps={0} lat={0} />
         </div>
         <Tooltip text={rightCollapsed ? "向右拖拽展开面板" : "拖拽调整面板宽度，向右拖到底可折叠"}>

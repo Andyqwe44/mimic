@@ -115,8 +115,9 @@ cd agent   && build.cmd     # 智能体
 - **Preview** → 实时截屏预览 20 FPS (TODO: 接入 DXGI)
 - **Log** → 实时操作日志, 全局共享状态
 - **Config** → 模型服务器 + 游戏窗口配置
-- **Tooltip** → 自定义悬停气泡, 300ms 延迟, 持续显示, TypeScript title: string 强制必填
-- **ActionBtn / IconBtn** → 统一组件, title 编译时强制检查
+- **Tooltip** → Portal 渲染到 body, z-index 9999, 智能上下翻转 + 水平限位
+- **ActionBtn / IconBtn** → title: string 必填, TypeScript 编译时检查
+- **Settings** → 更新自检, 日志路径, 快速链接, 模型上下文, Star, 鸣谢
 
 ## 运行
 
