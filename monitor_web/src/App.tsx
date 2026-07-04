@@ -1,20 +1,45 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Play, Square, Camera, Monitor, Settings, Moon, Sun, ChevronUp, ChevronDown, FileText, Trash2, X, MonitorUp, Search, MonitorSmartphone } from 'lucide-react'
 
-// ═══ Tooltip ── 300ms delay, persists while hovering ═══
+// ═══ Tooltip ── 300ms delay, portal to body, smart positioning ═══
 function Tooltip({ text, children }: { text: string; children: React.ReactElement }) {
   const [show, setShow] = useState(false)
+  const [pos, setPos] = useState({ x: 0, y: 0, placement: 'top' as 'top'|'bottom' })
   const timer = useRef<number>(0)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const updatePos = () => {
+    if (!ref.current) return
+    const r = ref.current.getBoundingClientRect()
+    // Estimate tooltip size: ~200px wide, ~28px tall
+    const tipW = Math.min(text.length * 8 + 20, 300)
+    const tipH = 28
+    // Place above unless too close to top edge
+    const above = r.top > tipH + 8
+    let x = r.left + r.width / 2
+    // Clamp horizontal so tip doesn't overflow viewport
+    const vw = window.innerWidth
+    x = Math.max(tipW / 2 + 4, Math.min(vw - tipW / 2 - 4, x))
+    setPos({ x, y: above ? r.top : r.bottom, placement: above ? 'top' : 'bottom' })
+  }
+
   return (
-    <div className="relative inline-flex"
-      onMouseEnter={() => { timer.current = window.setTimeout(() => setShow(true), 300) }}
+    <div ref={ref} className="relative inline-flex"
+      onMouseEnter={() => { updatePos(); timer.current = window.setTimeout(() => { updatePos(); setShow(true) }, 300) }}
       onMouseLeave={() => { clearTimeout(timer.current); setShow(false) }}
-      onMouseMove={() => { if (!show) { clearTimeout(timer.current); timer.current = window.setTimeout(() => setShow(true), 300) } }}>
+      onMouseMove={() => { if (!show) { clearTimeout(timer.current); timer.current = window.setTimeout(() => { updatePos(); setShow(true) }, 300) } }}>
       {children}
-      {show && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-tertiary text-text-primary text-xs rounded shadow-lg whitespace-nowrap z-50 pointer-events-none">
+      {show && createPortal(
+        <div className="fixed px-2 py-1 bg-bg-tertiary text-text-primary text-xs rounded shadow-lg whitespace-nowrap pointer-events-none z-[9999]"
+          style={{
+            left: pos.x,
+            top: pos.placement === 'top' ? pos.y - 6 : pos.y + 6,
+            transform: pos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)'
+          }}>
           {text}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -34,10 +59,12 @@ function addLog(msg: string) { gLogs = [...gLogs, { ts: new Date().toLocaleTimeS
 function ThemeBtn() {
   const [dark, setDark] = useState(false)
   return (
-    <button onClick={() => { setDark(!dark); document.documentElement.classList.toggle('dark', !dark) }} title="Toggle theme"
-      className="p-2 rounded-md hover:bg-bg-hover transition-colors">
-      {dark ? <Sun className="w-4 h-4 text-text-secondary" /> : <Moon className="w-4 h-4 text-text-secondary" />}
-    </button>
+    <Tooltip text={dark ? "切换亮色主题" : "切换暗色主题"}>
+      <button onClick={() => { setDark(!dark); document.documentElement.classList.toggle('dark', !dark) }}
+        className="p-2 rounded-md hover:bg-bg-hover transition-colors">
+        {dark ? <Sun className="w-4 h-4 text-text-secondary" /> : <Moon className="w-4 h-4 text-text-secondary" />}
+      </button>
+    </Tooltip>
   )
 }
 
@@ -81,11 +108,13 @@ function TopBar({ tab, setTab, running, onStart, onStop }: {
     <div className="flex items-center h-10 bg-bg-secondary border-b border-border select-none shrink-0">
       <div className="flex-1 flex items-center h-full overflow-x-auto px-1">
         {tabs.map(t => (
-          <button title={t} key={t} onClick={() => setTab(t)}
-            className={`group flex items-center h-full px-3 cursor-pointer border-r border-border min-w-[90px] transition-colors
-              ${t === tab ? 'bg-bg-primary text-accent border-b-2 border-b-accent' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover border-b-2 border-b-transparent'}`}>
-            <span className="flex-1 truncate text-sm">{t}</span>
-          </button>
+          <Tooltip text={`切换到 ${t} 面板`}>
+            <button key={t} onClick={() => setTab(t)}
+              className={`group flex items-center h-full px-3 cursor-pointer border-r border-border min-w-[90px] transition-colors
+                ${t === tab ? 'bg-bg-primary text-accent border-b-2 border-b-accent' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover border-b-2 border-b-transparent'}`}>
+              <span className="flex-1 truncate text-sm">{t}</span>
+            </button>
+          </Tooltip>
         ))}
       </div>
       <div className="flex items-center gap-1 px-2">
@@ -156,16 +185,18 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
             <MonitorUp className="w-4 h-4 text-accent" />
             <span className="text-sm font-semibold text-text-primary">Select Target</span>
           </div>
-          <button title="关闭" onClick={onClose} className="p-1 rounded-md hover:bg-bg-hover transition-colors"><X className="w-4 h-4 text-text-secondary" /></button>
+          <Tooltip text="关闭"><button onClick={onClose} className="p-1 rounded-md hover:bg-bg-hover transition-colors"><X className="w-4 h-4 text-text-secondary" /></button></Tooltip>
         </div>
         {/* Category tabs */}
         <div className="flex gap-1 px-4 pt-3 pb-1">
           {categories.map(c => (
-            <button title={"筛选: " + c} key={c} onClick={() => setFilter(c)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize
-                ${filter === c ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'}`}>
-              {c === 'all' ? 'All' : c === 'desktop' ? ' Desktop' : ' Windows'}
-            </button>
+            <Tooltip text={`筛选: ${c === 'all' ? '全部' : c === 'desktop' ? '桌面' : '窗口'}`}>
+              <button key={c} onClick={() => setFilter(c)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize
+                  ${filter === c ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'}`}>
+                {c === 'all' ? 'All' : c === 'desktop' ? ' Desktop' : ' Windows'}
+              </button>
+            </Tooltip>
           ))}
           <div className="flex-1" />
         </div>
@@ -173,14 +204,17 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
         <div className="px-4 py-2">
           <div className="flex items-center gap-2 h-8 rounded-lg border border-border bg-bg-primary px-3">
             <Search className="w-3.5 h-3.5 text-text-muted shrink-0" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..."
-              className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted" autoFocus />
+            <Tooltip text="输入关键字筛选窗口列表">
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..."
+                className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted" autoFocus />
+            </Tooltip>
           </div>
         </div>
         {/* List */}
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {filtered.map((w, i) => (
-            <button title={"选择: " + w.title} key={i} onClick={() => { onSelect(w); onClose() }}
+            <Tooltip text={`选择: ${w.title}`}>
+              <button key={i} onClick={() => { onSelect(w); onClose() }}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-bg-hover transition-colors group">
               {w.category === 'desktop' ? <MonitorSmartphone className="w-4 h-4 text-text-muted group-hover:text-accent shrink-0" />
                 : <Monitor className="w-4 h-4 text-text-muted group-hover:text-accent shrink-0" />}
@@ -189,6 +223,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
                 <span className="text-xs text-text-muted capitalize">{w.category}</span>
               </div>
             </button>
+            </Tooltip>
           ))}
         </div>
         <div className="px-4 py-2 border-t border-border text-xs text-text-muted text-center">
@@ -211,15 +246,21 @@ function ConnectionPanel({ onSelect }: { onSelect: (w: WindowInfo) => void }) {
       </div>
       <div className="space-y-2">
         <div className="flex gap-2">
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Window Title"
-            className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
-          <button title="选择要截屏的窗口" onClick={() => setPickerOpen(true)}
-            className="shrink-0 h-8 px-3 rounded-lg border border-border bg-bg-primary text-sm text-text-secondary hover:bg-bg-hover transition-colors flex items-center gap-1.5">
-            <MonitorUp className="w-3.5 h-3.5" /><span>Select</span>
-          </button>
+          <Tooltip text="要捕获的游戏窗口标题">
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Window Title"
+              className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
+          </Tooltip>
+          <Tooltip text="选择要捕获的窗口或桌面">
+            <button onClick={() => setPickerOpen(true)}
+              className="shrink-0 h-8 px-3 rounded-lg border border-border bg-bg-primary text-sm text-text-secondary hover:bg-bg-hover transition-colors flex items-center gap-1.5">
+              <MonitorUp className="w-3.5 h-3.5" /><span>Select</span>
+            </button>
+          </Tooltip>
         </div>
-        <input defaultValue="127.0.0.1:9999" placeholder="Server Address"
-          className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
+        <Tooltip text="AI模型服务器地址 (host:port)">
+          <input defaultValue="127.0.0.1:9999" placeholder="Server Address"
+            className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
+        </Tooltip>
       </div>
       <WindowPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} onSelect={handleSelect} />
     </div>
@@ -363,10 +404,12 @@ export default function App() {
           </div>
           <BottomBar running={running} fps={0} lat={0} />
         </div>
-        <div onMouseDown={handleResizeStart}
-          className={`${rightCollapsed ? 'w-4' : 'w-1'} hover:bg-accent/50 cursor-col-resize flex items-center justify-center group shrink-0 transition-all select-none bg-transparent`}>
-          <div className="w-[2px] h-8 rounded-full transition-colors bg-border group-hover:bg-accent" />
-        </div>
+        <Tooltip text={rightCollapsed ? "向右拖拽展开面板" : "拖拽调整面板宽度，向右拖到底可折叠"}>
+          <div onMouseDown={handleResizeStart}
+            className={`${rightCollapsed ? 'w-4' : 'w-1'} hover:bg-accent/50 cursor-col-resize flex items-center justify-center group shrink-0 transition-all select-none bg-transparent`}>
+            <div className="w-[2px] h-8 rounded-full transition-colors bg-border group-hover:bg-accent" />
+          </div>
+        </Tooltip>
         {!rightCollapsed && (
           <div className="flex flex-col p-3 gap-3 overflow-y-auto shrink-0" style={{ width: rightWidth, minWidth: 240 }}>
             <ConnectionPanel onSelect={setSelWindow} />
