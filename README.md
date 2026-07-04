@@ -157,9 +157,10 @@ cd game && ./main.exe --server 127.0.0.1 9999 --auto --games 5000
 | 场景 | 首选 | 回退 |
 |------|------|------|
 | 桌面 (hwnd=0) | DXGI Desktop Duplication | GDI BitBlt (WebView2 GPU 冲突自动触发) |
-| 窗口 (hwnd≠0) | PrintWindow + PW_RENDERFULLCONTENT | DXGI 裁剪 → GDI GetWindowDC |
+| 窗口 (hwnd≠0) | **FramePool** (WinRT Graphics Capture, GPU, ~2ms) | PrintWindow → DXGI 裁剪 → GDI |
 
-PrintWindow 通过 DWM 直接渲染窗口内容, 即使窗口被遮挡也能截到完整画面。
+FramePool = `Windows.Graphics.Capture` API (Win10 1903+), 直接从 DWM 帧池拿 GPU 纹理。
+参考 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) Win32Controller 默认截图方案。
 
 ## 技术栈
 
