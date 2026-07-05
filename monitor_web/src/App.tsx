@@ -104,9 +104,10 @@ function ActionBtn({ icon, label, title, variant, onClick, className }: {
 
 // ═══ TopBar (MXU-style tab bar) ───
 function TopBar({ tab, setTab, running, onStart, onStop }: {
-  tab: string; setTab: (t: 'Monitor'|'Log'|'Settings') => void; running: boolean; onStart: () => void; onStop: () => void
+  tab: string; setTab: (t: 'Dashboard'|'Monitor'|'Log'|'Settings') => void; running: boolean; onStart: () => void; onStop: () => void
 }) {
   const tabs = [
+    { id: 'Dashboard' as const, icon: <Settings className="w-3.5 h-3.5" />, label: 'Dashboard' },
     { id: 'Monitor' as const, icon: <Monitor className="w-3.5 h-3.5" />, label: 'Monitor' },
     { id: 'Log' as const, icon: <FileText className="w-3.5 h-3.5" />, label: 'Log' },
   ]
@@ -348,7 +349,7 @@ function ConnectionPanel({ onSelect, onDisconnect }: { onSelect: (w: WindowInfo)
 }
 
 // ═══ Screenshot Panel ───
-function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
+function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenRatio: number }) {
   const [expanded, setExpanded] = useState(true)
   const [previewing, setPreviewing] = useState(false)
   const [imgSrc, setImgSrc] = useState('')       // single-frame PNG (Camera btn)
@@ -481,7 +482,8 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-border" />
           <div className="p-3">
-            <div className="w-full h-[140px] rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative">
+            <div className="w-full rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative"
+              style={{ aspectRatio: screenRatio }}>
               {previewing ? (
                 <canvas ref={canvasRef} className="max-w-full max-h-full object-contain"
                   style={{ width: canvasDims.w, height: canvasDims.h }} />
@@ -641,13 +643,84 @@ function SettingsPage() {
   )
 }
 
+function DashboardView() {
+  const [info, setInfo] = useState({ appVer: 'v0.1.0', resVer: '-', screen: '?x?', status: 'Idle', uptime: '0s' })
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const si = await invoke<{w:number;h:number}>('screen_info')
+        setInfo(i => ({ ...i, screen: `${si.w}×${si.h}`, status: 'Ready' }))
+      } catch (_) {}
+    })()
+  }, [])
+  return (
+    <div className="flex-1 overflow-y-auto p-6 space-y-3">
+      <SettingsCard icon={<Monitor className="w-4 h-4 text-text-secondary" />} title="System">
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-text-secondary">App Version</span><span className="text-text-primary">{info.appVer}</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Resource Version</span><span className="text-text-primary">{info.resVer}</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Screen Resolution</span><span className="text-text-primary font-mono">{info.screen}</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Service Status</span><span className="text-success">{info.status}</span></div>
+        </div>
+      </SettingsCard>
+      <SettingsCard icon={<FileText className="w-4 h-4 text-text-secondary" />} title="Capture Pipeline">
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-text-secondary">Window Capture</span><span className="text-accent">WGC FramePool</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Desktop Capture</span><span className="text-text-primary">DXGI Desktop Dup</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Fallback</span><span className="text-text-muted">GDI BitBlt</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Encoding</span><span className="text-text-primary">Raw RGBA (Canvas)</span></div>
+        </div>
+      </SettingsCard>
+      <SettingsCard icon={<RefreshCw className="w-4 h-4 text-text-secondary" />} title="Update">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div><div className="text-sm text-text-primary">Current: {info.appVer}</div><div className="text-xs text-text-muted">Check for new versions</div></div>
+            <ActionBtn icon={<RefreshCw className="w-3.5 h-3.5" />} label="Check" title="检查更新" variant="outline" />
+          </div>
+          <div className="border-t border-border pt-2">
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-text-secondary w-20 shrink-0">Source</label>
+              <select defaultValue="github" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent">
+                <option value="github">GitHub Releases</option>
+                <option value="gitee">Gitee Mirror</option>
+                <option value="local">Local File</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </SettingsCard>
+      <SettingsCard icon={<MonitorUp className="w-4 h-4 text-text-secondary" />} title="Resources">
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-text-secondary">Log Directory</span><span className="text-text-primary font-mono text-xs">log/</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Capture Backend</span><span className="text-accent">WGC + DXGI</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">Transport</span><span className="text-text-primary">TCP :9999</span></div>
+          <div className="flex justify-between"><span className="text-text-secondary">UI Framework</span><span className="text-text-muted">Tauri 2 + React + Tailwind</span></div>
+        </div>
+      </SettingsCard>
+      <div className="h-4" />
+    </div>
+  )
+}
+
 export default function App() {
-  const [tab, setTab] = useState('Monitor')
+  const [tab, setTab] = useState('Dashboard')
   const [running, setRunning] = useState(false)
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT_WIDTH)
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const isResizing = useRef(false)
   const [selWindow, setSelWindow] = useState<WindowInfo>({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
+  const [screenRatio, setScreenRatio] = useState(16/9)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const si = await invoke<{w:number;h:number}>('screen_info')
+        setScreenRatio(si.w / si.h)
+      } catch (_) {}
+    })()
+  }, [])
 
   // Yellow border overlay on selected window
   useEffect(() => {
@@ -685,6 +758,7 @@ export default function App() {
         onStart={() => setRunning(true)} onStop={() => setRunning(false)} />
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden border-r border-border" style={{ minWidth: MIN_LEFT_WIDTH }}>
+          {tab === 'Dashboard' && <DashboardView />}
           {tab === 'Monitor' && (
             <div className="flex-1 flex items-center justify-center p-6">
               <div className="rounded-xl bg-bg-secondary p-8 text-center space-y-3 max-w-md w-full">
@@ -710,8 +784,8 @@ export default function App() {
               setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
               addLog('Disconnected, back to desktop')
             }} />
-            <ScreenshotPanel selWin={selWindow} />
             <LogPanel />
+            <ScreenshotPanel selWin={selWindow} screenRatio={screenRatio} />
           </div>
         )}
       </div>

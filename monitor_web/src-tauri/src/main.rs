@@ -1322,6 +1322,15 @@ fn h264_stream_stop() -> Result<String, String> {
     Ok("stopped".into())
 }
 
+#[tauri::command]
+fn screen_info() -> serde_json::Value {
+    unsafe {
+        let w = GetSystemMetrics(SM_CXSCREEN);
+        let h = GetSystemMetrics(SM_CYSCREEN);
+        serde_json::json!({ "w": w, "h": h })
+    }
+}
+
 fn main() {
     init_log(5);  // keep max 5 log files
     dlog!("Starting Tauri application...");
@@ -1335,7 +1344,7 @@ fn main() {
             capture_single, capture_window,
             capture_stream_start, capture_stream_stop, stream_poll,
             h264_stream_start, h264_stream_stop, h264_poll, h264_init_ready,
-            highlight_window
+            highlight_window, screen_info
         ])
         .setup(|_app| {
             dlog!("Tauri setup complete, window created");
