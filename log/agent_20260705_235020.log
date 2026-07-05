@@ -1,0 +1,81 @@
+=== Game Agent Monitor v0.1.0 ===
+Session: 20260705_235020 | PID: 4620
+Log: C:\Users\Andyq\codes\tictactoe\log\agent_20260705_235020.log
+[23:50:20.398] Starting Tauri application...
+[23:50:21.670] Tauri setup complete, window created
+[23:50:35.393] highlight: hwnd=0
+[23:50:35.394] highlight: hwnd=0
+[23:50:35.394] highlight: hwnd=0
+[23:57:49.286] list_windows: 8 entries in 1ms
+[23:57:50.602] highlight: hwnd=0
+[23:57:50.631] highlight: hwnd=5244054
+[23:57:52.188] list_windows: 8 entries in 0ms
+[23:57:57.713] highlight: hwnd=0
+[23:57:57.739] highlight: hwnd=593648
+[00:01:54.339] capture_window: hwnd=593648...
+[00:01:54.407]   scale=11ms PNG=50ms b64=0ms
+[00:01:54.408] capture: total=5ms encode=62ms method=GDI(GetWindowDC)
+[00:01:54.409] capture_window: 1000x750 @(41,74) method=GDI(GetWindowDC) size=23359 total=69ms
+[00:02:04.988] highlight: hwnd=0
+[00:02:04.988] highlight: hwnd=0
+[00:02:09.482] capture_window: hwnd=0...
+[00:02:09.586]   scale=8ms PNG=50ms b64=1ms
+[00:02:09.586] capture: total=43ms encode=60ms method=GDI
+[00:02:09.588] capture_window: 1920x1080 @(0,0) method=GDI size=50121 total=106ms
+[00:02:11.384] list_windows: 8 entries in 0ms
+[00:02:13.104] highlight: hwnd=0
+[00:02:13.130] highlight: hwnd=197744
+[00:02:15.305] capture_window: hwnd=197744...
+[00:02:15.358]   scale=10ms PNG=38ms b64=0ms
+[00:02:15.358] capture: total=4ms encode=48ms method=GDI(GetWindowDC)
+[00:02:15.359] capture_window: 1498x1028 @(151,0) method=GDI(GetWindowDC) size=3072 total=53ms
+[00:02:20.195] wgc: found exe at C:\Users\Andyq\codes\tictactoe\monitor_web\src-tauri\target\debug\..\..\..\..\capture\build\capture_wgc.exe
+[00:02:20.195] stream_start: hwnd=197744 port=9999 use_wgc=true
+[00:02:20.197] wgc: found exe at C:\Users\Andyq\codes\tictactoe\monitor_web\src-tauri\target\debug\..\..\..\..\capture\build\capture_wgc.exe
+[00:02:20.197] wgc: spawning C:\Users\Andyq\codes\tictactoe\monitor_web\src-tauri\target\debug\..\..\..\..\capture\build\capture_wgc.exe --stream --scale 1280 197744
+[00:02:20.198] tcp: listening on 127.0.0.1:9999
+[00:02:20.442]   WGC [wgc] init OK: 1482x1020
+[00:02:20.442]   WGC [wgc] 126931.142.256 warming up...
+[00:02:20.472]   WGC [wgc] 126931.172.039 warm-up OK: 1482x1020
+[00:02:20.479]   WGC [wgc] 126931.179.348 stream started, Ctrl+C to stop
+[00:02:21.492] stream_stop: signaled stop
+[00:02:21.494] tcp: broadcast thread exiting
+[00:02:22.323] wgc: found exe at C:\Users\Andyq\codes\tictactoe\monitor_web\src-tauri\target\debug\..\..\..\..\capture\build\capture_wgc.exe
+[00:02:22.323] stream_start: hwnd=197744 port=9999 use_wgc=true
+[00:02:22.324] wgc: found exe at C:\Users\Andyq\codes\tictactoe\monitor_web\src-tauri\target\debug\..\..\..\..\capture\build\capture_wgc.exe
+[00:02:22.324] wgc: spawning C:\Users\Andyq\codes\tictactoe\monitor_web\src-tauri\target\debug\..\..\..\..\capture\build\capture_wgc.exe --stream --scale 1280 197744
+[00:02:22.324] tcp: listening on 127.0.0.1:9999
+[00:02:22.455]   WGC [wgc] init OK: 1482x1020
+[00:02:22.455]   WGC [wgc] 126933.155.125 warming up...
+[00:02:22.491]   WGC [wgc] 126933.191.110 warm-up OK: 1482x1020
+[00:02:22.500]   WGC [wgc] 126933.200.549 stream started, Ctrl+C to stop
+[00:02:37.605] stream_stop: signaled stop
+[00:02:37.606] tcp: broadcast thread exiting
+[00:02:38.587] capture_window: hwnd=197744...
+[00:02:38.639]   scale=10ms PNG=37ms b64=0ms
+[00:02:38.639] capture: total=4ms encode=48ms method=GDI(GetWindowDC)
+[00:02:38.639] capture_window: 1498x1028 @(151,0) method=GDI(GetWindowDC) size=3072 total=52ms
+[00:02:39.872] highlight: hwnd=0
+[00:02:39.872] highlight: hwnd=0
+[00:02:53.469] list_windows: 8 entries in 0ms
+[00:02:54.460] highlight: hwnd=0
+[00:02:54.486] highlight: hwnd=197744
+[00:03:00.808] wgc: stream exited after 2 frames
+[00:03:00.814] wgc: stream exited after 2 frames
+[00:09:27.893] highlight: hwnd=0
+[00:09:27.894] highlight: hwnd=0
+[00:14:43.498] highlight: hwnd=0
+[00:14:43.498] highlight: hwnd=0
+[00:14:43.498] highlight: hwnd=0
+[00:15:33.815] highlight: hwnd=0
+[00:15:33.816] highlight: hwnd=0
+[00:15:33.816] highlight: hwnd=0
+[00:15:46.891] highlight: hwnd=0
+[00:15:46.892] highlight: hwnd=0
+[00:15:46.955] highlight: hwnd=0
+[00:16:25.759] highlight: hwnd=0
+[00:16:25.759] highlight: hwnd=0
+[00:16:25.759] highlight: hwnd=0
+[00:19:17.247] highlight: hwnd=0
+[00:19:17.249] highlight: hwnd=0
+[00:19:17.250] highlight: hwnd=0

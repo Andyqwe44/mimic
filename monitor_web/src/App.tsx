@@ -47,7 +47,7 @@ function Tooltip({ text, children }: { text: string; children: React.ReactElemen
 
 // ═══ Layout ───
 const MIN_LEFT_WIDTH = 360
-const DEFAULT_RIGHT_WIDTH = 340
+const DEFAULT_RIGHT_WIDTH = 324
 
 // ═══ Shared log state ───
 type LogEntry = { ts: string; msg: string }
@@ -301,8 +301,8 @@ function ConnectionPanel({ onSelect, onDisconnect }: { onSelect: (w: WindowInfo)
         <div className="flex items-center gap-2">
           <MonitorUp className="w-4 h-4 text-text-secondary" />
           <span className="text-sm font-medium text-text-primary">Connection</span>
-          <span className={`text-xs ml-1 ${isDesktop ? 'text-text-muted' : 'text-success'}`}>
-            {isDesktop ? 'Desktop' : title.length > 16 ? title.slice(0,16)+'…' : title}
+          <span className={`text-xs ml-1 truncate max-w-[100px] ${isDesktop ? 'text-text-muted' : 'text-success'}`}>
+            {isDesktop ? 'Desktop' : title}
           </span>
         </div>
         <ChevronDown className={`w-4 h-4 text-text-muted transition-transform duration-150 ${expanded?'rotate-180':''}`} />
@@ -312,25 +312,27 @@ function ConnectionPanel({ onSelect, onDisconnect }: { onSelect: (w: WindowInfo)
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-border" />
           <div className="p-3 space-y-2">
-            <div className="flex gap-2">
-              {onDisconnect && (
-                <Tooltip text="断开当前窗口连接，回到桌面">
-                  <button onClick={() => { onDisconnect(); setTitle(' Entire Desktop') }}
-                    className="p-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+            <div className="flex justify-between">
+              <div className="flex items-center gap-1.5">
+                <Tooltip text="已选择的目标窗口（只读，请用Select选择）">
+                  <input value={title} readOnly placeholder="Window Title"
+                    className="w-36 h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none cursor-default text-text-muted truncate" />
                 </Tooltip>
-              )}
-              <Tooltip text="已选择的目标窗口（只读，请用Select选择）">
-                <input value={title} readOnly placeholder="Window Title"
-                  className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none cursor-default text-text-muted" />
-              </Tooltip>
-              <ActionBtn icon={<MonitorUp className="w-3.5 h-3.5" />} label="Select" title="选择要捕获的窗口或桌面" variant="primary" onClick={() => setPickerOpen(true)} />
+                {onDisconnect && (
+                  <Tooltip text="断开当前窗口连接，回到桌面">
+                    <button onClick={() => { onDisconnect(); setTitle(' Entire Desktop') }}
+                      className="h-8 w-8 flex items-center justify-center rounded-md bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+              <ActionBtn icon={<MonitorUp className="w-3.5 h-3.5" />} label="Select" title="选择要捕获的窗口或桌面" variant="primary" onClick={() => setPickerOpen(true)} className="h-8" />
             </div>
-            <div className="flex gap-2">
+            <div className="flex justify-between">
               <Tooltip text="AI模型服务器IP地址">
                 <input value={ip} onChange={e => { const v=e.target.value; if(v.includes('::')){const[a,b]=v.split('::',2);setIp(a.trim());if(b?.trim())setPort(b.trim())}else setIp(v) }} placeholder="IP Address"
-                  className="flex-1 min-w-0 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
+                  className="w-[184px] h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
               </Tooltip>
               <Tooltip text="Port端口号">
                 <input value={port} onChange={e => { const v=e.target.value; if(v.includes('::')){const[a,b]=v.split('::',2);if(a?.trim())setIp(a.trim());setPort(b?.trim()??'')}else setPort(v) }} placeholder="Port"
@@ -479,7 +481,7 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-border" />
           <div className="p-3">
-            <div className="w-full aspect-video rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative">
+            <div className="w-full h-[140px] rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative">
               {previewing ? (
                 <canvas ref={canvasRef} className="max-w-full max-h-full object-contain"
                   style={{ width: canvasDims.w, height: canvasDims.h }} />
@@ -526,12 +528,12 @@ function LogPanel() {
         style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}>
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-border" />
-          <div className="h-[180px] overflow-y-auto p-3">
+          <div className="h-[180px] overflow-y-auto p-3 flex flex-col">
             {reversed.length === 0 ? (
               <div className="flex items-center justify-center h-full text-sm text-text-muted">No logs</div>
             ) : (
-              <div className="space-y-1 font-mono text-xs text-text-secondary">
-                {reversed.map((l, i) => (
+              <div className="space-y-1 font-mono text-xs text-text-secondary pt-0.5">
+                {reversed.slice(0, 100).map((l, i) => (
                   <div key={i}><span className="text-text-muted">[{l.ts}]</span> {l.msg}</div>
                 ))}
               </div>
@@ -671,7 +673,7 @@ export default function App() {
     const onMove = (ev: MouseEvent) => {
       const w = document.body.clientWidth - ev.clientX
       if (w < 160) setRightCollapsed(true)
-      else { setRightCollapsed(false); setRightWidth(Math.max(320, Math.min(800, w))) }
+      else { setRightCollapsed(false); setRightWidth(Math.max(324, Math.min(400, w))) }
     }
     const onUp = () => { isResizing.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
@@ -703,7 +705,7 @@ export default function App() {
           </div>
         </Tooltip>
         {!rightCollapsed && (
-          <div className="flex flex-col p-3 gap-3 overflow-y-auto shrink-0" style={{ width: rightWidth, minWidth: 240 }}>
+          <div className="flex flex-col p-3 gap-3 overflow-y-auto shrink-0" style={{ width: rightWidth, minWidth: 324, maxWidth: 400 }}>
             <ConnectionPanel onSelect={setSelWindow} onDisconnect={() => {
               setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
               addLog('Disconnected, back to desktop')
