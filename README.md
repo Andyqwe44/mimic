@@ -140,26 +140,31 @@ Scale (max 640px) + BGRA→RGBA + PNG (miniz_oxide) + base64
 <img> 按比例定位在 16:9 容器内
 ```
 
-### Preview (实时预览) 数据流 — BMP 多方法流式捕获
+### Preview (实时预览) — BMP 多方法流式捕获 + TCP 广播
 
 ```
 Rust 线程 (持久, 无 C++ 子进程)
   首帧: capture_window_internal → 检测最佳方法
-  后续帧: capture_fast(method) → 跳过回退链, 直接使用最佳方法
-  ↓
-  BGRA → BMP (零压缩, ~0.1ms) → base64 → Tauri event "stream-tick"
-  ↓
-  JS <img src="data:image/bmp;base64,..."> (浏览器原生解码)
+  后续帧: capture_fast(method) → 跳过回退链
+  ├── BGRA → BMP → base64 → stream-tick → GUI <img>
+  └── BGRA → RAW_FRAME → TCP :9999 广播 → agent.exe/Python/任意
+```
+
+**TCP 帧协议** (binary LE):
+```
+[w:4][h:4][ch:4][size:4][BGRA pixels: size bytes]
+w,h=缩放后尺寸, ch=4, size=w*h*4
 ```
 
 **流式捕获方法回退链:**
 ```
 Method 1: GetWindowDC + BitBlt (~2-5ms, 200+fps)
-Method 2: PrintWindow(PW_RENDERFULLCONTENT) (~15-30ms, 处理遮挡/最小化)
-Method 3: ScreenBitBlt (~2-5ms, 屏幕DC裁剪)
+Method 2: PrintWindow(PW_RENDERFULLCONTENT) (~15-30ms, 品红哨兵检测)
+Method 3: ScreenBitBlt (~2-5ms, 窗口屏幕坐标裁剪)
 ```
-首帧检测最佳方法后, 后续帧直接使用该方法 (避免每帧回退开销)。
-持续失败时自动重新检测。
+首帧检测最佳方法后, 后续帧直接使用该方法。
+品红/纯色检测自动触发回退, 持续失败自动重检测。
+窗口关闭自动停止 (IsWindow 检查)。
 
 **未来方案: GPU H.264 硬件编码 (capture_h264.exe)**
 ```
