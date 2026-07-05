@@ -5,12 +5,12 @@
  * All other modules (transport, payload) depend on this, never vice versa.
  *
  * Frame on the wire (binary, little-endian):
- *   [magic:4][payload_size:4][type_tag:4][payload_body: payload_size-4 bytes]
+ *   [magic:4][payload_size:4][type_tag:4][payload_body: payload_size bytes]
  *
- * magic      = 0x4D415246 ("FRAM" LE) — identifies this protocol
- * payload_size = total bytes after this field (type_tag + body)
- * type_tag   = what kind of payload follows (see PayloadType enum)
- * payload_body = type-specific data
+ * magic         = 0x4D415246 ("FRAM" LE) — identifies this protocol
+ * payload_size  = byte count of payload_body only (NOT including type_tag)
+ * type_tag      = what kind of payload follows (see PayloadType enum)
+ * payload_body  = type-specific data, exactly payload_size bytes
  *
  * Keep in sync with: protocol/protocol.rs, protocol/protocol.py
  */

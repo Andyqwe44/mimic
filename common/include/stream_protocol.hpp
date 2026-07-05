@@ -57,7 +57,8 @@ inline bool parse_frame_header(const uint8_t* hdr, uint32_t& payload_size) {
 }
 
 // ── Application payload helpers (optional, for BGRA frame payload) ──
-// Application defines its own payload format. These are examples.
+// NOTE: canonical BGRA pack/unpack lives in common/payload/bgra.hpp (payload::bgra_pack/unpack).
+// Prefer payload/bgra.hpp for new code. These are kept for backward compat with examples/.
 constexpr uint32_t BGRA_HEADER_SIZE   = 16;  // w(4)+h(4)+ch(4)+reserved(4)
 inline void build_bgra_payload_header(uint8_t* hdr, uint32_t w, uint32_t h, uint32_t ch) {
     auto w32 = [&](uint32_t v) { *hdr++ = (uint8_t)v; *hdr++ = (uint8_t)(v>>8); *hdr++ = (uint8_t)(v>>16); *hdr++ = (uint8_t)(v>>24); };

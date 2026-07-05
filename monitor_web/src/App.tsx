@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Camera, Monitor, Settings, Moon, Sun, ChevronUp, ChevronDown, FileText, Trash2, X, MonitorUp, Search, MonitorSmartphone, RefreshCw } from 'lucide-react'
+import { Play, Square, Camera, Monitor, Settings, Moon, Sun, ChevronDown, FileText, Trash2, X, MonitorUp, Search, MonitorSmartphone, RefreshCw } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 // ═══ Tooltip ── 300ms delay, portal to body, smart positioning ═══
 function Tooltip({ text, children }: { text: string; children: React.ReactElement }) {
@@ -170,7 +172,6 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
   const loadWindows = async () => {
     setLoading(true)
     try {
-      const { invoke } = await import('@tauri-apps/api/core')
       const list = await invoke<WindowInfo[]>('list_windows')
       setWindows(list)
       addLog(`Windows loaded: ${list.length} entries`)
@@ -183,7 +184,6 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
   const loadProcesses = async () => {
     setLoading(true)
     try {
-      const { invoke } = await import('@tauri-apps/api/core')
       const list = await invoke<WindowInfo[]>('list_processes')
       setProcesses(list)
       addLog(`Processes loaded: ${list.length} entries`)
@@ -390,24 +390,22 @@ function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenR
     if (previewing) {
       previewingRef.current = false; setPreviewing(false); setFps(0); setCapMethod('')
       if (unlistenRef.current) { unlistenRef.current(); unlistenRef.current = null }
-      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('capture_stream_stop') } catch (_) {}
+      try { await invoke<string>('capture_stream_stop') } catch (_) {}
       setImgSrc('')
       addLog('Preview stopped')
     } else {
       const hwnd = selWin?.hwnd ?? 0
       addLog(`Preview: ${selWin?.title ?? 'desktop'} (multi-method BMP)`)
-      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999 }) }
+      try { await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999 }) }
       catch (e) { addLog(`Stream start failed: ${e}`); return }
 
       previewingRef.current = true; setPreviewing(true); setImgSrc('')
       framesRef.current = 0; lastFpsRef.current = Date.now()
 
-      const { listen } = await import('@tauri-apps/api/event')
       const unlisten = await listen<{ method: string }>('stream-tick', async (event) => {
         if (!previewingRef.current) return
         if (event.payload.method) setCapMethod(event.payload.method)
         try {
-          const { invoke } = await import('@tauri-apps/api/core')
           const json = await invoke<string>('stream_poll')
           if (json && canvasRef.current) {
             const data = JSON.parse(json)  // {p: base64, w, h, m}
@@ -434,10 +432,12 @@ function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenR
     }
   }
 
-  // Cleanup
+  // Cleanup: stop stream and unlisten on unmount
   useEffect(() => { return () => {
     previewingRef.current = false
-    if (unlistenRef.current) unlistenRef.current()
+    if (unlistenRef.current) { unlistenRef.current(); unlistenRef.current = null }
+    // Stop backend stream to prevent resource leak
+    invoke<string>('capture_stream_stop').catch(() => {})
   } }, [])
 
   return (
@@ -457,7 +457,6 @@ function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenR
               addLog(`Capturing ${hwnd ? 'window hwnd='+hwnd : 'desktop'}...`)
               const t0 = Date.now()
               try {
-                const { invoke } = await import('@tauri-apps/api/core')
                 const json = await invoke<string>('capture_window', { hwnd })
                 const elapsed = Date.now() - t0
                 if (applyCaptureJson(json)) { addLog(`Screenshot OK (${elapsed}ms)`) }
@@ -631,7 +630,7 @@ function SettingsPage() {
         <div className="mt-4 pt-4 border-t border-border">
           <div className="text-xs font-medium text-text-secondary mb-1">Links</div>
           {[{l:'GitHub',u:'https://github.com/Andyqwe44/tictactoe'},{l:'Slint',u:'https://slint.dev'},{l:'Tauri 2',u:'https://v2.tauri.app'}].map(x=>
-          <button key={x.l} onClick={async()=>{try{const{open}=await import('@tauri-apps/plugin-shell');await open(x.u)}catch{window.open(x.u,'_blank')}}}
+          <button key={x.l} onClick={()=>{try{window.open(x.u,'_blank')}catch{}}}
             className="block text-sm text-accent hover:underline py-0.5 cursor-pointer">{x.l}</button>
         )}
           <div className="text-xs font-medium text-text-secondary mt-3 mb-1">Credits</div>
@@ -648,7 +647,6 @@ function DashboardView() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core')
         const si = await invoke<{w:number;h:number}>('screen_info')
         setInfo(i => ({ ...i, screen: `${si.w}×${si.h}`, status: 'Ready' }))
       } catch (_) {}
@@ -715,7 +713,6 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core')
         const si = await invoke<{w:number;h:number}>('screen_info')
         setScreenRatio(si.w / si.h)
       } catch (_) {}
@@ -726,7 +723,6 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core')
         await invoke('highlight_window', { hwnd: selWindow.hwnd })
       } catch (_) {}
     })()

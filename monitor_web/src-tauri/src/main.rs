@@ -631,7 +631,7 @@ unsafe fn create_overlay_bars(hwnd: isize) {
 fn start_overlay_tracker() {
     std::thread::spawn(|| unsafe {
         use windows::Win32::UI::Accessibility::{
-            SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK,
+            SetWinEventHook, UnhookWinEvent,
         };
         use windows::Win32::UI::WindowsAndMessaging::{
             GetMessageW, DispatchMessageW, MSG,
@@ -784,29 +784,6 @@ unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(
             r
         }
     }
-}
-
-/// BGRA pixels → BMP data URI (base64). Zero-compression, browser-native decode.
-fn bgra_to_bmp_uri(pixels: &[u8], w: i32, h: i32) -> String {
-    let row_size = ((w * 3 + 3) / 4) * 4;
-    let img_size = (row_size * h) as usize;
-    let file_size = 54 + img_size;
-    let mut bmp = Vec::with_capacity(file_size);
-    bmp.extend_from_slice(b"BM"); bmp.extend_from_slice(&(file_size as u32).to_le_bytes());
-    bmp.extend_from_slice(&[0u8;4]); bmp.extend_from_slice(&54u32.to_le_bytes());
-    bmp.extend_from_slice(&40u32.to_le_bytes());
-    bmp.extend_from_slice(&(w as i32).to_le_bytes()); bmp.extend_from_slice(&(-h as i32).to_le_bytes());
-    bmp.extend_from_slice(&1u16.to_le_bytes()); bmp.extend_from_slice(&24u16.to_le_bytes());
-    bmp.extend_from_slice(&[0u8;24]);
-    for y in 0..h as usize {
-        let rs = y * w as usize * 4;
-        for x in 0..w as usize {
-            let si = rs + x * 4;
-            bmp.push(pixels[si]); bmp.push(pixels[si+1]); bmp.push(pixels[si+2]);
-        }
-        for _ in 0..row_size as usize - w as usize * 3 { bmp.push(0); }
-    }
-    format!("data:image/bmp;base64,{}", base64_encode(&bmp))
 }
 
 /// Resolve path to capture_wgc.exe relative to the Tauri binary.

@@ -125,9 +125,9 @@ def actions_to_bytes(actions: List[ParsedAction]) -> bytes:
         elif a.type in (TOK_MOUSE_DOWN, TOK_MOUSE_UP):
             buf.append(a.btn & 0xFF)
         elif a.type in (TOK_KEY_PRESS, TOK_KEY_RELEASE):
-            buf += struct.pack('>H', a.vk_code)
+            buf += struct.pack('<H', a.vk_code)
         elif a.type == TOK_KEY_TAP:
-            buf += struct.pack('>Hi', a.vk_code, a.duration_ms)
+            buf += struct.pack('<Hi', a.vk_code, a.duration_ms)
         elif a.type == TOK_WAIT:
             buf += struct.pack('<i', a.duration_ms)
     buf.append(TOK_NOOP)

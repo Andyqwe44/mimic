@@ -44,8 +44,11 @@ class PerceptionSpecialist(nn.Module):
             nn.AdaptiveAvgPool2d((3, 3)),                           # 11->3 (any input -> 3x3)
         )
 
-        # Compute flattened dim after conv
-        self.conv_out_dim = 32 * 3 * 3  # 288
+        # Compute flattened dim after conv (channel count × AdaptiveAvgPool2d target)
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, input_h, input_w)
+            conv_out = self.conv(dummy)
+            self.conv_out_dim = conv_out.numel() // conv_out.shape[0]  # features per sample
 
         # Bottleneck: dense projection to z
         self.fc_mu = nn.Linear(self.conv_out_dim, z_dim)     # mean
@@ -142,7 +145,9 @@ class StrategicReasoner(nn.Module):
             tgt = self.token_embed(target_tokens)
             seq_len = target_tokens.shape[1]
             tgt = tgt + self.pos_embed[:, :seq_len, :]
-            out = self.transformer(tgt, memory)
+            # Causal mask: prevent attending to future tokens during training
+            tgt_mask = torch.nn.Transformer.generate_square_subsequent_mask(seq_len, device=tgt.device)
+            out = self.transformer(tgt, memory, tgt_mask=tgt_mask)
             logits = self.head(out)
         else:
             # Autoregressive

@@ -21,21 +21,25 @@ from .action_space import ACTION_VOCAB_SIZE, MAX_ACTION_TOKENS, TOK_NOOP
 class VisionEncoder(nn.Module):
     """CNN encoder: (B, 4, 84, 84) -> (B, N, d_model)"""
 
-    def __init__(self, d_model: int = 256):
+    def __init__(self, d_model: int = 256, input_shape: tuple = (4, 84, 84)):
         super().__init__()
         # Nature CNN backbone, slightly modernized
         self.conv = nn.Sequential(
-            nn.Conv2d(4, 32, 8, stride=4), nn.ReLU(),      # 84->20
-            nn.Conv2d(32, 64, 4, stride=2), nn.ReLU(),     # 20->9
-            nn.Conv2d(64, 64, 3, stride=1), nn.ReLU(),     # 9->7
+            nn.Conv2d(input_shape[0], 32, 8, stride=4), nn.ReLU(),  # 84->20
+            nn.Conv2d(32, 64, 4, stride=2), nn.ReLU(),              # 20->9
+            nn.Conv2d(64, 64, 3, stride=1), nn.ReLU(),              # 9->7
         )
-        # 64 channels * 7 * 7 = 3136 -> d_model
-        self.fc = nn.Linear(64 * 7 * 7, d_model)
+        # Compute flattened dim from a dummy forward pass
+        with torch.no_grad():
+            dummy = torch.zeros(1, *input_shape)
+            conv_out = self.conv(dummy)
+            self.conv_flat_dim = conv_out.numel() // conv_out.shape[0]  # features per sample
+        self.fc = nn.Linear(self.conv_flat_dim, d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, 4, 84, 84)
-        x = self.conv(x)                           # (B, 64, 7, 7)
-        x = x.flatten(1)                           # (B, 3136)
+        # x: (B, C, H, W)
+        x = self.conv(x)                           # (B, C_out, H_out, W_out)
+        x = x.flatten(1)                           # (B, conv_flat_dim)
         x = self.fc(x)                             # (B, d_model)
         return x.unsqueeze(1)                      # (B, 1, d_model) - single "image token"
 
@@ -80,7 +84,9 @@ class ActionDecoder(nn.Module):
             seq_len = target_tokens.shape[1]
             tgt = self.token_embed(target_tokens)  # (B, seq_len, d_model)
             tgt = tgt + self.pos_embed[:, :seq_len, :]
-            out = self.transformer(tgt, memory)    # (B, seq_len, d_model)
+            # Causal mask: prevent attending to future tokens during training
+            tgt_mask = torch.nn.Transformer.generate_square_subsequent_mask(seq_len, device=tgt.device)
+            out = self.transformer(tgt, memory, tgt_mask=tgt_mask)  # (B, seq_len, d_model)
             return self.head(out)                   # (B, seq_len, vocab)
         else:
             # Autoregressive inference

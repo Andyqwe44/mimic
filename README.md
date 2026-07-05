@@ -42,6 +42,10 @@ tictactoe/
 │       ├── protocol.rs        # include! shared protocol
 │       └── payload/bgra.rs    # Rust 应用层
 ├── model/                     # Python
+│   ├── action_space.py        # 动作词表 + 序列化
+│   ├── generic_agent.py       # VisionEncoder + Transformer ActionDecoder
+│   ├── hierarchical.py        # L1 感知 + L2 策略推理
+│   └── payload/bgra.py        # BGRA 像素打包/解析
 ├── examples/                  # 端到端协议示例 + Benchmark
 │   ├── wgc_bench_send.cpp     # WGC → TCP 基准测试 (C++)
 │   ├── wgc_bench_recv.rs      # TCP → 文件 基准测试 (Rust)
@@ -128,3 +132,22 @@ npm run tauri build                      # 生产 .exe
 ## H.264 GPU (未来)
 `capture_h264.exe`: FramePool → MF H.264 硬件编码 → pipe/TCP。
 AMD 驱动不暴露 MF 编码器 (CLSID ADC9BC80 返回空类型)。
+
+## AI 模型
+
+### GenericAgent (L3 单体)
+CNN Encoder (Nature-style) → Transformer Decoder (自回归动作生成)。
+~0.8M–3M 参数。训练用因果 mask + teacher forcing。
+输入: 4×84×84 灰度帧栈 → 输出: 动作 token 序列。
+
+### HierarchicalAgent (L1+L2)
+L1: 感知专家 — 小 CNN 将像素压缩到 16-dim z（VAE 信息瓶颈）。
+L2: 策略推理 — z + 动作历史 → Transformer → 动作 tokens。
+端到端训练，Loss = L_task + γ*L_KL。
+
+## 已知限制
+
+- 项目存在**两套线协议**（protocol/ 12字节 vs stream_protocol 8字节），共享同一 magic，互不兼容。统一计划中。
+- C++ capture 代码大量重复（WGC 3×, DXGI 4×, GDI 4×），待抽取共享库。
+- TCP send 短写会断连客户端，应改为循环发送。
+- recv 路径无 payload_size 上限检查，恶意帧可触发 OOM。
