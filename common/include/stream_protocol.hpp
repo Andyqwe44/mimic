@@ -1,13 +1,14 @@
 /**
- * Stream Protocol — shared constants across C++, Rust, Python.
+ * Stream Protocol — pure transport layer. No knowledge of payload content.
  *
  * Frame format (binary, little-endian):
- *   [magic:4 "FRAM"][w:4][h:4][ch:4][size:4][pixels: size bytes]
+ *   [magic:4 "FRAM"][size:4 LE][payload: size bytes]
  *
  * magic = 0x4D415246 ("FRAM" in LE)
- * w, h  = frame dimensions (pixels)
- * ch    = color channels (4 = BGRA)
- * size  = w * h * ch bytes of raw pixel data
+ * size  = payload byte count
+ *
+ * The payload is opaque bytes. Application layer defines its own format
+ * (e.g. BGRA pixels with dimensions, H.264 NAL units, JSON, etc.)
  *
  * Keep in sync with:
  *   monitor_web/src-tauri/src/stream_protocol.rs
@@ -23,40 +24,48 @@ constexpr uint16_t DEFAULT_TCP_PORT   = 9999;
 constexpr char     DEFAULT_HOST[]     = "127.0.0.1";
 
 // ── Pipe ────────────────────────────────────────────────
-constexpr char     DEFAULT_PIPE_NAME[] = "tictactoe_stream";  // → \\.\pipe\tictactoe_stream
+constexpr char     DEFAULT_PIPE_NAME[] = "tictactoe_stream";
 
-// ── Frame format constants ──────────────────────────────
+// ── Frame header ────────────────────────────────────────
 constexpr uint32_t FRAME_MAGIC        = 0x4D415246;  // "FRAM" LE
-constexpr uint32_t FRAME_MAGIC_OFFSET = 0;
-constexpr uint32_t FRAME_WIDTH_OFFSET = 4;
-constexpr uint32_t FRAME_HEIGHT_OFFSET= 8;
-constexpr uint32_t FRAME_CH_OFFSET    = 12;
-constexpr uint32_t FRAME_SIZE_OFFSET  = 16;
-constexpr uint32_t FRAME_HEADER_SIZE  = 20;          // 5 × uint32_t
+constexpr uint32_t FRAME_HEADER_SIZE  = 8;            // magic(4) + size(4)
+
+// ── Application payload format (defined here for convenience, not enforced) ──
+constexpr int      MAX_FRAME_DIM      = 640;
 constexpr uint32_t FRAME_CH_BGRA      = 4;
 
-// ── Pixel scaling ───────────────────────────────────────
-constexpr int      MAX_FRAME_DIM      = 640;          // max width/height after scale
-
-// ── Capabilities (bitmask) ──────────────────────────────
-enum Capability : uint32_t {
-    CAP_NONE        = 0,
-    CAP_BGRA_RAW    = 1 << 0,   // raw BGRA pixels
-    CAP_H264_STREAM = 1 << 1,   // H.264 NAL units (future)
-    CAP_DESKTOP     = 1 << 2,   // can capture desktop
-    CAP_WINDOW      = 1 << 3,   // can capture specific windows
-};
-
-// ── Helper: build frame header into buffer[20] ──────────
-inline void build_frame_header(uint8_t* hdr, uint32_t w, uint32_t h, uint32_t ch, uint32_t size) {
-    auto w32 = [&](uint32_t v) { *hdr++ = (uint8_t)v; *hdr++ = (uint8_t)(v>>8); *hdr++ = (uint8_t)(v>>16); *hdr++ = (uint8_t)(v>>24); };
-    w32(FRAME_MAGIC); w32(w); w32(h); w32(ch); w32(size);
+// ── Helper: build frame header [magic:4][size:4] ───────
+inline void build_frame_header(uint8_t* hdr, uint32_t payload_size) {
+    hdr[0] = (uint8_t)(FRAME_MAGIC & 0xFF);
+    hdr[1] = (uint8_t)((FRAME_MAGIC >> 8) & 0xFF);
+    hdr[2] = (uint8_t)((FRAME_MAGIC >> 16) & 0xFF);
+    hdr[3] = (uint8_t)((FRAME_MAGIC >> 24) & 0xFF);
+    hdr[4] = (uint8_t)(payload_size & 0xFF);
+    hdr[5] = (uint8_t)((payload_size >> 8) & 0xFF);
+    hdr[6] = (uint8_t)((payload_size >> 16) & 0xFF);
+    hdr[7] = (uint8_t)((payload_size >> 24) & 0xFF);
 }
 
-// ── Helper: parse frame header from buffer[20] ──────────
-inline void parse_frame_header(const uint8_t* hdr, uint32_t& magic, uint32_t& w, uint32_t& h, uint32_t& ch, uint32_t& size) {
-    auto r32 = [&](const uint8_t* p) -> uint32_t { return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); };
-    magic = r32(hdr); w = r32(hdr+4); h = r32(hdr+8); ch = r32(hdr+12); size = r32(hdr+16);
+// ── Helper: parse header → (ok, payload_size) ──────────
+inline bool parse_frame_header(const uint8_t* hdr, uint32_t& payload_size) {
+    uint32_t magic = (uint32_t)hdr[0] | ((uint32_t)hdr[1]<<8)
+                   | ((uint32_t)hdr[2]<<16) | ((uint32_t)hdr[3]<<24);
+    if (magic != FRAME_MAGIC) return false;
+    payload_size = (uint32_t)hdr[4] | ((uint32_t)hdr[5]<<8)
+                 | ((uint32_t)hdr[6]<<16) | ((uint32_t)hdr[7]<<24);
+    return true;
+}
+
+// ── Application payload helpers (optional, for BGRA frame payload) ──
+// Application defines its own payload format. These are examples.
+constexpr uint32_t BGRA_HEADER_SIZE   = 16;  // w(4)+h(4)+ch(4)+reserved(4)
+inline void build_bgra_payload_header(uint8_t* hdr, uint32_t w, uint32_t h, uint32_t ch) {
+    auto w32 = [&](uint32_t v) { *hdr++ = (uint8_t)v; *hdr++ = (uint8_t)(v>>8); *hdr++ = (uint8_t)(v>>16); *hdr++ = (uint8_t)(v>>24); };
+    w32(w); w32(h); w32(ch); w32(0);  // reserved
+}
+inline void parse_bgra_payload_header(const uint8_t* hdr, uint32_t& w, uint32_t& h, uint32_t& ch) {
+    auto r32 = [](const uint8_t* p) -> uint32_t { return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); };
+    w = r32(hdr); h = r32(hdr+4); ch = r32(hdr+8);
 }
 
 } // namespace stream_protocol

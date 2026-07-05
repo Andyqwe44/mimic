@@ -516,9 +516,9 @@ fn tcp_broadcast_thread(
                 else { Some((pixels.clone(), w, h)) }
             } else { None }
         };
-        if let Some((ref pixels, w, h)) = snapshot {
+        if let Some((ref payload, _, _)) = snapshot {
             clients.retain_mut(|client| {
-                if stream_protocol::write_frame(client, w as u32, h as u32, stream_protocol::FRAME_CH_BGRA, pixels).is_err() { false } else { true }
+                if stream_protocol::send_frame(client, payload).is_err() { false } else { true }
             });
         }
 
@@ -678,11 +678,11 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
                     }
                 } else {
                     let uri = bgra_to_bmp_uri(&pixels, w, h);
-                    // Store raw BGRA for TCP clients
+                    // Build payload: [w:4][h:4][ch:4][reserved:4][pixels]
+                    let payload = stream_protocol::build_bgra_payload(w as u32, h as u32, 4, &pixels);
                     if let Ok(mut raw) = RAW_FRAME.lock() {
-                        *raw = (pixels.clone(), w, h);
+                        *raw = (payload, w, h);
                     }
-                    // Broadcast to TCP clients without holding the lock
                     prev_pixels = pixels;
                     if let Ok(mut state) = STREAM_FRAME.lock() {
                         *state = (uri, w, h, method.clone());

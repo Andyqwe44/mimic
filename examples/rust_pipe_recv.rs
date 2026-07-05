@@ -1,63 +1,41 @@
-//! 示例: Rust 从 stdin 读取 C++ pipe 发来的帧
+//! 示例: Rust 接收 pipe → 解析 BGRA payload
 //!
-//! 运行:
-//!   rustc rust_pipe_recv.rs -o rust_pipe_recv
-//!   ./cpp_pipe_send.exe | ./rust_pipe_recv
-//!
-//! 或直接使用项目内的 stream_protocol 模块:
-//!   cargo run --example rust_pipe_recv < pipe.dat
+//! 运行: ./cpp_pipe_send.exe | ./rust_pipe_recv
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 
-// ── stream_protocol 的核心逻辑（复制自 src-tauri/src/stream_protocol.rs）────
+const FRAME_MAGIC: u32 = 0x4D415246;
+const HDR_SIZE: usize = 8;  // magic(4) + size(4)
+const BGRA_HDR_SIZE: usize = 16; // w(4)+h(4)+ch(4)+reserved(4)
 
-const FRAME_MAGIC: u32 = 0x4D415246; // "FRAM" LE
-const FRAME_HEADER_SIZE: usize = 20;
-
-fn parse_header(data: &[u8; 20]) -> Option<(u32, u32, u32, u32)> {
-    let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    if magic != FRAME_MAGIC { return None; }
-    let w = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-    let h = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
-    let ch = u32::from_le_bytes([data[12], data[13], data[14], data[15]]);
-    let size = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
-    Some((w, h, ch, size))
-}
-
-fn read_frame(reader: &mut impl Read) -> io::Result<Option<(u32, u32, u32, Vec<u8>)>> {
-    let mut hdr = [0u8; FRAME_HEADER_SIZE];
+fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
+    let mut hdr = [0u8; HDR_SIZE];
     if reader.read_exact(&mut hdr).is_err() { return Ok(None); }
-
-    // 全是 0 的帧头 = 发送端发来的"无变化"信号
-    if hdr.iter().all(|&b| b == 0) {
-        return Ok(None); // unchanged signal
-    }
-
-    let Some((w, h, ch, size)) = parse_header(&hdr) else {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic"));
-    };
-    let mut pixels = vec![0u8; size as usize];
-    reader.read_exact(&mut pixels)?;
-    Ok(Some((w, h, ch, pixels)))
+    let magic = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+    if magic != FRAME_MAGIC { return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic")); }
+    let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
+    let mut payload = vec![0u8; size as usize];
+    reader.read_exact(&mut payload)?;
+    Ok(Some(payload))
 }
-
-// ── 主程序 ──────────────────────────────────────────────
 
 fn main() {
-    let stdin = io::stdin();
-    let mut reader = stdin.lock();
+    let mut reader = io::stdin().lock();
     let mut frames = 0u64;
-    let mut skipped = 0u64;
 
-    while let Ok(Some((w, h, ch, pixels))) = read_frame(&mut reader) {
+    while let Ok(Some(payload)) = read_frame(&mut reader) {
         frames += 1;
-        eprintln!(
-            "[rust] frame {}: {}x{} ch={} {}KB",
-            frames,
-            w, h, ch,
-            pixels.len() / 1024
-        );
+        // ── 应用层: 解析 BGRA payload ──
+        if payload.len() >= BGRA_HDR_SIZE {
+            let w = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+            let h = u32::from_le_bytes([payload[4], payload[5], payload[6], payload[7]]);
+            let ch = u32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]]);
+            let px = payload.len() - BGRA_HDR_SIZE;
+            eprintln!("[rust] frame {}: {}x{} ch={} pixels={}B payload={}B",
+                frames, w, h, ch, px, payload.len());
+        } else {
+            eprintln!("[rust] frame {}: raw payload {}B", frames, payload.len());
+        }
     }
-
-    eprintln!("[rust] done: {} frames received, {} skipped (unchanged)", frames, skipped);
+    eprintln!("[rust] done: {} frames", frames);
 }

@@ -1,15 +1,16 @@
 /**
- * examples/cpp_sender.hpp — send frames via pipe or TCP
+ * examples/cpp_sender.hpp — pure transport layer, payload-agnostic.
+ *
+ * Sender doesn't know or care what the bytes mean. It just wraps them
+ * in the stream_protocol header [magic:4][size:4] and sends.
  *
  * Usage:
- *   PipeFrameSender sender;                       // stdout pipe
- *   sender.send_frame(pixels, w, h);
+ *   PipeFrameSender sender;
+ *   sender.send(my_data, my_data_size);
  *
- *   TcpFrameSender sender;                        // TCP :9999
- *   sender.connect();
- *   sender.send_frame(pixels, w, h);
- *
- * Build: 任何 C++ 项目 #include "stream_protocol.hpp" + 本文件即可
+ *   TcpFrameSender sender;
+ *   sender.listen(9999);
+ *   sender.broadcast(my_data, my_data_size);
  */
 #pragma once
 #include <cstdint>
@@ -24,47 +25,34 @@
 #pragma comment(lib, "ws2_32.lib")
 
 // ═══ Pipe 发送端 ═══
-// 通过 stdout pipe 发送帧。接收方从 stdin 读取。
-// 使用前必须 _setmode(_fileno(stdout), _O_BINARY)。
+// 通过 stdout pipe 发送任意字节数据。
 struct PipeFrameSender {
-    PipeFrameSender() {
-        _setmode(_fileno(stdout), _O_BINARY);   // 防止 \n→\r\n
-    }
+    PipeFrameSender() { _setmode(_fileno(stdout), _O_BINARY); }
 
-    /// 发送一帧到 stdout
-    bool send_frame(const std::vector<uint8_t>& bgra, uint32_t w, uint32_t h) {
+    bool send(const void* data, uint32_t size) {
         uint8_t hdr[stream_protocol::FRAME_HEADER_SIZE];
-        stream_protocol::build_frame_header(
-            hdr, w, h, stream_protocol::FRAME_CH_BGRA, (uint32_t)bgra.size());
+        stream_protocol::build_frame_header(hdr, size);
         if (fwrite(hdr, 1, sizeof(hdr), stdout) != sizeof(hdr)) return false;
-        if (fwrite(bgra.data(), 1, bgra.size(), stdout) != bgra.size()) return false;
+        if (fwrite(data, 1, size, stdout) != size) return false;
         fflush(stdout);
         return true;
     }
 
-    /// 发送尺寸为 0 的帧（信号接收方"帧未变"）
-    void send_unchanged() {
-        uint8_t hdr[stream_protocol::FRAME_HEADER_SIZE] = {};
-        fwrite(hdr, 1, sizeof(hdr), stdout);
-        fflush(stdout);
-    }
+    bool send(const std::vector<uint8_t>& data) { return send(data.data(), (uint32_t)data.size()); }
 };
 
-// ═══ TCP 发送端 ═══
-// 监听指定端口，多客户端可同时连接。
+// ═══ TCP 广播端 ═══
+// 监听端口，多客户端连接，广播任意字节数据。
 struct TcpFrameSender {
     TcpFrameSender() { WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa); }
     ~TcpFrameSender() { close(); WSACleanup(); }
 
-    /// 启动监听
     bool listen(uint16_t port = stream_protocol::DEFAULT_TCP_PORT) {
         sock_ = socket(AF_INET, SOCK_STREAM, 0);
         if (sock_ == INVALID_SOCKET) return false;
-        int opt = 1;
-        setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+        int opt = 1; setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
         sockaddr_in addr = {};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
+        addr.sin_family = AF_INET; addr.sin_port = htons(port);
         addr.sin_addr.s_addr = inet_addr(stream_protocol::DEFAULT_HOST);
         if (bind(sock_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) return false;
         if (::listen(sock_, 5) == SOCKET_ERROR) return false;
@@ -72,29 +60,28 @@ struct TcpFrameSender {
         return true;
     }
 
-    /// 非阻塞 accept（每帧调用一次）
     void accept_clients() {
-        SOCKET client = accept(sock_, nullptr, nullptr);
-        if (client == INVALID_SOCKET) return;
-        u_long mode = 0; ioctlsocket(client, FIONBIO, &mode);
-        clients_.push_back(client);
+        SOCKET c = accept(sock_, nullptr, nullptr);
+        if (c == INVALID_SOCKET) return;
+        u_long mode = 0; ioctlsocket(c, FIONBIO, &mode);
+        clients_.push_back(c);
         printf("[tcp] client connected (%zu total)\n", clients_.size());
     }
 
-    /// 广播帧到所有客户端。断开的客户端自动移除。
-    void broadcast_frame(const std::vector<uint8_t>& bgra, uint32_t w, uint32_t h) {
+    /// Broadcast raw bytes to all clients. Slow clients auto-disconnected.
+    void broadcast(const void* data, uint32_t size) {
         uint8_t hdr[stream_protocol::FRAME_HEADER_SIZE];
-        stream_protocol::build_frame_header(
-            hdr, w, h, stream_protocol::FRAME_CH_BGRA, (uint32_t)bgra.size());
-
+        stream_protocol::build_frame_header(hdr, size);
         auto it = clients_.begin();
         while (it != clients_.end()) {
             bool ok = (send(*it, (char*)hdr, sizeof(hdr), 0) == sizeof(hdr));
-            if (ok) ok = (send(*it, (char*)bgra.data(), (int)bgra.size(), 0) == (int)bgra.size());
+            if (ok) ok = (send(*it, (char*)data, (int)size, 0) == (int)size);
             if (!ok) { closesocket(*it); it = clients_.erase(it); }
             else ++it;
         }
     }
+
+    void broadcast(const std::vector<uint8_t>& data) { broadcast(data.data(), (uint32_t)data.size()); }
 
     void close() {
         for (auto c : clients_) closesocket(c);
