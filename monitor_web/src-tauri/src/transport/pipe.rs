@@ -2,7 +2,7 @@
 //!
 //! Depends on: protocol::protocol (for PayloadType, build_header, parse_header).
 
-use crate::protocol::protocol::{self, PayloadType};
+use crate::protocol::{self, PayloadType};
 use std::io::{self, Read, Write};
 
 /// Write a frame to a writer (stdout, file, etc.)

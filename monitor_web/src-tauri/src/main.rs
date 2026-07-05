@@ -24,7 +24,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 
 mod fmp4;
-mod stream_protocol;
+mod protocol;
+mod payload;
+mod transport;
 
 // ── Session-based debug logging ──
 // Each launch creates a new log file: agent_20260704_174500.log, max 5 kept
@@ -375,8 +377,11 @@ fn pixels_to_png_base64(pixels: &[u8], w: i32, h: i32) -> String {
     b64
 }
 
-fn capture_to_json(result: &CaptureResult, wx: i32, wy: i32, screen_w: i32, screen_h: i32) -> String {
+fn capture_to_json(result: &CaptureResult, wx: i32, wy: i32, screen_w: i32, screen_h: i32, total_ms: u128) -> String {
+    let t0 = Instant::now();
     let b64 = pixels_to_png_base64(&result.pixels, result.w, result.h);
+    let encode_ms = t0.elapsed().as_millis();
+    dlog!("capture: total={}ms encode={}ms method={}", total_ms, encode_ms, result.method);
     serde_json::json!({
         "image": b64, "w": result.w, "h": result.h,
         "x": wx, "y": wy,
@@ -394,7 +399,7 @@ fn capture_single() -> String {
         if !result.pixels.is_empty() {
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
-            let json = capture_to_json(&result, 0, 0, screen_w, screen_h);
+            let json = capture_to_json(&result, 0, 0, screen_w, screen_h, t0.elapsed().as_millis());
             dlog!("capture_single: {}x{} method={} → {}b, total={:.0}ms",
                 result.w, result.h, result.method, json.len(), t0.elapsed().as_millis());
             json
@@ -419,8 +424,8 @@ fn capture_window(hwnd: u64) -> String {
                 let mut wr = RECT::default();
                 if GetWindowRect(hwnd_ptr, &mut wr).is_ok() { (wr.left, wr.top) } else { (0, 0) }
             } else { (0, 0) };
-            let json = capture_to_json(&result, wx, wy, screen_w, screen_h);
-            dlog!("capture_window: {}x{} @({},{}) method={} → {}b, total={:.0}ms",
+            let json = capture_to_json(&result, wx, wy, screen_w, screen_h, t0.elapsed().as_millis());
+            dlog!("capture_window: {}x{} @({},{}) method={} size={} total={:.0}ms",
                 result.w, result.h, wx, wy, result.method, json.len(), t0.elapsed().as_millis());
             json
         } else {
@@ -518,7 +523,7 @@ fn tcp_broadcast_thread(
         };
         if let Some((ref payload, _, _)) = snapshot {
             clients.retain_mut(|client| {
-                if stream_protocol::send_frame(client, payload).is_err() { false } else { true }
+                if transport::pipe::send_frame(client, protocol::PayloadType::BgraFrame, payload).is_err() { false } else { true }
             });
         }
 
@@ -616,7 +621,7 @@ fn bgra_to_bmp_uri(pixels: &[u8], w: i32, h: i32) -> String {
 fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>) -> Result<String, String> {
     let _ = capture_stream_stop();
 
-    let port = tcp_port.unwrap_or(stream_protocol::DEFAULT_TCP_PORT);
+    let port = tcp_port.unwrap_or(protocol::DEFAULT_TCP_PORT);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
@@ -664,8 +669,8 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
             }
 
             let frame_t0 = Instant::now();
-
             let result = unsafe { capture_fast(&method, hwnd_ptr, w, h) };
+            let cap_us = frame_t0.elapsed().as_micros();
 
             if let Some((pixels, pw, ph)) = result {
                 w = pw; h = ph;
@@ -677,15 +682,24 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
                         state.3 = method.clone();
                     }
                 } else {
+                    let t_pack = Instant::now();
+                    let payload = payload::bgra::pack(&pixels, w as u32, h as u32, 4);
+                    let pack_us = t_pack.elapsed().as_micros();
+
+                    let t_bmp = Instant::now();
                     let uri = bgra_to_bmp_uri(&pixels, w, h);
-                    // Build payload: [w:4][h:4][ch:4][reserved:4][pixels]
-                    let payload = stream_protocol::build_bgra_payload(w as u32, h as u32, 4, &pixels);
+                    let bmp_us = t_bmp.elapsed().as_micros();
+
                     if let Ok(mut raw) = RAW_FRAME.lock() {
                         *raw = (payload, w, h);
                     }
                     prev_pixels = pixels;
                     if let Ok(mut state) = STREAM_FRAME.lock() {
                         *state = (uri, w, h, method.clone());
+                    }
+
+                    if frames % 30 == 0 {
+                        dlog!("stream timing: cap={}us pack={}us bmp={}us", cap_us, pack_us, bmp_us);
                     }
                 }
                 let _ = app.emit("stream-tick", serde_json::json!({"method": &method}));

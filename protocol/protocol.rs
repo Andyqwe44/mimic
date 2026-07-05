@@ -1,8 +1,8 @@
-//! protocol/protocol.rs — wire format constants, shared with protocol.h + protocol.py.
-//!
-//! Frame: [magic:4][payload_size:4][type_tag:4][payload_body...]
-//!
-//! This module has zero dependencies on transport or payload modules.
+// protocol/protocol.rs — wire format constants, shared with protocol.h + protocol.py.
+//
+// Frame: [magic:4][payload_size:4][type_tag:4][payload_body...]
+//
+// This module has zero dependencies on transport or payload modules.
 
 pub const MAGIC: u32 = 0x4D415246;
 pub const FRAME_HEADER_SIZE: usize = 12; // magic(4) + size(4) + type_tag(4)
