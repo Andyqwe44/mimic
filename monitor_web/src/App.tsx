@@ -342,161 +342,52 @@ function ConnectionPanel({ onSelect }: { onSelect: (w: WindowInfo) => void }) {
 function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
   const [expanded, setExpanded] = useState(true)
   const [previewing, setPreviewing] = useState(false)
-  const [imgSrc, setImgSrc] = useState('')       // single-frame <img> base64
+  const [imgSrc, setImgSrc] = useState('')       // single-frame PNG / preview BMP
   const [fps, setFps] = useState(0)
   const [capMethod, setCapMethod] = useState('')
   const previewingRef = useRef(false)
   const framesRef = useRef(0)
   const lastFpsRef = useRef(Date.now())
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const msRef = useRef<MediaSource | null>(null)
-  const sbRef = useRef<SourceBuffer | null>(null)
-  const initDataRef = useRef<ArrayBuffer | null>(null)
-  const codecRef = useRef('avc1.42C01E')
-  const pendingSegments = useRef<ArrayBuffer[]>([])
-  const unlistenInitRef = useRef<(() => void) | null>(null)
-  const unlistenTickRef = useRef<(() => void) | null>(null)
+  const unlistenRef = useRef<(() => void) | null>(null)
 
-  // ── H.264 Preview: MSE + <video> ──
+  // ── BMP Preview: Rust-native multi-method → BMP → <img> ──
   const togglePreview = async () => {
     if (previewing) {
-      // Stop
       previewingRef.current = false; setPreviewing(false); setFps(0); setCapMethod('')
-      if (unlistenTickRef.current) { unlistenTickRef.current(); unlistenTickRef.current = null }
-      if (unlistenInitRef.current) { unlistenInitRef.current(); unlistenInitRef.current = null }
-      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('h264_stream_stop') } catch (_) {}
-      // Close MediaSource
-      if (msRef.current && msRef.current.readyState === 'open') {
-        try { msRef.current.endOfStream() } catch (_) {}
-      }
-      sbRef.current = null; msRef.current = null
-      initDataRef.current = null; pendingSegments.current = []
-      if (videoRef.current) videoRef.current.src = ''
+      if (unlistenRef.current) { unlistenRef.current(); unlistenRef.current = null }
+      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('capture_stream_stop') } catch (_) {}
+      setImgSrc('')
       addLog('Preview stopped')
     } else {
-      // Start
       const hwnd = selWin?.hwnd ?? 0
-      addLog(`H.264 Preview starting: ${selWin?.title ?? 'desktop'}`)
-      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('h264_stream_start', { hwnd }) }
-      catch (e) { addLog(`H.264 start failed: ${e}`); return }
+      addLog(`Preview: ${selWin?.title ?? 'desktop'} (multi-method BMP)`)
+      try { const { invoke } = await import('@tauri-apps/api/core'); await invoke<string>('capture_stream_start', { hwnd }) }
+      catch (e) { addLog(`Stream start failed: ${e}`); return }
 
-      previewingRef.current = true; setPreviewing(true)
-      initDataRef.current = null; pendingSegments.current = []
+      previewingRef.current = true; setPreviewing(true); setImgSrc('')
       framesRef.current = 0; lastFpsRef.current = Date.now()
 
-      // Create MediaSource
-      const ms = new MediaSource()
-      msRef.current = ms
-      const url = URL.createObjectURL(ms)
-      if (videoRef.current) {
-        videoRef.current.src = url
-        videoRef.current.play().catch(() => {}) // autoplay
-      }
-
-      ms.addEventListener('sourceopen', () => {
-        sbRef.current = null
-        if (!previewingRef.current) return
-
-        // Try actual codec first, fallback to baseline
-        let mime = `video/mp4; codecs="${codecRef.current}"`
-        if (!MediaSource.isTypeSupported(mime)) {
-          mime = 'video/mp4; codecs="avc1.42C01E"'
-          if (!MediaSource.isTypeSupported(mime)) {
-            addLog('MSE: no supported H.264 codec')
-            return
-          }
-        }
-        addLog(`MSE: codec=${mime}`)
-        try {
-          const sb = ms.addSourceBuffer(mime)
-          sb.mode = 'sequence'
-          sb.addEventListener('error', () => addLog('SourceBuffer error'))
-          sbRef.current = sb
-
-          // Append init segment if ready
-          if (initDataRef.current) {
-            try { sb.appendBuffer(initDataRef.current) } catch (e) { addLog(`Init append error: ${e}`) }
-            initDataRef.current = null
-          }
-
-          // Append any pending segments
-          for (const seg of pendingSegments.current) {
-            try { if (!sb.updating) sb.appendBuffer(seg) }
-            catch (e) { addLog(`Pending append error: ${e}`) }
-          }
-          pendingSegments.current = []
-
-          sb.addEventListener('updateend', () => {
-            // Flush pending segments when buffer completes
-            if (pendingSegments.current.length > 0 && sbRef.current && !sbRef.current.updating) {
-              const next = pendingSegments.current.shift()!
-              try { sbRef.current.appendBuffer(next) } catch (_) {}
-            }
-            // Trim buffer to last 2 seconds
-            if (sbRef.current && ms.readyState === 'open' && ms.duration > 4) {
-              const removeEnd = ms.duration - 2
-              if (removeEnd > 0) {
-                try { sbRef.current.remove(0, removeEnd) } catch (_) {}
-              }
-            }
-          })
-        } catch (e) {
-          addLog(`MSE addSourceBuffer failed: ${e}`)
-        }
-      })
-
-      // Listen for init event
       const { listen } = await import('@tauri-apps/api/event')
-      const unlistenInit = await listen<{ data: string; codec: string; method: string }>('h264-init', (event) => {
+      const unlisten = await listen<{ method: string }>('stream-tick', async (event) => {
         if (!previewingRef.current) return
-        setCapMethod(event.payload.method)
-        if (event.payload.codec) codecRef.current = event.payload.codec
-        const bytes = base64ToBuf(event.payload.data)
-        initDataRef.current = bytes
-        // Try to append if sourcebuffer is ready
-        if (sbRef.current && !sbRef.current.updating) {
-          try { sbRef.current.appendBuffer(bytes); initDataRef.current = null }
-          catch (_) { addLog('Init append on event error') }
-        }
-      })
-      unlistenInitRef.current = unlistenInit
-
-      // Listen for tick events
-      const unlistenTick = await listen('h264-tick', async () => {
-        if (!previewingRef.current) return
+        if (event.payload.method) setCapMethod(event.payload.method)
         try {
           const { invoke } = await import('@tauri-apps/api/core')
-          const b64 = await invoke<string>('h264_poll')
-          if (b64) {
-            const bytes = base64ToBuf(b64)
-            const sb = sbRef.current
-            if (sb && !sb.updating) {
-              try { sb.appendBuffer(bytes) }
-              catch (_) {
-                // Queue for later
-                pendingSegments.current.push(bytes)
-              }
-            } else {
-              pendingSegments.current.push(bytes)
-            }
-          }
+          const uri = await invoke<string>('stream_poll')
+          if (uri) setImgSrc(uri)
         } catch (_) {}
         framesRef.current++
         const now = Date.now(); const elapsed = now - lastFpsRef.current
-        if (elapsed >= 1000) {
-          setFps(Math.round(framesRef.current * 1000 / elapsed))
-          framesRef.current = 0; lastFpsRef.current = now
-        }
+        if (elapsed >= 1000) { setFps(Math.round(framesRef.current * 1000 / elapsed)); framesRef.current = 0; lastFpsRef.current = now }
       })
-      unlistenTickRef.current = unlistenTick
+      unlistenRef.current = unlisten
     }
   }
 
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => { return () => {
     previewingRef.current = false
-    if (unlistenInitRef.current) unlistenInitRef.current()
-    if (unlistenTickRef.current) unlistenTickRef.current()
+    if (unlistenRef.current) unlistenRef.current()
   } }, [])
 
   return (
@@ -518,8 +409,8 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
               } catch { addLog(`Screenshot failed after ${Date.now() - t0}ms`) }
             }} />
           {previewing
-            ? <ActionBtn icon={<Square className="w-3 h-3" />} label="Stop" title="停止截屏预览 (H.264)" variant="danger" onClick={togglePreview} />
-            : <ActionBtn icon={<Play className="w-3 h-3" />} label="Preview" title="开始实时截屏预览 (H.264 60FPS GPU)" variant="primary" onClick={togglePreview} />
+            ? <ActionBtn icon={<Square className="w-3 h-3" />} label="Stop" title="停止实时预览" variant="danger" onClick={togglePreview} />
+            : <ActionBtn icon={<Play className="w-3 h-3" />} label="Preview" title="开始实时预览 (BMP多方法回退 60FPS)" variant="primary" onClick={togglePreview} />
           }
           <IconBtn title={expanded ? "折叠截图面板" : "展开截图面板"}
             icon={expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -528,12 +419,10 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
       </div>
       {expanded && (
         <div className="min-h-[160px] rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative">
-          {previewing ? (
-            <video ref={videoRef} className="w-full h-auto object-contain" muted playsInline />
-          ) : imgSrc ? (
+          {imgSrc ? (
             <img src={imgSrc} className="w-full h-auto object-contain" alt="preview" />
           ) : (
-            <span className="text-sm text-text-muted">Press Preview</span>
+            <span className="text-sm text-text-muted">{previewing ? 'Waiting...' : 'Press Preview'}</span>
           )}
           {previewing && (
             <div className="absolute bottom-2 right-2 flex items-center gap-1.5 text-xs bg-bg-primary/80 px-2 py-0.5 rounded font-mono">
@@ -548,13 +437,6 @@ function ScreenshotPanel({ selWin }: { selWin?: WindowInfo }) {
   )
 }
 
-// Base64 → ArrayBuffer helper (for MSE SourceBuffer.appendBuffer)
-function base64ToBuf(b64: string): ArrayBuffer {
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes.buffer as ArrayBuffer
-}
 
 // ═══ Log Panel ───
 function LogPanel() {

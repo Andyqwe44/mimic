@@ -435,114 +435,179 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-// ── Capture Stream (BMP data URI, zero-encode, browser GPU decode) ──
-// ── (legacy, kept for single-frame capture) ──
+// ── Capture Stream (Rust-native, multi-method, BMP → frontend <img>) ──
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 struct StreamState {
-    child: Option<Child>,
+    running: Arc<AtomicBool>,
 }
 
 static STREAM: Mutex<Option<StreamState>> = Mutex::new(None);
-static STREAM_FRAME: Mutex<(String, i32, i32)> = Mutex::new((String::new(), 0, 0)); // b64 BMP, w, h
+static STREAM_FRAME: Mutex<(String, i32, i32, String)> = Mutex::new((String::new(), 0, 0, String::new())); // b64, w, h, method
+
+/// Fast capture using a specific method (no fallback chain)
+unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(Vec<u8>, i32, i32)> {
+    match method {
+        "GDI" | "GDI(GetWindowDC)" => {
+            let dc = GetWindowDC(hwnd_ptr);
+            if dc.0.is_null() { return None; }
+            let r = bitblt_bgra(dc, dc, w, h);
+            let _ = ReleaseDC(hwnd_ptr, dc);
+            r
+        }
+        "PrintWindow" | "PrintWindow(minimized)" => {
+            let sdc = GetDC(None);
+            if sdc.0.is_null() { return None; }
+            let mdc = CreateCompatibleDC(sdc);
+            if mdc.0.is_null() { let _ = ReleaseDC(None, sdc); return None; }
+            let bmp = CreateCompatibleBitmap(sdc, w, h);
+            if bmp.0.is_null() { let _ = DeleteDC(mdc); let _ = ReleaseDC(None, sdc); return None; }
+            let old = SelectObject(mdc, bmp);
+            let _ = PrintWindow(hwnd_ptr, mdc, PW_RENDERFULLCONTENT | PW_CLIENTONLY);
+            let mut bi = BITMAPINFOHEADER::default();
+            bi.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bi.biWidth=w; bi.biHeight=-h; bi.biPlanes=1; bi.biBitCount=32; bi.biCompression=BI_RGB.0 as u32;
+            let mut pix = vec![0u8;(w*h*4)as usize];
+            let copied = GetDIBits(mdc,bmp,0,h as u32,Some(pix.as_mut_ptr() as *mut _),
+                &mut bi as *mut _ as *mut BITMAPINFO, DIB_RGB_COLORS);
+            let _=SelectObject(mdc,old); let _=DeleteObject(bmp); let _=DeleteDC(mdc); let _=ReleaseDC(None,sdc);
+            if copied != 0 && !is_solid_color(&pix) { Some((pix, w, h)) } else { None }
+        }
+        "ScreenBitBlt" => {
+            let sc = GetDC(None);
+            if sc.0.is_null() { return None; }
+            let r = bitblt_bgra(sc, sc, w, h);
+            let _ = ReleaseDC(None, sc);
+            r
+        }
+        _ => {
+            // Desktop: simple GDI
+            let dc = GetDC(None);
+            if dc.0.is_null() { return None; }
+            let r = bitblt_bgra(dc, dc, w, h);
+            let _ = ReleaseDC(None, dc);
+            r
+        }
+    }
+}
+
+/// BGRA pixels → BMP data URI (base64). Zero-compression, browser-native decode.
+fn bgra_to_bmp_uri(pixels: &[u8], w: i32, h: i32) -> String {
+    let row_size = ((w * 3 + 3) / 4) * 4;
+    let img_size = (row_size * h) as usize;
+    let file_size = 54 + img_size;
+    let mut bmp = Vec::with_capacity(file_size);
+    bmp.extend_from_slice(b"BM"); bmp.extend_from_slice(&(file_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&[0u8;4]); bmp.extend_from_slice(&54u32.to_le_bytes());
+    bmp.extend_from_slice(&40u32.to_le_bytes());
+    bmp.extend_from_slice(&(w as i32).to_le_bytes()); bmp.extend_from_slice(&(-h as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes()); bmp.extend_from_slice(&24u16.to_le_bytes());
+    bmp.extend_from_slice(&[0u8;24]);
+    for y in 0..h as usize {
+        let rs = y * w as usize * 4;
+        for x in 0..w as usize {
+            let si = rs + x * 4;
+            bmp.push(pixels[si]); bmp.push(pixels[si+1]); bmp.push(pixels[si+2]);
+        }
+        for _ in 0..row_size as usize - w as usize * 3 { bmp.push(0); }
+    }
+    format!("data:image/bmp;base64,{}", base64_encode(&bmp))
+}
 
 #[tauri::command]
 fn capture_stream_start(app: tauri::AppHandle, hwnd: u64) -> Result<String, String> {
     let _ = capture_stream_stop();
 
-    let exe = std::env::current_exe()
-        .map(|p| p.parent().unwrap_or(&p).join("..").join("..").join("..").join("..")
-            .join("capture").join("build").join("capture_stream.exe"))
-        .unwrap_or_else(|_| "capture/build/capture_stream.exe".into());
-    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
 
-    dlog!("stream_start: {} {}", exe.display(), hwnd);
-
-    let mut child = Command::new(&exe)
-        .arg(hwnd.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-        .map_err(|e| format!("spawn: {}", e))?;
-
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
+    dlog!("stream_start: hwnd={} (Rust-native)", hwnd);
 
     thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            if let Ok(l) = line { if !l.is_empty() { dlog!("  C++ stream {}", l); } }
+        // --- First frame: detect best method ---
+        let detect = unsafe { capture_window_internal(hwnd) };
+        let mut method = detect.method.to_string();
+        let mut w = detect.w;
+        let mut h = detect.h;
+        dlog!("stream: detected method={} state={} {}x{}", method, detect.window_state, w, h);
+
+        if method == "None" || method == "ALL_FAILED" || w <= 0 || h <= 0 {
+            dlog!("stream: no working capture method, aborting");
+            return;
         }
-    });
 
-    // Frame reader → BMP data URI (trivial header, 0ms encode, then base64)
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-
-        let mut method = String::new();
-        let _ = reader.read_line(&mut method);
-        dlog!("stream: method={}", method.trim());
-
-        let mut prev_b64: String = String::new();
-        let mut frames = 0u64;
-        loop {
-            let mut hdr = [0u8; 16];
-            if reader.read_exact(&mut hdr).is_err() { break; }
-            let w = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as i32;
-            let h = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as i32;
-            let size = u32::from_le_bytes([hdr[12], hdr[13], hdr[14], hdr[15]]) as usize;
-
-            let b64 = if size == 0 {
-                if prev_b64.is_empty() { continue; }
-                prev_b64.clone()
-            } else {
-                let mut pixels = vec![0u8; size];
-                if reader.read_exact(&mut pixels).is_err() { break; }
-
-                // Build BMP in-memory (trivial header, no compression)
-                let row_size = ((w * 3 + 3) / 4) * 4;
-                let img_size = (row_size * h) as usize;
-                let file_size = 54 + img_size;
-                let mut bmp = Vec::with_capacity(file_size);
-                bmp.extend_from_slice(b"BM");
-                bmp.extend_from_slice(&(file_size as u32).to_le_bytes());
-                bmp.extend_from_slice(&[0u8; 4]);
-                bmp.extend_from_slice(&54u32.to_le_bytes());
-                bmp.extend_from_slice(&40u32.to_le_bytes());
-                bmp.extend_from_slice(&(w as i32).to_le_bytes());
-                bmp.extend_from_slice(&(-h as i32).to_le_bytes());
-                bmp.extend_from_slice(&1u16.to_le_bytes());
-                bmp.extend_from_slice(&24u16.to_le_bytes());
-                bmp.extend_from_slice(&[0u8; 24]);
-                for y in 0..h as usize {
-                    let row_start = y * w as usize * 4;
-                    for x in 0..w as usize {
-                        let si = row_start + x * 4;
-                        bmp.push(pixels[si]);     // B
-                        bmp.push(pixels[si + 1]); // G
-                        bmp.push(pixels[si + 2]); // R
-                    }
-                    let pad = row_size as usize - w as usize * 3;
-                    for _ in 0..pad { bmp.push(0); }
-                }
-                let b = base64_encode(&bmp);
-                prev_b64 = b.clone();
-                b
-            };
-
-            if !b64.is_empty() {
-                let bmp_data_uri = format!("data:image/bmp;base64,{}", b64);
-                if let Ok(mut state) = STREAM_FRAME.lock() {
-                    *state = (bmp_data_uri, w, h);
-                }
-                let _ = app.emit("stream-tick", serde_json::json!({}));
-                frames += 1;
+        // Use first frame pixels
+        if !detect.pixels.is_empty() {
+            let uri = bgra_to_bmp_uri(&detect.pixels, w, h);
+            if let Ok(mut state) = STREAM_FRAME.lock() {
+                *state = (uri, w, h, method.clone());
             }
+            let _ = app.emit("stream-tick", serde_json::json!({"method": &method}));
+        }
+
+        let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
+        let target_ms = 16u64; // 60fps
+        let mut frames: u64 = 0;
+        let mut prev_pixels: Vec<u8> = Vec::new();
+        let mut recheck_counter = 0u32;
+        let fps_t0 = Instant::now();
+
+        while running_clone.load(Ordering::Relaxed) {
+            let frame_t0 = Instant::now();
+
+            let result = unsafe { capture_fast(&method, hwnd_ptr, w, h) };
+
+            if let Some((pixels, pw, ph)) = result {
+                w = pw; h = ph;
+
+                // Frame differ: skip unchanged frames
+                if pixels.len() == prev_pixels.len() && pixels == prev_pixels {
+                    // Emit size=0 signal (frontend reuses previous)
+                    if let Ok(mut state) = STREAM_FRAME.lock() {
+                        state.3 = method.clone(); // update method string
+                    }
+                } else {
+                    let uri = bgra_to_bmp_uri(&pixels, w, h);
+                    prev_pixels = pixels;
+                    if let Ok(mut state) = STREAM_FRAME.lock() {
+                        *state = (uri, w, h, method.clone());
+                    }
+                }
+                let _ = app.emit("stream-tick", serde_json::json!({"method": &method}));
+                frames += 1;
+                recheck_counter = 0;
+            } else {
+                // Capture failed — may need to re-detect method
+                recheck_counter += 1;
+                if recheck_counter > 30 {
+                    // Re-detect every ~0.5s of failures
+                    let redetect = unsafe { capture_window_internal(hwnd) };
+                    if redetect.method != "None" && redetect.method != "ALL_FAILED" {
+                        method = redetect.method.to_string();
+                        w = redetect.w; h = redetect.h;
+                        dlog!("stream: re-detected method={}", method);
+                    }
+                    recheck_counter = 0;
+                }
+            }
+
+            // FPS log every 120 frames
+            if frames > 0 && frames % 120 == 0 {
+                let elapsed = fps_t0.elapsed().as_secs_f64();
+                dlog!("stream: {} frames in {:.1}s = {:.0}fps method={}",
+                    frames, elapsed, frames as f64 / elapsed, method);
+            }
+
+            // Frame pacing
+            let elapsed = frame_t0.elapsed().as_millis() as u64;
+            if elapsed < target_ms { std::thread::sleep(std::time::Duration::from_millis(target_ms - elapsed)); }
         }
         dlog!("stream: exited after {} frames", frames);
     });
 
-    *STREAM.lock().unwrap() = Some(StreamState { child: Some(child) });
+    *STREAM.lock().unwrap() = Some(StreamState { running });
     Ok("started".into())
 }
 
@@ -557,15 +622,9 @@ fn stream_poll() -> String {
 #[tauri::command]
 fn capture_stream_stop() -> Result<String, String> {
     let mut state = STREAM.lock().unwrap();
-    if let Some(ref mut s) = *state {
-        if let Some(ref mut child) = s.child {
-            if let Some(stdin) = child.stdin.as_mut() {
-                let _ = writeln!(stdin, "q");
-                let _ = stdin.flush();
-            }
-            let _ = child.wait();
-            dlog!("stream_stop: process exited");
-        }
+    if let Some(ref s) = *state {
+        s.running.store(false, Ordering::Relaxed);
+        dlog!("stream_stop: signaled stop");
     }
     *state = None;
     Ok("stopped".into())

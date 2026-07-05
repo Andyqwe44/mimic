@@ -127,21 +127,32 @@ Scale (max 640px) + BGRA→RGBA + PNG (miniz_oxide) + base64
 <img src="data:image/png;base64,...">
 ```
 
-### Preview (实时预览) 数据流 — GPU H.264 视频
+### Preview (实时预览) 数据流 — BMP 多方法流式捕获
 
 ```
-capture_h264.exe (持久进程, 只 spawn 一次)
-  Desktop: DXGI Desktop Duplication (跳过虚拟显示器) → GDI fallback
-  Window:  FramePool (Windows.Graphics.Capture, GPU)
+Rust 线程 (持久, 无 C++ 子进程)
+  首帧: capture_window_internal → 检测最佳方法
+  后续帧: capture_fast(method) → 跳过回退链, 直接使用最佳方法
   ↓
-MF H.264 硬件编码器 (NVIDIA NVENC / AMD VCE / Intel QSV 通用)
-  ↓ [size:4][H.264 NAL units] binary stream
-  ├── stdout pipe → Rust → fMP4 (moof+mdat) → base64 → Tauri event
-  │   ↓
-  │   JS MSE SourceBuffer → <video> (GPU DXVA 解码)
-  │
-  └── TCP :9998 → agent.exe / 未来消费者 (预留)
+  BGRA → BMP (零压缩, ~0.1ms) → base64 → Tauri event "stream-tick"
+  ↓
+  JS <img src="data:image/bmp;base64,..."> (浏览器原生解码)
 ```
+
+**流式捕获方法回退链:**
+```
+Method 1: GetWindowDC + BitBlt (~2-5ms, 200+fps)
+Method 2: PrintWindow(PW_RENDERFULLCONTENT) (~15-30ms, 处理遮挡/最小化)
+Method 3: ScreenBitBlt (~2-5ms, 屏幕DC裁剪)
+```
+首帧检测最佳方法后, 后续帧直接使用该方法 (避免每帧回退开销)。
+持续失败时自动重新检测。
+
+**未来方案: GPU H.264 硬件编码 (capture_h264.exe)**
+```
+GPU 纹理 → MF H.264 硬件编码器 → TCP :9998 → agent.exe / MSE <video>
+```
+MF 编码器兼容性待解决 (系统返回空类型列表的假阳性 MFT)。
 
 ## 可执行文件
 
