@@ -1,9 +1,38 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::{Command, Child, Stdio};
-use std::os::windows::process::CommandExt;
+// ── Default window size in physical pixels (unaffected by OS scale factor) ──
+const DEFAULT_WINDOW_W: u32 = 1280;
+const DEFAULT_WINDOW_H: u32 = 720;
+
+// ── Capture C++ FFI (static linked, all methods in one .lib) ──
+extern "C" {
+    // GDI capture methods
+    fn capture_gdi_getwindowdc(hwnd: isize, buf: *mut u8, buf_size: i32,
+                               w: *mut i32, h: *mut i32) -> i32;
+    fn capture_printwindow(hwnd: isize, buf: *mut u8, buf_size: i32,
+                           w: *mut i32, h: *mut i32) -> i32;
+    fn capture_screen_bitblt(hwnd: isize, buf: *mut u8, buf_size: i32,
+                             w: *mut i32, h: *mut i32) -> i32;
+    fn capture_desktop_bitblt(buf: *mut u8, buf_size: i32,
+                              w: *mut i32, h: *mut i32) -> i32;
+    fn capture_auto_detect(hwnd: isize, buf: *mut u8, buf_size: i32,
+                           w: *mut i32, h: *mut i32, method_out: *mut *const std::ffi::c_char) -> i32;
+    fn capture_query_window_state(hwnd: isize) -> *const std::ffi::c_char;
+    fn capture_is_solid_color(pixels: *const u8, len: i32) -> i32;
+    fn capture_has_magenta(pixels: *const u8, len: i32) -> i32;
+
+    // WGC capture methods
+    fn wgc_stream_start(hwnd: isize, max_dim: i32) -> *mut std::ffi::c_void;
+    fn wgc_stream_read(h: *mut std::ffi::c_void, buf: *mut u8, buf_size: i32,
+                       out_w: *mut i32, out_h: *mut i32, out_ch: *mut i32) -> i32;
+    fn wgc_stream_is_ok(h: *mut std::ffi::c_void) -> i32;
+    fn wgc_stream_stop(h: *mut std::ffi::c_void);
+    fn wgc_capture_single(hwnd: isize, buf: *mut u8, buf_size: i32,
+                          out_w: *mut i32, out_h: *mut i32, out_ch: *mut i32) -> i32;
+}
+
 use std::fs::OpenOptions;
-use std::io::{Write, BufReader, BufRead, Read};
+use std::io::Write;
 use std::sync::Mutex;
 use std::thread;
 use serde::Serialize;
@@ -11,19 +40,12 @@ use tauri::Emitter;
 use std::time::Instant;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextW, GetWindowLongPtrW, IsWindowVisible,
-    GetDesktopWindow, GetWindow, GetWindowRect, GetSystemMetrics,
-    IsIconic, IsWindow, GW_OWNER, GWL_STYLE, GWL_EXSTYLE, WS_CAPTION, WS_EX_TOOLWINDOW,
+    GetDesktopWindow, GetWindow, GetWindowRect, GetSystemMetrics, IsWindow,
+    GW_OWNER, GWL_STYLE, GWL_EXSTYLE, WS_CAPTION, WS_EX_TOOLWINDOW,
     SM_CXSCREEN, SM_CYSCREEN,
 };
 use windows::Win32::Foundation::{RECT, HWND, BOOL, TRUE, LPARAM};
-use windows::Win32::Graphics::Gdi::{
-    GetDC, GetWindowDC, CreateCompatibleDC, CreateCompatibleBitmap,
-    SelectObject, BitBlt, GetDIBits, DeleteDC, DeleteObject, ReleaseDC,
-    BITMAPINFOHEADER, BITMAPINFO, SRCCOPY, DIB_RGB_COLORS, BI_RGB,
-    HDC, HBRUSH,
-};
 
-mod fmp4;
 mod protocol;
 mod payload;
 mod transport;
@@ -98,30 +120,38 @@ struct WindowInfo { title: String, category: String, hwnd: u64 }
 #[tauri::command]
 fn list_processes() -> Vec<WindowInfo> {
     let t0 = Instant::now();
-    let exe = std::env::current_exe()
-        .map(|p| p.parent().unwrap_or(&p).join("..").join("..").join("..").join("..").join("capture").join("build").join("process_list.exe"))
-        .unwrap_or_else(|_| "capture/build/process_list.exe".into());
-    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-
-    dlog!("list_processes: calling {}", exe.display());
-    match Command::new(&exe).output() {
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.is_empty() { dlog!("  stderr: {}", stderr.trim()); }
-            let result: Vec<_> = String::from_utf8_lossy(&out.stdout).lines().filter_map(|line| {
-                let line = line.trim(); if line.is_empty() { return None; }
-                let title = extract_json_str(line, "title").unwrap_or("Unknown");
-                let hwnd = extract_json_str(line, "hwnd").and_then(|s| s.parse().ok()).unwrap_or(0);
-                Some(WindowInfo { title: title.to_string(), category: "process".into(), hwnd })
-            }).collect();
-            dlog!("list_processes: {} entries in {:.0}ms", result.len(), t0.elapsed().as_millis());
-            result
+    let mut result = Vec::new();
+    unsafe {
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS, PROCESSENTRY32W,
+        };
+        use windows::Win32::Foundation::CloseHandle;
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(h) => h,
+            Err(_) => { dlog!("list_processes: CreateToolhelp32Snapshot failed"); return result; }
+        };
+        let mut pe = PROCESSENTRY32W::default();
+        pe.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snapshot, &mut pe).is_ok() {
+            loop {
+                let name = String::from_utf16_lossy(
+                    &pe.szExeFile[..pe.szExeFile.iter().position(|&c| c == 0).unwrap_or(pe.szExeFile.len())]
+                );
+                if !name.is_empty() {
+                    result.push(WindowInfo {
+                        title: name,
+                        category: "process".into(),
+                        hwnd: pe.th32ProcessID as u64,
+                    });
+                }
+                if Process32NextW(snapshot, &mut pe).is_err() { break; }
+            }
         }
-        Err(e) => {
-            dlog!("list_processes: ERROR {}", e);
-            vec![]
-        }
+        let _ = CloseHandle(snapshot);
     }
+    dlog!("list_processes: {} entries in {:.0}ms", result.len(), t0.elapsed().as_millis());
+    result
 }
 
 #[tauri::command]
@@ -194,177 +224,43 @@ unsafe extern "system" fn enum_window_callback(hwnd: HWND, lparam: LPARAM) -> BO
     TRUE
 }
 
-fn extract_json_str<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    let search = format!("\"{}\":\"", key);
-    let start = line.find(&search)? + search.len();
-    // Find the closing unescaped quote using char indices
-    let rest = &line[start..];
-    let mut prev_backslash = false;
-    for (i, c) in rest.char_indices() {
-        if c == '\\' { prev_backslash = true; continue; }
-        if c == '"' && !prev_backslash { return Some(&rest[..i]); }
-        prev_backslash = false;
-    }
-    Some(rest)
-}
-
 // ── Screenshot: multi-method capture with diagnostics ──
 
-// PrintWindow — not in windows crate, use raw FFI
-const PW_RENDERFULLCONTENT: u32 = 0x00000002;
-const PW_CLIENTONLY: u32 = 0x00000001;
-extern "system" {
-    fn PrintWindow(hwnd: HWND, hdc: HDC, flags: u32) -> BOOL;
-    fn FillRect(hdc: HDC, lprc: *const RECT, hbr: HBRUSH) -> i32;
-    fn CreateSolidBrush(color: u32) -> HBRUSH;
+// ── Screenshot: FFI to C++ capture library ──
+
+const MAX_PX: usize = 3840 * 2160 * 4; // 4K BGRA
+
+/// Call C++ capture lib with a specific method. Returns (pixels, w, h, method_name).
+unsafe fn call_capture_method(hwnd: u64, method: &str) -> Option<(Vec<u8>, i32, i32, &'static str)> {
+    let mut buf = vec![0u8; MAX_PX];
+    let (mut w, mut h) = (0i32, 0i32);
+    let (size, label): (i32, &'static str) = match method {
+        "GDI(GetWindowDC)" => (capture_gdi_getwindowdc(hwnd as isize, buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h), "GDI(GetWindowDC)"),
+        "PrintWindow" | "PrintWindow(minimized)" => (capture_printwindow(hwnd as isize, buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h), "PrintWindow"),
+        "ScreenBitBlt" => (capture_screen_bitblt(hwnd as isize, buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h), "ScreenBitBlt"),
+        "DesktopBlt" => (capture_desktop_bitblt(buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h), "DesktopBlt"),
+        "WGC" => (wgc_capture_single(hwnd as isize, buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h, &mut 4), "WGC"),
+        _ => return None,
+    };
+    if size <= 0 || w <= 0 || h <= 0 { return None; }
+    buf.truncate(size as usize);
+    Some((buf, w, h, label))
 }
 
-struct CaptureResult {
-    pixels: Vec<u8>, w: i32, h: i32,
-    method: &'static str,    // "GDI(GetWindowDC)", "PrintWindow", "ScreenBitBlt", "ALL_FAILED"
-    window_state: &'static str, // "normal", "minimized", "hidden", "desktop", "zero-size"
+/// Auto-detect with 3-method fallback (GetWindowDC → PrintWindow → ScreenBitBlt).
+unsafe fn capture_auto_detect_ffi(hwnd: u64) -> Option<(Vec<u8>, i32, i32, String)> {
+    let mut buf = vec![0u8; MAX_PX];
+    let (mut w, mut h) = (0i32, 0i32);
+    let mut method_ptr: *const std::ffi::c_char = std::ptr::null();
+    let size = capture_auto_detect(hwnd as isize, buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h, &mut method_ptr);
+    if size <= 0 || w <= 0 || h <= 0 { return None; }
+    buf.truncate(size as usize);
+    let method = if method_ptr.is_null() { "ALL_FAILED".to_string() }
+        else { std::ffi::CStr::from_ptr(method_ptr).to_string_lossy().to_string() };
+    Some((buf, w, h, method))
 }
 
-/// Sample pixels at ~400 evenly-spaced positions. Returns (samples, step).
-fn pixel_samples(pixels: &[u8]) -> (usize, usize) {
-    let step = ((pixels.len() / 4) / 400).max(1) * 4;
-    (pixels.len() / step.max(4), step.max(4))
-}
-
-fn is_solid_color(pixels: &[u8]) -> bool {
-    if pixels.len() < 16 { return pixels.len() < 4; }
-    let (n, step) = pixel_samples(pixels);
-    let (r0, g0, b0) = (pixels[2], pixels[1], pixels[0]);
-    let same = (0..pixels.len()).step_by(step)
-        .filter(|&i| pixels[i+2]==r0 && pixels[i+1]==g0 && pixels[i]==b0).count();
-    n > 0 && same == n
-}
-
-/// Check for magenta sentinel pixels (R=255, G=0, B=255). >5% = PrintWindow failed.
-fn has_magenta_sentinel(pixels: &[u8]) -> bool {
-    if pixels.len() < 16 { return false; }
-    let (n, step) = pixel_samples(pixels);
-    let magenta = (0..pixels.len()).step_by(step)
-        .filter(|&i| pixels[i+2]==255 && pixels[i+1]==0 && pixels[i]==255).count();
-    n > 0 && magenta * 20 > n
-}
-
-unsafe fn bitblt_bgra(dc: HDC, src_dc: HDC, w: i32, h: i32) -> Option<(Vec<u8>, i32, i32)> {
-    bitblt_bgra_at(dc, src_dc, 0, 0, w, h)
-}
-unsafe fn bitblt_bgra_at(dc: HDC, src_dc: HDC, src_x: i32, src_y: i32, w: i32, h: i32) -> Option<(Vec<u8>, i32, i32)> {
-    let mem_dc = CreateCompatibleDC(dc);
-    if mem_dc.0.is_null() { return None; }
-    let bitmap = CreateCompatibleBitmap(dc, w, h);
-    if bitmap.0.is_null() { let _ = DeleteDC(mem_dc); return None; }
-    let old_bmp = SelectObject(mem_dc, bitmap);
-    if BitBlt(mem_dc, 0, 0, w, h, src_dc, src_x, src_y, SRCCOPY).is_err() {
-        let _ = SelectObject(mem_dc, old_bmp); let _ = DeleteObject(bitmap); let _ = DeleteDC(mem_dc); return None; }
-    let mut bi = BITMAPINFOHEADER::default();
-    bi.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-    bi.biWidth=w; bi.biHeight=-h; bi.biPlanes=1; bi.biBitCount=32; bi.biCompression=BI_RGB.0 as u32;
-    let mut pixels = vec![0u8; (w * h * 4) as usize];
-    let copied = GetDIBits(mem_dc, bitmap, 0, h as u32, Some(pixels.as_mut_ptr() as *mut _),
-        &mut bi as *mut _ as *mut BITMAPINFO, DIB_RGB_COLORS);
-    let _ = SelectObject(mem_dc, old_bmp); let _ = DeleteObject(bitmap); let _ = DeleteDC(mem_dc);
-    if copied == 0 { None } else { Some((pixels, w, h)) }
-}
-
-unsafe fn capture_window_internal(hwnd: u64) -> CaptureResult {
-    let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
-    let is_desktop = hwnd_ptr.0.is_null() || hwnd_ptr == GetDesktopWindow();
-    let def = CaptureResult { pixels: vec![], w: 0, h: 0, method: "None", window_state: "error" };
-
-    // Desktop: simple GDI BitBlt
-    if is_desktop {
-        let dc = GetDC(None); if dc.0.is_null() { return def; }
-        let w=GetSystemMetrics(SM_CXSCREEN); let h=GetSystemMetrics(SM_CYSCREEN);
-        if w<=0||h<=0 { let _=ReleaseDC(None, dc); return def; }
-        let r = bitblt_bgra(dc, dc, w, h);
-        let _=ReleaseDC(None, dc);
-        return match r {
-            Some((p,pw,ph)) => CaptureResult { pixels:p, w:pw, h:ph, method:"GDI", window_state:"desktop" },
-            None => def
-        };
-    }
-
-    // Window: detect state
-    let mut state = "normal";
-    if !IsWindow(hwnd_ptr).as_bool() {
-        return CaptureResult{window_state:"closed",..def};
-    }
-    if IsIconic(hwnd_ptr).as_bool() { state = "minimized"; }
-    else if !IsWindowVisible(hwnd_ptr).as_bool() { state = "hidden"; }
-    let mut wr = RECT::default();
-    if GetWindowRect(hwnd_ptr, &mut wr).is_err() { return CaptureResult{window_state:"no-rect",..def}; }
-    let ww=wr.right-wr.left; let wh=wr.bottom-wr.top;
-    if ww<=0||wh<=0 { return CaptureResult{window_state:"zero-size",..def}; }
-
-    // Method 1: GetWindowDC + BitBlt
-    let dc=GetWindowDC(hwnd_ptr);
-    if !dc.0.is_null() {
-        if let Some((p,pw,ph)) = bitblt_bgra(dc, dc, ww, wh) {
-            if is_solid_color(&p) {
-                dlog!("capture: GetWindowDC → solid({},{},{})", p[2], p[1], p[0]);
-            } else {
-                let _=ReleaseDC(hwnd_ptr, dc);
-                return CaptureResult{pixels:p,w:pw,h:ph,method:"GDI(GetWindowDC)",window_state:state};
-            }
-        } else { dlog!("capture: GetWindowDC bitblt failed"); }
-        let _=ReleaseDC(hwnd_ptr, dc);
-    } else { dlog!("capture: GetWindowDC returned null"); }
-
-    // Method 2: PrintWindow
-    let sdc=GetDC(None);
-    if !sdc.0.is_null() {
-        let mdc=CreateCompatibleDC(sdc);
-        if !mdc.0.is_null() {
-            let bmp=CreateCompatibleBitmap(sdc,ww,wh);
-            if !bmp.0.is_null() {
-                let old=SelectObject(mdc,bmp);
-                let fill_r = RECT{left:0,top:0,right:ww,bottom:wh};
-                let brush=CreateSolidBrush(0x00FF00FF); // magenta sentinel
-                if !brush.0.is_null() { FillRect(mdc,&fill_r,brush); let _=DeleteObject(brush); }
-                let pw_ok = PrintWindow(hwnd_ptr,mdc,PW_RENDERFULLCONTENT|PW_CLIENTONLY).as_bool();
-                let mut bi=BITMAPINFOHEADER::default();
-                bi.biSize=std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-                bi.biWidth=ww; bi.biHeight=-wh; bi.biPlanes=1; bi.biBitCount=32; bi.biCompression=BI_RGB.0 as u32;
-                let mut pix=vec![0u8;(ww*wh*4)as usize];
-                let copied=GetDIBits(mdc,bmp,0,wh as u32,Some(pix.as_mut_ptr() as *mut _),
-                    &mut bi as *mut _ as *mut BITMAPINFO, DIB_RGB_COLORS);
-                let _=SelectObject(mdc,old); let _=DeleteObject(bmp);
-                if copied == 0 { dlog!("capture: PrintWindow GetDIBits failed"); }
-                else if !pw_ok { dlog!("capture: PrintWindow returned FALSE"); }
-                else if is_solid_color(&pix) { dlog!("capture: PrintWindow → solid({},{},{})", pix[2], pix[1], pix[0]); }
-                else if has_magenta_sentinel(&pix) { dlog!("capture: PrintWindow → magenta sentinel detected"); }
-                else {
-                    let _=DeleteDC(mdc); let _=ReleaseDC(None,sdc);
-                    let m = if state=="minimized" {"PrintWindow(minimized)"} else {"PrintWindow"};
-                    return CaptureResult{pixels:pix,w:ww,h:wh,method:m,window_state:state}; }
-            }
-            let _=DeleteDC(mdc);
-        }
-        let _=ReleaseDC(None,sdc);
-    }
-
-    // Method 3: BitBlt from screen DC at window screen position
-    let sc=GetDC(None);
-    if !sc.0.is_null() {
-        if let Some((p,_,_)) = bitblt_bgra_at(sc, sc, wr.left.max(0), wr.top.max(0), ww, wh) {
-            if !is_solid_color(&p) { let _=ReleaseDC(None,sc);
-                return CaptureResult{pixels:p,w:ww,h:wh,method:"ScreenBitBlt",window_state:state};
-            }
-            dlog!("capture: ScreenBitBlt → solid({},{},{})", p[2], p[1], p[0]);
-        } else { dlog!("capture: ScreenBitBlt bitblt failed"); }
-        let _=ReleaseDC(None,sc);
-    } else { dlog!("capture: ScreenBitBlt GetDC(null) failed"); }
-
-    dlog!("capture: ALL methods failed for hwnd={} state={} {}x{}", hwnd, state, ww, wh);
-    CaptureResult{pixels:vec![],w:ww,h:wh,method:"ALL_FAILED",window_state:state}
-}
-
-/// Scale BGRA → max 640px wide, BGRA→RGBA, PNG encode, base64
-fn pixels_to_png_base64(pixels: &[u8], w: i32, h: i32) -> String {
+fn capture_to_json(pixels: &[u8], w: i32, h: i32, x: i32, y: i32, screen_w: i32, screen_h: i32, method: &str, total_ms: u128) -> String {
     let t0 = Instant::now();
     let scale = (640.0 / w as f32).min(1.0);
     let sw = (w as f32 * scale) as i32;
@@ -374,8 +270,6 @@ fn pixels_to_png_base64(pixels: &[u8], w: i32, h: i32) -> String {
         for x in 0..sw { let sx = (x as f32 / scale) as usize;
             let di = (y * sw + x) as usize * 4; let si = (sy * w as usize + sx) * 4;
             rgba[di]=pixels[si+2]; rgba[di+1]=pixels[si+1]; rgba[di+2]=pixels[si]; rgba[di+3]=255; } }
-    let scale_ms = t0.elapsed().as_millis();
-    let png_t0 = Instant::now();
     let mut out = Vec::new();
     out.extend_from_slice(&[137,80,78,71,13,10,26,10]);
     let mut ihdr = Vec::new();
@@ -385,22 +279,14 @@ fn pixels_to_png_base64(pixels: &[u8], w: i32, h: i32) -> String {
     for y in 0..sh { raw.push(0); raw.extend_from_slice(&rgba[(y*sw)as usize*4..(y*sw+sw)as usize*4]); }
     let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
     write_png_chunk(&mut out, b"IDAT", &compressed); write_png_chunk(&mut out, b"IEND", &[]);
-    let png_ms = png_t0.elapsed().as_millis();
-    let b64_t0 = Instant::now(); let b64 = base64_encode(&out); let b64_ms = b64_t0.elapsed().as_millis();
-    dlog!("  scale={}ms PNG={}ms b64={}ms", scale_ms, png_ms, b64_ms);
-    b64
-}
-
-fn capture_to_json(result: &CaptureResult, wx: i32, wy: i32, screen_w: i32, screen_h: i32, total_ms: u128) -> String {
-    let t0 = Instant::now();
-    let b64 = pixels_to_png_base64(&result.pixels, result.w, result.h);
     let encode_ms = t0.elapsed().as_millis();
-    dlog!("capture: total={}ms encode={}ms method={}", total_ms, encode_ms, result.method);
+    let b64 = base64_encode(&out);
+    dlog!("capture: total={}ms encode={}ms method={}", total_ms, encode_ms, method);
     serde_json::json!({
-        "image": b64, "w": result.w, "h": result.h,
-        "x": wx, "y": wy,
+        "image": b64, "w": w, "h": h,
+        "x": x, "y": y,
         "screen_w": screen_w, "screen_h": screen_h,
-        "method": result.method
+        "method": method
     }).to_string()
 }
 
@@ -409,16 +295,14 @@ fn capture_single() -> String {
     let t0 = Instant::now();
     dlog!("capture_single: desktop...");
     unsafe {
-        let result = capture_window_internal(0);
-        if !result.pixels.is_empty() {
-            let screen_w = GetSystemMetrics(SM_CXSCREEN);
-            let screen_h = GetSystemMetrics(SM_CYSCREEN);
-            let json = capture_to_json(&result, 0, 0, screen_w, screen_h, t0.elapsed().as_millis());
-            dlog!("capture_single: {}x{} method={} → {}b, total={:.0}ms",
-                result.w, result.h, result.method, json.len(), t0.elapsed().as_millis());
+        let screen_w = GetSystemMetrics(SM_CXSCREEN);
+        let screen_h = GetSystemMetrics(SM_CYSCREEN);
+        if let Some((pixels, w, h, method)) = capture_auto_detect_ffi(0) {
+            let json = capture_to_json(&pixels, w, h, 0, 0, screen_w, screen_h, &method, t0.elapsed().as_millis());
+            dlog!("capture_single: {}x{} method={} → {}b, total={:.0}ms", w, h, method, json.len(), t0.elapsed().as_millis());
             json
         } else {
-            dlog!("capture_single: FAILED method={} state={}", result.method, result.window_state);
+            dlog!("capture_single: FAILED");
             String::new()
         }
     }
@@ -428,14 +312,16 @@ fn capture_single() -> String {
 fn capture_window(hwnd: u64, method: Option<String>) -> String {
     let t0 = Instant::now();
     let method_str = method.as_deref().unwrap_or("auto");
-    dlog!("capture_window: hwnd={} method={}...", hwnd, method_str);
+    let log_method = normalize_method(method_str);
+    dlog!("capture_window: hwnd={} method={}...", hwnd, log_method);
     unsafe {
         let result = if method_str == "auto" || method_str.is_empty() {
-            capture_window_internal(hwnd)
+            capture_auto_detect_ffi(hwnd)
         } else {
-            capture_with_method(hwnd, method_str)
+            call_capture_method(hwnd, normalize_method(method_str))
+                .map(|(p, w, h, m)| (p, w, h, m.to_string()))
         };
-        if !result.pixels.is_empty() {
+        if let Some((pixels, w, h, method)) = result {
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
             let (wx, wy) = if hwnd != 0 {
@@ -443,13 +329,11 @@ fn capture_window(hwnd: u64, method: Option<String>) -> String {
                 let mut wr = RECT::default();
                 if GetWindowRect(hwnd_ptr, &mut wr).is_ok() { (wr.left, wr.top) } else { (0, 0) }
             } else { (0, 0) };
-            let json = capture_to_json(&result, wx, wy, screen_w, screen_h, t0.elapsed().as_millis());
-            dlog!("capture_window: {}x{} @({},{}) method={} size={} total={:.0}ms",
-                result.w, result.h, wx, wy, result.method, json.len(), t0.elapsed().as_millis());
+            let json = capture_to_json(&pixels, w, h, wx, wy, screen_w, screen_h, &method, t0.elapsed().as_millis());
+            dlog!("capture_window: {}x{} @({},{}) method={} size={} total={:.0}ms", w, h, wx, wy, method, json.len(), t0.elapsed().as_millis());
             json
         } else {
-            dlog!("capture_window: FAILED method={} state={} w={} h={}",
-                result.method, result.window_state, result.w, result.h);
+            dlog!("capture_window: FAILED");
             String::new()
         }
     }
@@ -677,6 +561,41 @@ fn bgra_to_rgba(pixels: &[u8]) -> Vec<u8> {
     rgba
 }
 
+/// Nearest-neighbor downscale BGRA → RGBA. Integer arithmetic, no f64.
+fn scale_bgra_to_rgba(pixels: &[u8], w: i32, h: i32, max_dim: i32) -> (Vec<u8>, i32, i32) {
+    let max_src = w.max(h);
+    if max_src <= max_dim {
+        let mut rgba = pixels.to_vec();
+        for i in (0..rgba.len()).step_by(4) { rgba.swap(i, i + 2); }
+        return (rgba, w, h);
+    }
+    // Fixed-point step: step = src_dim * 65536 / dst_dim
+    let nw = (w as u64 * max_dim as u64 / max_src as u64) as i32;
+    let nh = (h as u64 * max_dim as u64 / max_src as u64) as i32;
+    let step_y = ((h as u64) << 16) / (nh as u64).max(1);
+    let step_x = ((w as u64) << 16) / (nw as u64).max(1);
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    let mut sy_fp = 0u64;
+    for y in 0..nh {
+        let sy = (sy_fp >> 16) as i32;
+        sy_fp += step_y;
+        let row_base = (sy * w * 4) as usize;
+        let mut sx_fp = 0u64;
+        let di_row = (y * nw * 4) as usize;
+        for x in 0..nw {
+            let sx = (sx_fp >> 16) as i32;
+            sx_fp += step_x;
+            let si = row_base + (sx * 4) as usize;
+            let di = di_row + (x * 4) as usize;
+            out[di] = pixels[si + 2];     // B → R
+            out[di + 1] = pixels[si + 1]; // G → G
+            out[di + 2] = pixels[si];     // R → B
+            out[di + 3] = pixels[si + 3]; // A → A
+        }
+    }
+    (out, nw, nh)
+}
+
 /// BGRA pixels (raw), w, h, method. No BMP/base64 until poll time.
 static STREAM_FRAME: Mutex<(Vec<u8>, i32, i32, String)> = Mutex::new((Vec::new(), 0, 0, String::new()));
 // Raw BGRA pixels for TCP clients (scaled, uncompressed).
@@ -731,252 +650,82 @@ fn tcp_broadcast_thread(
 }
 
 
-/// Fast capture using a specific method (no fallback chain)
-unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(Vec<u8>, i32, i32)> {
-    // Quick check: window still alive?
-    if !hwnd_ptr.0.is_null() && hwnd_ptr != GetDesktopWindow() && !IsWindow(hwnd_ptr).as_bool() {
-        return None;
-    }
-    if w <= 0 || h <= 0 { return None; }
-    match method {
-        "GDI" | "GDI(GetWindowDC)" => {
-            let dc = GetWindowDC(hwnd_ptr);
-            if dc.0.is_null() { return None; }
-            let r = bitblt_bgra(dc, dc, w, h);
-            let _ = ReleaseDC(hwnd_ptr, dc);
-            r
-        }
-        "PrintWindow" | "PrintWindow(minimized)" => {
-            let sdc = GetDC(None);
-            if sdc.0.is_null() { return None; }
-            let mdc = CreateCompatibleDC(sdc);
-            if mdc.0.is_null() { let _ = ReleaseDC(None, sdc); return None; }
-            let bmp = CreateCompatibleBitmap(sdc, w, h);
-            if bmp.0.is_null() { let _ = DeleteDC(mdc); let _ = ReleaseDC(None, sdc); return None; }
-            let old = SelectObject(mdc, bmp);
-            // Fill magenta sentinel to detect PrintWindow not drawing
-            let fill_r = RECT{left:0,top:0,right:w,bottom:h};
-            let brush = CreateSolidBrush(0x00FF00FF);
-            if !brush.0.is_null() { FillRect(mdc, &fill_r, brush); let _ = DeleteObject(brush); }
-            let pw = PrintWindow(hwnd_ptr, mdc, PW_RENDERFULLCONTENT | PW_CLIENTONLY);
-            let mut bi = BITMAPINFOHEADER::default();
-            bi.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            bi.biWidth=w; bi.biHeight=-h; bi.biPlanes=1; bi.biBitCount=32; bi.biCompression=BI_RGB.0 as u32;
-            let mut pix = vec![0u8;(w*h*4)as usize];
-            let copied = GetDIBits(mdc,bmp,0,h as u32,Some(pix.as_mut_ptr() as *mut _),
-                &mut bi as *mut _ as *mut BITMAPINFO, DIB_RGB_COLORS);
-            let _=SelectObject(mdc,old); let _=DeleteObject(bmp); let _=DeleteDC(mdc); let _=ReleaseDC(None,sdc);
-            if copied != 0 && pw.as_bool() && !is_solid_color(&pix) && !has_magenta_sentinel(&pix)
-                { Some((pix, w, h)) } else { None }
-        }
-        "ScreenBitBlt" => {
-            let mut wr = RECT::default();
-            let src_x = if GetWindowRect(hwnd_ptr, &mut wr).is_ok() { wr.left } else { 0 };
-            let src_y = if wr.top >= 0 { wr.top } else { 0 };
-            let sc = GetDC(None);
-            if sc.0.is_null() { return None; }
-            let r = bitblt_bgra_at(sc, sc, src_x, src_y, w, h);
-            let _ = ReleaseDC(None, sc);
-            r
-        }
-        "DXGI" | "dxgi" => {
-            // Desktop capture: GDI BitBlt from screen DC
-            // DXGI Desktop Duplication is available via C++ capture_wgc.exe;
-            // from Rust we use the equivalent GDI path for simplicity.
-            let dc = GetDC(None);
-            if dc.0.is_null() { return None; }
-            let r = bitblt_bgra(dc, dc, w, h);
-            let _ = ReleaseDC(None, dc);
-            r
-        }
-        _ => {
-            // Desktop: simple GDI
-            let dc = GetDC(None);
-            if dc.0.is_null() { return None; }
-            let r = bitblt_bgra(dc, dc, w, h);
-            let _ = ReleaseDC(None, dc);
-            r
+/// Normalize user-facing method strings to canonical capture method names.
+/// All method routing MUST go through this function — single source of truth.
+fn normalize_method(input: &str) -> &'static str {
+    match input {
+        "wgc" | "WGC" => "WGC",
+        "gdi" | "GDI" | "GDI(GetWindowDC)" => "GDI(GetWindowDC)",
+        "printwindow" | "PrintWindow" | "PrintWindow(minimized)" => "PrintWindow",
+        "screenbitblt" | "ScreenBitBlt" => "ScreenBitBlt",
+        // "dxgi"/"DXGI" is NOT real DXGI — it's GDI BitBlt from screen DC.
+        // Name it honestly so logs are not misleading.
+        "dxgi" | "DXGI" | "DesktopBlt" | "desktopblt" => "DesktopBlt",
+        // Auto-detect strings from capture_window_internal — pass through as literals
+        "auto" => "auto",
+        "None" => "None",
+        "ALL_FAILED" => "ALL_FAILED",
+        other => {
+            dlog!("normalize_method: unknown method '{}' → fallback to DesktopBlt", other);
+            "DesktopBlt"
         }
     }
 }
 
-/// WGC single-frame capture via subprocess (--single mode).
-fn capture_wgc_single(hwnd: u64) -> Option<(Vec<u8>, i32, i32)> {
-    let exe = find_wgc_exe()?;
-    let output = Command::new(&exe)
-        .arg(hwnd.to_string())
-        .arg("--single")
-        .arg("--scale").arg("1280")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags(0x08000000)
-        .output()
-        .ok()?;
-    if !output.status.success() { return None; }
-    let stdout = &output.stdout;
-    // WGC frame format: [ts:8][w:4][h:4][ch:4][reserved:4][pixels...]
-    if stdout.len() < 24 { return None; }
-    let w = i32::from_le_bytes([stdout[8], stdout[9], stdout[10], stdout[11]]);
-    let h = i32::from_le_bytes([stdout[12], stdout[13], stdout[14], stdout[15]]);
-    let ch = i32::from_le_bytes([stdout[16], stdout[17], stdout[18], stdout[19]]);
-    if w <= 0 || h <= 0 || ch <= 0 { return None; }
-    let px_size = (w * h * ch) as usize;
-    if stdout.len() < 24 + px_size { return None; }
-    let pixels = stdout[24..24 + px_size].to_vec();
-    Some((pixels, w, h))
+/// Dispatch to C++ capture lib for a specific method (used by stream loop).
+unsafe fn capture_fast_ffi(hwnd: u64, method: &str) -> Option<(Vec<u8>, i32, i32)> {
+    call_capture_method(hwnd, method).map(|(p, w, h, _)| (p, w, h))
 }
 
-/// Single-method capture — no fallback, no solid-color/magenta checks.
-unsafe fn capture_with_method(hwnd: u64, method: &str) -> CaptureResult {
-    let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
-    let is_desktop = hwnd_ptr.0.is_null() || hwnd_ptr == GetDesktopWindow();
-    let def = CaptureResult { pixels: vec![], w: 0, h: 0, method: "ALL_FAILED", window_state: "error" };
-
-    // WGC single-frame: spawn subprocess with --single
-    if method == "wgc" {
-        if let Some((pixels, pw, ph)) = capture_wgc_single(hwnd) {
-            return CaptureResult { pixels, w: pw, h: ph, method: "WGC", window_state: "normal" };
-        }
-        return def;
-    }
-
-    // Detect window state and dimensions
-    let (w, h, state) = if is_desktop {
-        (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), "desktop")
-    } else {
-        if !IsWindow(hwnd_ptr).as_bool() {
-            return CaptureResult { window_state: "closed", ..def };
-        }
-        let st = if IsIconic(hwnd_ptr).as_bool() { "minimized" }
-            else if !IsWindowVisible(hwnd_ptr).as_bool() { "hidden" }
-            else { "normal" };
-        let mut wr = RECT::default();
-        if GetWindowRect(hwnd_ptr, &mut wr).is_err() {
-            return CaptureResult { window_state: "no-rect", ..def };
-        }
-        let ww = wr.right - wr.left;
-        let wh = wr.bottom - wr.top;
-        if ww <= 0 || wh <= 0 {
-            return CaptureResult { window_state: "zero-size", ..def };
-        }
-        (ww, wh, st)
-    };
-
-    // Call capture_fast with the explicit method — no solid/magenta checks
-    let label: &'static str = match method {
-        "gdi" => "GDI(GetWindowDC)",
-        "printwindow" => "PrintWindow",
-        "screenbitblt" => "ScreenBitBlt",
-        "dxgi" | "DXGI" => "DXGI",
-        _ => "UserSelected",
-    };
-    match capture_fast(method, hwnd_ptr, w, h) {
-        Some((pixels, pw, ph)) => {
-            CaptureResult { pixels, w: pw, h: ph, method: label, window_state: state }
-        }
-        None => CaptureResult { pixels: vec![], w, h, method: "ALL_FAILED", window_state: state }
-    }
+/// Single-method capture via FFI — no fallback, no solid-color/magenta checks.
+unsafe fn capture_with_method_ffi(hwnd: u64, method: &str) -> Option<(Vec<u8>, i32, i32)> {
+    let canonical = normalize_method(method);
+    capture_fast_ffi(hwnd, canonical)
 }
 
-/// Resolve path to capture_wgc.exe relative to the Tauri binary.
-fn find_wgc_exe() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent().unwrap_or(&exe);
-
-    // Try multiple paths and names (capture_wgc.exe or capture_wgc2.exe)
-    let names = ["capture_wgc.exe", "capture_wgc2.exe"];
-    let bases = [
-        exe_dir.join("..").join("..").join("..").join("..").join("capture").join("build"),
-        exe_dir.join("..").join("capture").join("build"),
-        exe_dir.to_path_buf(),
-    ];
-
-    for base in &bases {
-        for name in &names {
-            let p = base.join(name);
-            if p.exists() {
-                dlog!("wgc: found exe at {}", p.display());
-                return Some(p);
-            }
-        }
-    }
-    dlog!("wgc: exe not found in any candidate path");
-    None
-}
-
-// ── WGC capture subprocess ─────────────────────────────
-/// Spawn capture_wgc.exe, read BGRA frames from stdout, feed into
+// ── WGC capture via static-linked C++ FFI ───────────────
+/// Call into C++ WgcCapture library, feed frames into
 /// STREAM_FRAME / RAW_FRAME / stream-tick pipeline.
 fn run_wgc_stream(
     hwnd: u64,
     app: tauri::AppHandle,
     running: Arc<AtomicBool>,
 ) {
-    let exe = match find_wgc_exe() {
-        Some(p) => p,
-        None => { dlog!("wgc: capture_wgc.exe not found, aborting"); return; }
-    };
+    let max_px = 3840 * 2160 * 4; // 4K BGRA
+    let mut buf = vec![0u8; max_px];
+    let handle = unsafe { wgc_stream_start(hwnd as isize, 1280) };
+    if handle.is_null() {
+        dlog!("wgc: failed to start stream for hwnd={}", hwnd);
+        return;
+    }
+    dlog!("wgc: stream started for hwnd={}", hwnd);
 
-    dlog!("wgc: spawning {} --stream --scale 1280 {}", exe.display(), hwnd);
-
-    let mut child = match Command::new(&exe)
-        .arg(hwnd.to_string())
-        .arg("--stream")
-        .arg("--scale").arg("1280")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => { dlog!("wgc: spawn failed: {}", e); return; }
-    };
-
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-
-    // Stderr reader — log to agent_*.log
-    thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            if let Ok(l) = line { if !l.is_empty() { dlog!("  WGC {}", l); } }
-        }
-    });
-
-    // Frame reader — stdout: [ts:8][w:4][h:4][ch:4][reserved:4][pixels...]
-    let mut reader = BufReader::new(stdout);
     let mut frames: u64 = 0;
     let fps_t0 = Instant::now();
 
     while running.load(Ordering::Relaxed) {
-        // Read 24-byte frame header
-        let mut hdr = [0u8; 24];
-        if reader.read_exact(&mut hdr).is_err() { break; }
+        if unsafe { wgc_stream_is_ok(handle) } == 0 { break; }
 
-        let _ts = u64::from_le_bytes(hdr[0..8].try_into().unwrap());
-        let w = i32::from_le_bytes(hdr[8..12].try_into().unwrap());
-        let h = i32::from_le_bytes(hdr[12..16].try_into().unwrap());
-        let ch = i32::from_le_bytes(hdr[16..20].try_into().unwrap());
-
-        if w <= 0 || h <= 0 || ch <= 0 { continue; }
-        let px_size = (w * h * ch) as usize;
-        if px_size > 100_000_000 { dlog!("wgc: absurd frame {}x{}x{}, aborting", w, h, ch); break; }
-
-        let mut pixels = vec![0u8; px_size];
-        if reader.read_exact(&mut pixels).is_err() { break; }
-
-        // Timestamp: per-frame timing to log
+        let (mut w, mut h, mut ch) = (0i32, 0i32, 0i32);
+        let size = unsafe {
+            wgc_stream_read(handle, buf.as_mut_ptr(), max_px as i32,
+                            &mut w, &mut h, &mut ch)
+        };
+        if size <= 0 || w <= 0 || h <= 0 || ch <= 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
+        }
+        let pixels = &buf[..size as usize];
         let t0 = Instant::now();
 
         // Pack raw BGRA for TCP broadcast
-        let payload = payload::bgra::pack(&pixels, w as u32, h as u32, ch as u32);
+        let payload = payload::bgra::pack(pixels, w as u32, h as u32, ch as u32);
         if let Ok(mut raw) = RAW_FRAME.lock() {
             *raw = (payload, w, h);
         }
 
         // Raw RGBA for frontend Canvas (BGRA→RGBA swap)
-        let rgba = bgra_to_rgba(&pixels);
+        let rgba = bgra_to_rgba(pixels);
         if let Ok(mut state) = STREAM_FRAME.lock() {
             *state = (rgba, w, h, "WGC".to_string());
         }
@@ -985,25 +734,15 @@ fn run_wgc_stream(
         frames += 1;
 
         if frames % 60 == 0 {
-            let bmp_us = t0.elapsed().as_micros();
-            dlog!("wgc: {} frames bmp={}us", frames, bmp_us);
+            dlog!("wgc: {} frames bmp={}us", frames, t0.elapsed().as_micros());
         }
-
-        // FPS log
         if frames > 0 && frames % 120 == 0 {
             let elapsed = fps_t0.elapsed().as_secs_f64();
             dlog!("wgc: {} frames in {:.1}s = {:.0}fps", frames, elapsed, frames as f64 / elapsed);
         }
     }
 
-    // Cleanup
-    let _ = writeln!(stdin, "q");
-    let _ = stdin.flush();
-    drop(stdin);
-    // Give subprocess 500ms to clean up, then kill
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let _ = child.kill();
-    let _ = child.wait();
+    unsafe { wgc_stream_stop(handle); }
     dlog!("wgc: stream exited after {} frames", frames);
 }
 
@@ -1017,14 +756,11 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
-    // Force WGC if requested, auto-detect otherwise
+    // WGC is statically linked — always available
     let use_wgc = if method_str == "wgc" {
-        if find_wgc_exe().is_none() {
-            return Err("WGC capture requested but capture_wgc.exe not found".into());
-        }
         true
     } else if method_str == "auto" || method_str.is_empty() {
-        hwnd != 0 && find_wgc_exe().is_some()
+        hwnd != 0
     } else {
         false
     };
@@ -1061,7 +797,7 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
         let mut h: i32;
 
         if let Some(ref m) = explicit_method {
-            stream_method = m.clone();
+            stream_method = normalize_method(m).to_string();
             let is_desk = hwnd == 0 || hwnd_ptr == unsafe { GetDesktopWindow() };
             if is_desk {
                 unsafe { w = GetSystemMetrics(SM_CXSCREEN); h = GetSystemMetrics(SM_CYSCREEN); }
@@ -1075,20 +811,19 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
             if w <= 0 || h <= 0 { dlog!("stream: zero-size window, aborting"); return; }
             dlog!("stream: explicit method={} {}x{}", stream_method, w, h);
         } else {
-            let detect = unsafe { capture_window_internal(hwnd) };
-            stream_method = detect.method.to_string();
-            w = detect.w; h = detect.h;
-            dlog!("stream: detected method={} state={} {}x{}", stream_method, detect.window_state, w, h);
-            if stream_method == "None" || stream_method == "ALL_FAILED" || w <= 0 || h <= 0 {
-                dlog!("stream: no working capture method, aborting"); return;
-            }
-            // Display first frame immediately
-            if !detect.pixels.is_empty() {
-                let rgba = bgra_to_rgba(&detect.pixels);
+            let detect = unsafe { capture_auto_detect_ffi(hwnd) };
+            if let Some((pixels, pw, ph, method)) = detect {
+                stream_method = normalize_method(&method).to_string();
+                w = pw; h = ph;
+                dlog!("stream: detected method={} {}x{}", stream_method, w, h);
+                // Display first frame immediately
+                let rgba = bgra_to_rgba(&pixels);
                 if let Ok(mut state) = STREAM_FRAME.lock() {
                     *state = (rgba, w, h, stream_method.clone());
                 }
                 let _ = app.emit("stream-tick", serde_json::json!({"method": &stream_method}));
+            } else {
+                dlog!("stream: no working capture method, aborting"); return;
             }
         }
 
@@ -1107,34 +842,45 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
             }
 
             let frame_t0 = Instant::now();
-            let result = unsafe { capture_fast(&stream_method, hwnd_ptr, w, h) };
+            let result = unsafe { capture_fast_ffi(hwnd, &stream_method) };
             let cap_us = frame_t0.elapsed().as_micros();
 
             if let Some((pixels, pw, ph)) = result {
                 w = pw; h = ph;
 
-                // Frame differ: skip unchanged frames
-                if pixels.len() == prev_pixels.len() && pixels == prev_pixels {
-                    // Emit size=0 signal (frontend reuses previous)
+                // Frame differ: skip unchanged frames in auto mode only.
+                // Explicit method: always send frames — user chose this method
+                // and expects continuous preview (e.g. DXGI desktop).
+                let skip_differ = explicit_method.is_none()
+                    && pixels.len() == prev_pixels.len() && pixels == prev_pixels;
+
+                if skip_differ {
                     if let Ok(mut state) = STREAM_FRAME.lock() {
                         state.3 = stream_method.clone();
                     }
                 } else {
-                    let t_pack = Instant::now();
-                    let payload = payload::bgra::pack(&pixels, w as u32, h as u32, 4);
-                    let rgba = bgra_to_rgba(&pixels);
-                    let pack_us = t_pack.elapsed().as_micros();
-
+                    // Pack raw BGRA for TCP broadcast (before scaling for preview)
+                    let tcp_payload = payload::bgra::pack(&pixels, w as u32, h as u32, 4);
                     if let Ok(mut raw) = RAW_FRAME.lock() {
-                        *raw = (payload, w, h);
+                        *raw = (tcp_payload, w, h);
                     }
+
+                    let t_pack = Instant::now();
+                    // Scale+swap BGRA→RGBA in one pass (no intermediate buffer)
+                    let (preview_rgba, pw, ph) = scale_bgra_to_rgba(&pixels, w, h, 1280);
+                    let scale_us = t_pack.elapsed().as_micros();
+
+                    let t_store = Instant::now();
                     prev_pixels = pixels;
                     if let Ok(mut state) = STREAM_FRAME.lock() {
-                        *state = (rgba, w, h, stream_method.clone());
+                        *state = (preview_rgba, pw, ph, stream_method.clone());
                     }
+                    let store_us = t_store.elapsed().as_micros();
 
-                    if frames % 30 == 0 {
-                        dlog!("stream timing: cap={}us pack={}us", cap_us, pack_us);
+                    // Per-frame timing every 60 frames (avoid log flooding)
+                    if frames % 60 == 0 {
+                        let total_us = frame_t0.elapsed().as_micros();
+                        dlog!("frame #{} cap={}us scale={}us store={}us total={}us {}x{}→{}x{}", frames, cap_us, scale_us, store_us, total_us, w, h, pw, ph);
                     }
                 }
                 let _ = app.emit("stream-tick", serde_json::json!({"method": &stream_method}));
@@ -1142,18 +888,19 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
                 recheck_counter = 0;
             } else {
                 // Auto mode: re-detect after 30 consecutive failures
-                // Explicit method: just skip frame, no re-detect
+                // Explicit method: just emit tick so frontend doesn't freeze
                 if explicit_method.is_none() {
                     recheck_counter += 1;
                     if recheck_counter > 30 {
-                        let redetect = unsafe { capture_window_internal(hwnd) };
-                        if redetect.method != "None" && redetect.method != "ALL_FAILED" {
-                            stream_method = redetect.method.to_string();
-                            w = redetect.w; h = redetect.h;
+                        if let Some((_, _pw, _ph, method)) = unsafe { capture_auto_detect_ffi(hwnd) } {
+                            stream_method = normalize_method(&method).to_string();
                             dlog!("stream: re-detected method={}", stream_method);
                         }
                         recheck_counter = 0;
                     }
+                } else {
+                    // Explicit method: emit tick so frontend shows we're still alive
+                    let _ = app.emit("stream-tick", serde_json::json!({"method": &stream_method}));
                 }
             }
 
@@ -1203,227 +950,6 @@ fn capture_stream_stop() -> Result<String, String> {
     Ok("stopped".into())
 }
 
-// ── H.264 Capture Stream (GPU H.264 encode → fMP4 → MSE <video>) ──
-
-/// Build MSE codec string from SPS NAL unit.
-/// Format: "avc1.<profile_idc_hex><constraint_hex><level_hex>"
-fn avc_codec_string(sps: &[u8]) -> String {
-    if sps.len() >= 4 {
-        format!("avc1.{:02X}{:02X}{:02X}", sps[1], sps[2], sps[3])
-    } else {
-        "avc1.42C01E".to_string() // Baseline L3.0 fallback
-    }
-}
-
-/// Extract SPS + PPS NAL units from Annex B H.264 data.
-/// Returns (sps, pps) as raw NAL units (without start code).
-fn extract_sps_pps(h264_data: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    let mut sps: Option<Vec<u8>> = None;
-    let mut pps: Option<Vec<u8>> = None;
-    let mut pos = 0;
-
-    while pos + 3 <= h264_data.len() {
-        // Find start code
-        let sc_len = if h264_data[pos] == 0 && h264_data[pos+1] == 0 && h264_data[pos+2] == 0 && pos+4 <= h264_data.len() && h264_data[pos+3] == 1 {
-            4
-        } else if h264_data[pos] == 0 && h264_data[pos+1] == 0 && h264_data[pos+2] == 1 {
-            3
-        } else {
-            pos += 1; continue;
-        };
-
-        let nal_start = pos + sc_len;
-        if nal_start >= h264_data.len() { break; }
-
-        // Find next start code
-        let mut nal_end = nal_start;
-        while nal_end + 3 <= h264_data.len() {
-            if h264_data[nal_end] == 0 && h264_data[nal_end+1] == 0 {
-                if h264_data[nal_end+2] == 1 || (h264_data[nal_end+2] == 0 && nal_end+4 <= h264_data.len() && h264_data[nal_end+3] == 1) {
-                    break;
-                }
-            }
-            nal_end += 1;
-        }
-
-        let nal = &h264_data[nal_start..nal_end];
-        if !nal.is_empty() {
-            let nal_type = nal[0] & 0x1F;
-            match nal_type {
-                7 => sps = Some(nal.to_vec()),
-                8 => pps = Some(nal.to_vec()),
-                _ => {}
-            }
-        }
-
-        if sps.is_some() && pps.is_some() { break; }
-        pos = nal_end;
-    }
-
-    match (sps, pps) {
-        (Some(s), Some(p)) => Some((s, p)),
-        _ => None,
-    }
-}
-
-struct H264StreamState {
-    child: Option<Child>,
-}
-
-static H264_STREAM: Mutex<Option<H264StreamState>> = Mutex::new(None);
-static H264_FRAME: Mutex<String> = Mutex::new(String::new()); // base64 media segment
-static H264_INIT_READY: Mutex<bool> = Mutex::new(false);
-
-#[tauri::command]
-fn h264_stream_start(app: tauri::AppHandle, hwnd: u64) -> Result<String, String> {
-    let _ = h264_stream_stop();
-
-    let exe = std::env::current_exe()
-        .map(|p| p.parent().unwrap_or(&p).join("..").join("..").join("..").join("..")
-            .join("capture").join("build").join("capture_h264.exe"))
-        .unwrap_or_else(|_| "capture/build/capture_h264.exe".into());
-    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-
-    dlog!("h264_stream_start: {} {}", exe.display(), hwnd);
-
-    let mut child = Command::new(&exe)
-        .arg(hwnd.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-        .map_err(|e| format!("spawn: {}", e))?;
-
-    let stdout = child.stdout.take().ok_or("no stdout")?;
-    let stderr = child.stderr.take().ok_or("no stderr")?;
-
-    // Stderr reader
-    thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            if let Ok(l) = line { if !l.is_empty() { dlog!("  C++ h264 {}", l); } }
-        }
-    });
-
-    // Frame reader
-    let app_handle = app.clone();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-
-        // Read method line
-        let mut method = String::new();
-        let _ = reader.read_line(&mut method);
-        let method = method.trim().to_string();
-        dlog!("h264_stream: method={}", method);
-
-        let mut prev_h264: Vec<u8> = Vec::new();
-        let mut init_sent = false;
-        let mut frames: u64 = 0;
-        let mut seq_num: u32 = 1;
-        let fps: u32 = 60;
-        let sample_duration: u32 = 1000 / fps; // in timescale units (1000 = 1ms)
-
-        loop {
-            // Read header: [size:4 LE]
-            let mut hdr = [0u8; 4];
-            if reader.read_exact(&mut hdr).is_err() { break; }
-            let size = u32::from_le_bytes(hdr) as usize;
-
-            let h264_data = if size == 0 {
-                if prev_h264.is_empty() { continue; }
-                prev_h264.clone()
-            } else {
-                let mut data = vec![0u8; size];
-                if reader.read_exact(&mut data).is_err() { break; }
-                data
-            };
-
-            if h264_data.is_empty() { continue; }
-
-            // Build init segment from first frame (contains SPS+PPS)
-            if !init_sent {
-                if let Some((sps, pps)) = extract_sps_pps(&h264_data) {
-                    dlog!("h264_stream: SPS={}B PPS={}B", sps.len(), pps.len());
-                    let codec = avc_codec_string(&sps);
-                    dlog!("h264_stream: codec={}", codec);
-                    let init = fmp4::build_init_segment(640, 360, &sps, &pps);
-                    let init_b64 = base64_encode(&init);
-                    let _ = app_handle.emit("h264-init", serde_json::json!({
-                        "data": init_b64,
-                        "codec": codec,
-                        "method": method
-                    }));
-                    *H264_INIT_READY.lock().unwrap() = true;
-                    init_sent = true;
-                } else {
-                    // No SPS/PPS yet — skip this frame, wait for keyframe
-                    dlog!("h264_stream: waiting for SPS/PPS...");
-                    continue;
-                }
-            }
-
-            // Build media segment
-            let pts: u64 = frames * sample_duration as u64;
-            let segment = fmp4::build_media_segment(&h264_data, seq_num, pts, sample_duration);
-            let seg_b64 = base64_encode(&segment);
-
-            if let Ok(mut state) = H264_FRAME.lock() {
-                *state = seg_b64;
-            }
-            let _ = app_handle.emit("h264-tick", serde_json::json!({}));
-            prev_h264 = h264_data;
-            frames += 1;
-            seq_num += 1;
-        }
-        dlog!("h264_stream: exited after {} frames", frames);
-    });
-
-    *H264_STREAM.lock().unwrap() = Some(H264StreamState {
-        child: Some(child),
-    });
-    Ok("started".into())
-}
-
-#[tauri::command]
-fn h264_poll() -> String {
-    if let Ok(state) = H264_FRAME.lock() {
-        if !state.is_empty() { return state.clone(); }
-    }
-    String::new()
-}
-
-#[tauri::command]
-fn h264_init_ready() -> bool {
-    *H264_INIT_READY.lock().unwrap()
-}
-
-#[tauri::command]
-fn h264_stream_stop() -> Result<String, String> {
-    let mut state = H264_STREAM.lock().unwrap();
-    if let Some(ref mut s) = *state {
-        if let Some(ref mut child) = s.child {
-            // Try to send quit signal — may fail if process already exited
-            if let Some(stdin) = child.stdin.as_mut() {
-                let _ = writeln!(stdin, "q");
-                let _ = stdin.flush();
-            }
-            // Don't block forever — wait with timeout equivalent
-            match child.try_wait() {
-                Ok(Some(status)) => dlog!("h264_stream_stop: process already exited {:?}", status),
-                Ok(None) => {
-                    // Still running, kill it
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    dlog!("h264_stream_stop: process killed");
-                }
-                Err(e) => dlog!("h264_stream_stop: try_wait error {}", e),
-            }
-        }
-    }
-    *state = None;
-    *H264_INIT_READY.lock().unwrap() = false;
-    Ok("stopped".into())
-}
 
 #[tauri::command]
 fn screen_info() -> serde_json::Value {
@@ -1469,6 +995,60 @@ fn read_logs(max_files: usize) -> Vec<LogFile> {
     result
 }
 
+/// Benchmark capture methods: test single-frame latency for each method.
+/// Returns JSON: [{"method":"wgc","single_ms":12,"ok":true}, ...]
+#[tauri::command]
+fn benchmark_methods(hwnd: u64) -> String {
+    let methods = vec!["wgc", "GDI(GetWindowDC)", "PrintWindow", "ScreenBitBlt", "DesktopBlt"];
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    for m in &methods {
+        let t0 = std::time::Instant::now();
+        let result = unsafe { capture_with_method_ffi(hwnd, m) };
+        let ms = t0.elapsed().as_millis() as u64;
+        let (ok, size_kb) = if let Some((ref pixels, _, _)) = result {
+            let valid = !pixels.is_empty()
+                && unsafe { capture_is_solid_color(pixels.as_ptr(), pixels.len() as i32) == 0 }
+                && unsafe { capture_has_magenta(pixels.as_ptr(), pixels.len() as i32) == 0 };
+            let kb = pixels.len() as f64 / 1024.0;
+            (valid, kb)
+        } else {
+            (false, 0.0)
+        };
+        dlog!("bench: {} {}ms {}KB {}", normalize_method(m), ms, size_kb as u64, if ok {"OK"} else {"NO_CONTENT"});
+        results.push(serde_json::json!({
+            "method": normalize_method(m),
+            "single_ms": ms,
+            "ok": ok,
+        }));
+    }
+    serde_json::to_string(&results).unwrap_or_else(|_| "[]".into())
+}
+
+/// Bridge: receive UI event logs from frontend and write to disk log.
+#[tauri::command]
+fn log_ui_event(msg: String) {
+    dlog!("{}", msg);
+}
+
+/// Archive current log file and start a new session log.
+#[tauri::command]
+fn clear_log() {
+    // Close current log file (old file stays on disk as archive)
+    *LOG_FILE.lock().unwrap() = None;
+    // Start new session with fresh timestamped file
+    init_log(5);
+    dlog!("New session started (previous log archived)");
+}
+
+/// Report window state via C++ capture lib.
+#[tauri::command]
+fn window_state(hwnd: u64) -> String {
+    let ptr = unsafe { capture_query_window_state(hwnd as isize) };
+    if ptr.is_null() { return "unknown".into(); }
+    let s = unsafe { std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string() };
+    s
+}
+
 fn main() {
     init_log(5);  // keep max 5 log files
     dlog!("Starting Tauri application...");
@@ -1481,11 +1061,25 @@ fn main() {
             list_windows, list_processes,
             capture_single, capture_window,
             capture_stream_start, capture_stream_stop, stream_poll,
-            h264_stream_start, h264_stream_stop, h264_poll, h264_init_ready,
-            highlight_window, screen_info, read_logs
+            highlight_window, screen_info, read_logs, log_ui_event, clear_log, window_state, benchmark_methods
         ])
         .setup(|_app| {
             dlog!("Tauri setup complete, window created");
+            // Start hidden → query OS scale factor → compute logical size → show
+            use tauri::Manager;
+            if let Some(win) = _app.get_webview_window("main") {
+                let scale = _app.available_monitors()
+                    .ok()
+                    .and_then(|mons| mons.into_iter().next())
+                    .map(|m| m.scale_factor())
+                    .unwrap_or(1.0);
+                let logical_w = (DEFAULT_WINDOW_W as f64 / scale).round() as u32;
+                let logical_h = (DEFAULT_WINDOW_H as f64 / scale).round() as u32;
+                dlog!("setup: scale={} logical={}x{}", scale, logical_w, logical_h);
+                use tauri::LogicalSize;
+                let _ = win.set_size(LogicalSize::new(logical_w, logical_h));
+                let _ = win.show();
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -12,6 +12,7 @@ pub fn send_frame(writer: &mut impl Write, type_tag: PayloadType, payload: &[u8]
     if !payload.is_empty() { writer.write_all(payload)?; }
     writer.flush()
 }
+#![allow(dead_code)]
 
 /// Max sane payload size (256 MiB). Reject larger as likely corrupt header.
 const MAX_PAYLOAD_SIZE: u32 = 256 * 1024 * 1024;

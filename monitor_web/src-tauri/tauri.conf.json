@@ -13,13 +13,14 @@
     "windows": [
       {
         "title": "Game Agent Monitor",
-        "width": 1200,
-        "height": 780,
-        "minWidth": 900,
-        "minHeight": 600,
+        "width": 1280,
+        "height": 720,
+        "minWidth": 324,
+        "minHeight": 216,
         "resizable": true,
         "fullscreen": false,
         "center": true,
+        "visible": false,
         "decorations": true
       }
     ],

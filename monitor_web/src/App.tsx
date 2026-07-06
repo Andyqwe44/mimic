@@ -56,7 +56,7 @@ function ThemeBtn() {
   const [dark, setDark] = useState(false)
   return (
     <Tooltip text={dark ? "切换亮色主题" : "切换暗色主题"}>
-      <button onClick={() => { const d = !dark; setDark(d); document.documentElement.classList.toggle('dark', d); addLog(`Theme: ${d ? 'dark' : 'light'}`) }}
+      <button onClick={() => { const d = !dark; setDark(d); document.documentElement.classList.toggle('dark', d); addLog(`[Theme] ${d ? 'dark' : 'light'}`) }}
         className="p-2 rounded-md hover:bg-bg-hover transition-colors">
         {dark ? <Sun className="w-4 h-4 text-text-secondary" /> : <Moon className="w-4 h-4 text-text-secondary" />}
       </button>
@@ -111,7 +111,7 @@ function TopBar({ tab, setTab, running, onStart, onStop }: {
     <div className="flex items-center h-10 bg-bg-secondary border-b border-border select-none shrink-0">
       <div className="flex-1 flex items-center h-full overflow-x-auto">
         {tabs.map(t => (
-          <button key={t.id} onClick={() => { setTab(t.id); addLog(`Tab: ${t.label}`) }}
+          <button key={t.id} onClick={() => { setTab(t.id); addLog(`[Tab] ${t.label}`) }}
             className={`group flex items-center gap-1.5 h-full px-3 cursor-pointer border-r border-border min-w-[100px] transition-colors
               ${t.id === tab ? 'bg-bg-primary text-accent border-b-[3px] border-b-accent' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover border-b-[3px] border-b-transparent'}`}>
             {t.icon}
@@ -121,12 +121,12 @@ function TopBar({ tab, setTab, running, onStart, onStop }: {
       </div>
       <div className="flex items-center gap-1 px-2">
         {running
-          ? <ActionBtn icon={<Square className="w-3.5 h-3.5" />} label="Stop" title="停止所有运行中的任务" variant="danger" onClick={() => { onStop(); addLog('Action: Stop') }} />
-          : <ActionBtn icon={<Play className="w-3.5 h-3.5" />} label="Start" title="启动agent任务" variant="primary" onClick={() => { onStart(); addLog('Action: Start') }} />
+          ? <ActionBtn icon={<Square className="w-3.5 h-3.5" />} label="Stop" title="停止所有运行中的任务" variant="danger" onClick={() => { onStop(); addLog('[Action] Stop') }} />
+          : <ActionBtn icon={<Play className="w-3.5 h-3.5" />} label="Start" title="启动agent任务" variant="primary" onClick={() => { onStart(); addLog('[Action] Start') }} />
         }
         <div className="mx-1 h-4 w-px bg-border" />
         <ThemeBtn />
-        <IconBtn title="设置" icon={<Settings className="w-4 h-4" />} onClick={() => { setTab('Settings'); addLog('Tab: Settings') }} />
+        <IconBtn title="设置" icon={<Settings className="w-4 h-4" />} onClick={() => { setTab('Settings'); addLog('[Tab] Settings') }} />
       </div>
     </div>
   )
@@ -168,7 +168,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
     try {
       const list = await invoke<WindowInfo[]>('list_windows')
       setWindows(list)
-      addLog(`Windows loaded: ${list.length} entries`)
+      addLog(`[Window] loaded ${list.length} entries`)
     } catch {
       setWindows([{ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }, { title: 'Tic Tac Toe — main.exe', category: 'window', hwnd: 0 }, { title: 'Notepad', category: 'window', hwnd: 0 }, { title: 'Chrome', category: 'window', hwnd: 0 }])
     }
@@ -180,7 +180,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
     try {
       const list = await invoke<WindowInfo[]>('list_processes')
       setProcesses(list)
-      addLog(`Processes loaded: ${list.length} entries`)
+      addLog(`[Window] processes ${list.length} entries`)
     } catch {
       setProcesses([{ title: 'svchost.exe', category: 'process', hwnd: 0 }, { title: 'explorer.exe', category: 'process', hwnd: 0 }])
     }
@@ -205,20 +205,20 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
   if (!open) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/30" onClick={() => { onClose(); addLog('[Window] picker cancelled') }} />
       <div className="relative w-[520px] max-h-[560px] bg-bg-secondary border border-border rounded-xl shadow-lg flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <MonitorUp className="w-4 h-4 text-accent" />
             <span className="text-sm font-semibold text-text-primary">Select Target</span>
           </div>
-          <Tooltip text="关闭"><button onClick={onClose} className="p-1 rounded-md hover:bg-bg-hover transition-colors"><X className="w-4 h-4 text-text-secondary" /></button></Tooltip>
+          <Tooltip text="关闭"><button onClick={() => { onClose(); addLog('[Window] picker cancelled') }} className="p-1 rounded-md hover:bg-bg-hover transition-colors"><X className="w-4 h-4 text-text-secondary" /></button></Tooltip>
         </div>
         {/* Category tabs + Refresh */}
         <div className="flex items-center gap-1 px-4 pt-3 pb-1">
           {categories.map(c => (
             <Tooltip text={`筛选: ${c === 'all' ? '全部' : c === 'desktop' ? '桌面' : c === 'window' ? '窗口' : '进程'}`}>
-              <button key={c} onClick={() => setFilter(c)}
+              <button key={c} onClick={() => { setFilter(c); addLog(`[Filter] ${c}`) }}
                 className={`px-3 py-1 rounded-full text-xs font-medium transition-colors capitalize
                   ${filter === c ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'}`}>
                 {c === 'all' ? 'All' : c === 'desktop' ? ' Desktop' : c === 'window' ? ' Windows' : ' Process'}
@@ -227,7 +227,7 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
           ))}
           <div className="flex-1" />
           <Tooltip text="刷新窗口列表">
-            <button onClick={() => { loadWindows(); setProcesses([]); addLog('Refreshing windows...') }}
+            <button onClick={() => { loadWindows(); setProcesses([]); addLog('[Window] refreshing list') }}
               className={`p-1.5 rounded-md hover:bg-bg-hover transition-colors text-text-secondary ${loading ? 'animate-spin' : ''}`}>
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -278,27 +278,102 @@ function WindowPickerModal({ open, onClose, onSelect }: { open: boolean; onClose
   )
 }
 
+// ═══ Capture Mode Picker ───
+const CAPTURE_MODES = [
+  { v: 'foreground', label: '前台 (Foreground)', desc: '窗口可见且在最前 → 推荐 WGC GPU 加速', method: 'wgc' },
+  { v: 'background', label: '后台 (Background)', desc: '窗口被遮挡但未最小化 → 推荐 WGC (唯一支持后台)', method: 'wgc' },
+  { v: 'minimized',  label: '最小化 (Minimized)',  desc: '窗口已最小化 → 只能用 DesktopGDI 截桌面', method: 'dxgi' },
+]
+
+function CaptureModeModal({ open, onSelect, onClose }: { open: boolean; onSelect: (mode: string) => void; onClose: () => void }) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative w-[440px] bg-bg-secondary border border-border rounded-xl shadow-lg flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-2">
+            <MonitorUp className="w-4 h-4 text-accent" />
+            <span className="text-sm font-semibold text-text-primary">Capture Mode</span>
+          </div>
+          <Tooltip text="关闭"><button onClick={onClose} className="p-1 rounded-md hover:bg-bg-hover transition-colors"><X className="w-4 h-4 text-text-secondary" /></button></Tooltip>
+        </div>
+        <div className="p-3 space-y-2">
+          <div className="text-xs text-text-muted mb-2">请选择目标窗口的当前状态，系统将自动推荐最优捕获方案：</div>
+          {CAPTURE_MODES.map(m => (
+            <button key={m.v} onClick={() => { onSelect(m.method); onClose(); addLog(`[Capture] mode=${m.v} → ${m.method}`) }}
+              className="w-full flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg text-left transition-colors hover:bg-bg-hover border border-border">
+              <span className="text-sm font-medium text-text-primary">{m.label}</span>
+              <span className="text-xs text-text-muted">{m.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ═══ Connection Panel ───
+
+// Methods that cannot capture minimized windows
+const METHOD_SHORT: Record<string,string> = { wgc:'WGC', gdi:'GDI', dxgi:'Desktop', printwindow:'PW', screenbitblt:'ScreenBlt', GDI:'GDI', 'GDI(GetWindowDC)':'GDI', PrintWindow:'PW', 'PrintWindow(minimized)':'PW', ScreenBitBlt:'ScreenBlt', DesktopBlt:'Desktop', WGC:'WGC' }
+const METHODS_NO_MINIMIZED = ['wgc','gdi','printwindow','screenbitblt']
+const cantCaptureMinimized = (method: string, ws: string) => ws === 'minimized' && METHODS_NO_MINIMIZED.includes(method)
+const STATE_LABEL: Record<string,string> = { desktop:'Desktop', foreground:'前台', background:'后台', minimized:'最小化', hidden:'隐藏', closed:'已关闭', unknown:'未知' }
+const STATE_COLOR: Record<string,string> = { desktop:'text-text-muted', foreground:'text-success', background:'text-accent', minimized:'text-error', hidden:'text-error', closed:'text-error', unknown:'text-text-muted' }
+
 // ═══ Connection Panel (MXU-style collapsible card) ═══
-function ConnectionPanel({ onSelect, onDisconnect }: { onSelect: (w: WindowInfo) => void; onDisconnect?: () => void }) {
-  const [expanded, setExpanded] = useState(true)
+function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, selWin, winState, showMethod, expanded, onToggle }: { onSelect: (w: WindowInfo) => void; onDisconnect?: () => void; forceMethod: string; setForceMethod?: (m: string) => void; selWin?: WindowInfo; winState: string; showMethod?: boolean; expanded: boolean; onToggle: () => void }) {
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [title, setTitle] = useState(' Entire Desktop')
+  const [modePickerOpen, setModePickerOpen] = useState(false)
+  const [selTitle, setSelTitle] = useState(' Entire Desktop')
   const [ip, setIp] = useState('127.0.0.1')
   const [port, setPort] = useState('9999')
-  const handleSelect = (w: WindowInfo) => { setTitle(w.title); onSelect(w); addLog(`Selected: ${w.title}`) }
-  const isDesktop = title === ' Entire Desktop'
+  const isDesktop = selTitle === ' Entire Desktop'
+
+  const handleSelect = (w: WindowInfo) => {
+    setSelTitle(w.title); onSelect(w); addLog(`[Window] ${w.title}`)
+    // After window selection: if desktop, auto-set dxgi; otherwise ask for capture mode
+    if (w.hwnd === 0 || w.category === 'desktop') {
+      if (setForceMethod) { setForceMethod('dxgi'); addLog('[Capture] desktop → dxgi') }
+    } else {
+      setModePickerOpen(true)
+    }
+  }
+
+  const handleModeSelect = (method: string) => {
+    if (setForceMethod) { setForceMethod(method) }
+  }
+
+  // Sync selTitle when parent changes selWin externally
+  useEffect(() => {
+    if (selWin && selWin.title !== selTitle) {
+      setSelTitle(selWin.title)
+    }
+  }, [selWin?.title])
+
+  const cantCapture = !isDesktop && cantCaptureMinimized(forceMethod, winState)
+
+  const methods = [
+    { v: 'wgc',           l: 'WGC (GPU FramePool)',       desc: '最佳性能，支持后台/遮挡窗口，不适合最小化窗口或桌面' },
+    { v: 'gdi',           l: 'GDI (GetWindowDC)',         desc: '窗口截图，兼容性好，不适合后台/最小化窗口' },
+    { v: 'printwindow',   l: 'PrintWindow',               desc: '窗口内容截图（含子窗口），不适合最小化窗口' },
+    { v: 'screenbitblt',  l: 'Screen BitBlt',             desc: '屏幕坐标截图，不适合最小化/后台窗口' },
+    { v: 'dxgi',          l: 'DesktopGDI (全桌面)',        desc: '全桌面GDI位图，最简单可靠，仅桌面级别' },
+  ]
 
   return (
     <div className="bg-bg-secondary rounded-xl ring-1 ring-inset ring-border overflow-hidden">
-      <div role="button" tabIndex={0} onClick={() => setExpanded(!expanded)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
+      <div role="button" tabIndex={0} onClick={() => { onToggle(); addLog(`[Connection] ${!expanded ? 'expanded' : 'collapsed'}`) }} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-bg-hover cursor-pointer transition-colors outline-none">
-        <div className="flex items-center gap-2">
-          <MonitorUp className="w-4 h-4 text-text-secondary" />
-          <span className="text-sm font-medium text-text-primary">Connection</span>
-          <span className={`text-xs ml-1 truncate max-w-[100px] ${isDesktop ? 'text-text-muted' : 'text-success'}`}>
-            {isDesktop ? 'Desktop' : title}
+        <div className="flex items-center gap-2 min-w-0">
+          <MonitorUp className="w-4 h-4 text-text-secondary shrink-0" />
+          <span className="text-sm font-medium text-text-primary shrink-0">Connection</span>
+          <span className={`text-xs ${STATE_COLOR[winState] || 'text-text-muted'} shrink-0`}>
+            {STATE_LABEL[winState] || winState}
           </span>
+          <span className="text-xs text-accent truncate">{METHOD_SHORT[forceMethod] || forceMethod}</span>
+          {cantCapture && <span className="text-xs text-error shrink-0">⚠</span>}
         </div>
         <ChevronDown className={`w-4 h-4 text-text-muted transition-transform duration-150 ${expanded?'rotate-180':''}`} />
       </div>
@@ -307,22 +382,27 @@ function ConnectionPanel({ onSelect, onDisconnect }: { onSelect: (w: WindowInfo)
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-border" />
           <div className="p-3 space-y-2">
+            {cantCapture && (
+              <div className="text-xs text-error bg-red-500/10 rounded-lg px-2 py-1.5">
+                窗口已最小化，{forceMethod.toUpperCase()} 无法截取。请切换为 WGC 或将窗口恢复前台。
+              </div>
+            )}
             <div className="flex justify-between">
               <div className="flex items-center gap-1.5">
                 <Tooltip text="已选择的目标窗口（只读，请用Select选择）">
-                  <input value={title} readOnly placeholder="Window Title"
+                  <input value={selTitle} readOnly placeholder="Window Title"
                     className="w-36 h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none cursor-default text-text-muted truncate" />
                 </Tooltip>
                 {onDisconnect && (
                   <Tooltip text="断开当前窗口连接，回到桌面">
-                    <button onClick={() => { onDisconnect(); setTitle(' Entire Desktop') }}
+                    <button onClick={() => { onDisconnect(); setSelTitle(' Entire Desktop') }}
                       className="h-8 w-8 flex items-center justify-center rounded-md bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0">
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </Tooltip>
                 )}
               </div>
-              <ActionBtn icon={<MonitorUp className="w-3.5 h-3.5" />} label="Select" title="选择要捕获的窗口或桌面" variant="primary" onClick={() => setPickerOpen(true)} className="h-8" />
+              <ActionBtn icon={<MonitorUp className="w-3.5 h-3.5" />} label="Select" title="选择要捕获的窗口或桌面" variant="primary" onClick={() => { setPickerOpen(true); addLog('[Window] opening picker') }} className="h-8" />
             </div>
             <div className="flex justify-between">
               <Tooltip text="AI模型服务器IP地址">
@@ -330,21 +410,47 @@ function ConnectionPanel({ onSelect, onDisconnect }: { onSelect: (w: WindowInfo)
                   className="w-[184px] h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
               </Tooltip>
               <Tooltip text="Port端口号">
-                <input value={port} onChange={e => { const v=e.target.value; if(v.includes('::')){const[a,b]=v.split('::',2);if(a?.trim())setIp(a.trim());setPort(b?.trim()??'')}else setPort(v) }} placeholder="Port"
-                  className="w-20 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
+                <input value={port} onChange={e => { const v=e.target.value; if(v.includes('::')){const[a,b]=v.split('::',2);setPort(a.trim());if(b?.trim())setIp(b.trim())}else setPort(v) }} placeholder="Port"
+                  className="w-20 h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted" />
               </Tooltip>
             </div>
+            {showMethod && setForceMethod && (
+              <div className="border-t border-border pt-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-text-muted">Capture Method</span>
+                  <button onClick={async e => { e.stopPropagation();
+                    const hwnd = selWin?.hwnd ?? 0;
+                    addLog('[Bench] testing methods...');
+                    try {
+                      const json = await invoke<string>('benchmark_methods', { hwnd });
+                      const results = JSON.parse(json);
+                      addLog(`[Bench] done: ${results.map((r:any) => `${r.method}:${r.single_ms}ms${r.ok?'✓':'✗'}`).join(', ')}`);
+                      // Auto-select fastest OK method
+                      const canonicalToV: Record<string,string> = { 'WGC':'wgc', 'GDI(GetWindowDC)':'gdi', 'PrintWindow':'printwindow', 'ScreenBitBlt':'screenbitblt', 'DesktopBlt':'dxgi' };
+                      const ok = results.filter((r:any) => r.ok);
+                      const best = ok.length > 0 ? ok.reduce((a:any,b:any) => a.single_ms < b.single_ms ? a : b) : null;
+                      if (best && setForceMethod) {
+                        const v = canonicalToV[best.method] || best.method;
+                        setForceMethod(v);
+                        addLog(`[Bench] auto-selected ${v} (${best.method})`);
+                      }
+                    } catch (err) { addLog(`[Bench] failed: ${err}`) }
+                  }} className="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 transition-colors">自检</button>
+                </div>
+                <div className="space-y-1">{methods.map(m => <Tooltip key={m.v} text={m.desc}><label className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors ${forceMethod === m.v ? 'bg-accent/10 ring-1 ring-accent' : 'hover:bg-bg-hover'}`}><input type="radio" name="method" value={m.v} checked={forceMethod === m.v} onChange={e => { setForceMethod(e.target.value); addLog(`[Setting] capture method = ${e.target.value}`) }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.l}</span></label></Tooltip>)}</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
       <WindowPickerModal open={pickerOpen} onClose={() => setPickerOpen(false)} onSelect={handleSelect} />
+      <CaptureModeModal open={modePickerOpen} onSelect={handleModeSelect} onClose={() => setModePickerOpen(false)} />
     </div>
   )
 }
 
 // ═══ Screenshot Panel ───
-function ScreenshotPanel({ selWin, screenRatio, forceMethod, setForceMethod }: { selWin?: WindowInfo; screenRatio: number; forceMethod: string; setForceMethod: (m: string) => void }) {
-  const [expanded, setExpanded] = useState(true)
+function ScreenshotPanel({ selWin, screenRatio, forceMethod, winState, expanded, onToggle }: { selWin?: WindowInfo; screenRatio: number; forceMethod: string; winState: string; expanded: boolean; onToggle: () => void }) {
   const [previewing, setPreviewing] = useState(false)
   const [imgSrc, setImgSrc] = useState('')       // single-frame PNG (Camera btn)
   const [imgStyle, setImgStyle] = useState<React.CSSProperties>({})
@@ -386,13 +492,15 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, setForceMethod }: {
       if (unlistenRef.current) { unlistenRef.current(); unlistenRef.current = null }
       try { await invoke<string>('capture_stream_stop') } catch (_) {}
       setImgSrc('')
-      addLog('Preview stopped')
+      addLog('[Preview] stopped')
     } else {
       const hwnd = selWin?.hwnd ?? 0
-      const method = forceMethod === 'auto' ? null : forceMethod
-      addLog(`Preview: ${selWin?.title ?? 'desktop'} [${method ?? 'auto'}]`)
-      try { await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999, method }) }
-      catch (e) { addLog(`Stream start failed: ${e}`); return }
+      if (cantCaptureMinimized(forceMethod, winState)) {
+        addLog(`[Preview] blocked: window minimized, ${forceMethod} cannot capture`); return
+      }
+      addLog(`[Preview] ${selWin?.title ?? 'desktop'} [${forceMethod}]`)
+      try { await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999, method: forceMethod }) }
+      catch (e) { addLog(`[Preview] start failed: ${e}`); return }
 
       previewingRef.current = true; setPreviewing(true); setImgSrc('')
       framesRef.current = 0; lastFpsRef.current = Date.now()
@@ -437,28 +545,32 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, setForceMethod }: {
 
   return (
     <div className="bg-bg-secondary rounded-xl ring-1 ring-inset ring-border overflow-hidden">
-      <div role="button" tabIndex={0} onClick={() => setExpanded(!expanded)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
+      <div role="button" tabIndex={0} onClick={() => { onToggle(); addLog(`[Screenshot] ${!expanded ? 'expanded' : 'collapsed'}`) }} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-bg-hover cursor-pointer transition-colors outline-none">
-        <div className="flex items-center gap-2">
-          <Camera className="w-4 h-4 text-text-secondary" />
-          <span className="text-sm font-medium text-text-primary">Screenshot</span>
-          {previewing && <span className="text-xs text-accent">{fps} FPS</span>}
-          {previewing && forceMethod !== 'auto' && <span className="text-xs text-success ml-1">{forceMethod}</span>}
-          {capMethod && !previewing && <span className="text-xs text-success">{capMethod}</span>}
+        <div className="flex items-center gap-2 min-w-0">
+          <Camera className="w-4 h-4 text-text-secondary shrink-0" />
+          <span className="text-sm font-medium text-text-primary shrink-0">Screenshot</span>
+          {previewing && <span className="text-xs text-accent shrink-0">{fps} FPS</span>}
+          {capMethod && !previewing && <span className="text-xs text-text-muted shrink-0">{capMethod}</span>}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip text="单帧截图">
             <button onClick={e => { e.stopPropagation(); (async () => {
               const hwnd = selWin?.hwnd ?? 0;
-              const method = forceMethod === 'auto' ? null : forceMethod
-              addLog(`Capture [${method ?? 'auto'}] ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
+              if (cantCaptureMinimized(forceMethod, winState)) {
+                addLog(`[Capture] blocked: window minimized, ${forceMethod} cannot capture`); return
+              }
+              addLog(`[Capture] ${METHOD_SHORT[forceMethod] || forceMethod} ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
               const t0 = Date.now()
               try {
-                const json = await invoke<string>('capture_window', { hwnd, method })
+                const json = await invoke<string>('capture_window', { hwnd, method: forceMethod })
                 const elapsed = Date.now() - t0
-                if (applyCaptureJson(json)) { addLog(`Screenshot [${method ?? 'auto'}] OK (${elapsed}ms)`) }
-                else { setImgSrc(''); setImgStyle({}); addLog(`Screenshot [${method ?? 'auto'}] failed after ${elapsed}ms`) }
-              } catch { addLog(`Screenshot [${method ?? 'auto'}] failed after ${Date.now() - t0}ms`) }
+                if (applyCaptureJson(json)) {
+                  try { const info = JSON.parse(json); addLog(`[Capture] OK (${elapsed}ms) [${info.method}]`) }
+                  catch { addLog(`[Capture] OK (${elapsed}ms)`) }
+                }
+                else { setImgSrc(''); setImgStyle({}); addLog(`[Capture] failed after ${elapsed}ms`) }
+              } catch { addLog(`[Capture] failed after ${Date.now() - t0}ms`) }
             })() }}
               className="p-1 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors">
               <Camera className="w-3.5 h-3.5" />
@@ -497,57 +609,115 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, setForceMethod }: {
 }
 
 
-// ═══ Shared log state ───
+// ═══ LogManager — single source of truth for all log views ═══
 type LogEntry = { ts: string; msg: string }
-let gLogs: LogEntry[] = []
-let gLogListeners: (() => void)[] = []
-function addLog(msg: string) { gLogs = [...gLogs, { ts: new Date().toLocaleTimeString(), msg }]; gLogListeners.forEach(f => f()) }
+function timeStr() { const d = new Date(); return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}.${d.getMilliseconds().toString().padStart(3,'0')}` }
+
+class LogManager {
+  private entries: LogEntry[] = []
+  private listeners = new Set<() => void>()
+
+  add(msg: string) {
+    this.entries.push({ ts: timeStr(), msg })
+    this.listeners.forEach(f => f())
+    invoke('log_ui_event', { msg }).catch(() => {})
+  }
+
+  getAll(): LogEntry[] { return this.entries }
+
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn)
+    return () => { this.listeners.delete(fn) }
+  }
+
+  clear() {
+    this.entries = []
+    this.listeners.forEach(f => f())
+    invoke('clear_log').catch(() => {})
+    // Start new session marker
+    this.add('[Session] new session started (previous log archived)')
+  }
+
+  async loadHistory(maxFiles: number): Promise<HistoryFile[]> {
+    try {
+      return await invoke<HistoryFile[]>('read_logs', { maxFiles })
+    } catch { return [] }
+  }
+}
+const logMgr = new LogManager()
+
+function addLog(msg: string) { logMgr.add(msg) }
 
 // ═══ Log Panel ───
 type HistoryFile = { name: string; lines: string[] }
 
-function LogPanel({ compact }: { compact?: boolean }) {
-  const [expanded, setExpanded] = useState(true)
-  const [logs, setLogs] = useState(gLogs)
+function LogPanel({ compact, expanded: exp, onToggle }: { compact?: boolean; expanded?: boolean; onToggle?: () => void }) {
+  const [localExpanded, setLocalExpanded] = useState(true)
+  const expanded = exp !== undefined ? exp : localExpanded
+  const toggle = onToggle || (() => setLocalExpanded(v => !v))
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const sessionScrollRef = useRef<HTMLDivElement>(null)
+  const userScrolledUp = useRef(false)
   const [historyFiles, setHistoryFiles] = useState<HistoryFile[]>([])
-  const [historyLoaded, setHistoryLoaded] = useState(false)
   const [openFiles, setOpenFiles] = useState<Set<number>>(new Set())
-  useEffect(() => { const fn = () => setLogs([...gLogs]); gLogListeners.push(fn); return () => { gLogListeners = gLogListeners.filter(f => f !== fn) } }, [])
+  const [entries, setEntries] = useState(logMgr.getAll())
 
+  // Subscribe to LogManager for live updates
   useEffect(() => {
-    if (compact || historyLoaded) return
-    ;(async () => {
-      try {
-        const files = await invoke<HistoryFile[]>('read_logs', { maxFiles: 5 })
-        setHistoryFiles(files)
-      } catch (_) {}
-      setHistoryLoaded(true)
-    })()
-  }, [historyLoaded])
+    setEntries(logMgr.getAll())
+    return logMgr.subscribe(() => setEntries([...logMgr.getAll()]))
+  }, [])
 
-  const currentReversed = [...logs].reverse().slice(0, compact ? 50 : 200)
+  // Load history files from disk on mount
+  useEffect(() => {
+    logMgr.loadHistory(5).then(setHistoryFiles)
+  }, [])
 
-  // Full-card mode (Log tab): each file is a standalone card like SettingsCard
+  // Format in-memory entries as display lines (same format as disk)
+  const formatLine = (e: LogEntry) => `[${e.ts}] ${e.msg}`
+  const currentLines = entries.map(formatLine)
+  const displayLines = compact ? currentLines.slice(-100) : currentLines.slice(-500)
+
+  // Auto-scroll: only if user hasn't scrolled up manually
+  useEffect(() => {
+    const ref = compact ? scrollRef.current : sessionScrollRef.current
+    if (!ref) return
+    const onScroll = () => {
+      const atBottom = ref.scrollTop + ref.clientHeight >= ref.scrollHeight - 40
+      userScrolledUp.current = !atBottom
+    }
+    ref.addEventListener('scroll', onScroll, { passive: true })
+    return () => ref.removeEventListener('scroll', onScroll)
+  }, [compact])
+
+  const entryCount = entries.length
+  useEffect(() => {
+    const ref = compact ? scrollRef.current : sessionScrollRef.current
+    if (!ref || userScrolledUp.current) return
+    requestAnimationFrame(() => { ref.scrollTop = ref.scrollHeight })
+  }, [entryCount, compact])
+
+  // Full-card mode (Log tab): current session + history cards
   if (!compact) {
     return (
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-3">
-        {/* Current session card */}
+        {/* Current session card — from LogManager in-memory */}
         <div className="bg-bg-secondary rounded-xl ring-1 ring-inset ring-border overflow-hidden">
           <div className="flex items-center justify-between px-3 py-2">
             <div className="flex items-center gap-2">
               <FileText className="w-4 h-4 text-accent" />
               <span className="text-sm font-medium text-text-primary">Current Session</span>
-              <span className="text-xs text-text-muted">({currentReversed.length})</span>
+              <span className="text-xs text-text-muted">({displayLines.length})</span>
             </div>
-            <Tooltip text="清空当前日志"><button onClick={() => { gLogs = []; gLogListeners.forEach(f => f()) }}
+            <Tooltip text="清空当前日志"><button onClick={() => logMgr.clear()}
               className="p-1 rounded-md text-text-secondary hover:text-error hover:bg-bg-tertiary transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></Tooltip>
           </div>
           <div className="border-t border-border" />
-          <div className="max-h-[400px] overflow-y-auto p-4 font-mono text-xs space-y-0.5">
-            {currentReversed.length === 0
-              ? <div className="text-text-muted text-center py-4">No current logs</div>
-              : currentReversed.map((l, i) => (
-                  <div key={`cur-${i}`} className="text-text-secondary"><span className="text-text-muted">[{l.ts}]</span> {l.msg}</div>
+          <div ref={sessionScrollRef} className="max-h-[400px] overflow-y-auto p-4 font-mono text-xs space-y-0.5">
+            {displayLines.length === 0
+              ? <div className="text-text-muted text-center py-4">No logs yet</div>
+              : displayLines.map((l, i) => (
+                  <div key={`cur-${i}`} className="text-text-muted">{l}</div>
                 ))
             }
           </div>
@@ -581,26 +751,26 @@ function LogPanel({ compact }: { compact?: boolean }) {
             </div>
           )
         })}
-        {currentReversed.length === 0 && historyFiles.length === 0 && (
+        {displayLines.length === 0 && historyFiles.length === 0 && (
           <div className="flex items-center justify-center py-12 text-sm text-text-muted">No logs yet</div>
         )}
       </div>
     )
   }
 
-  // Compact mode (right sidebar): simple current-session log feed
+  // Compact mode (right sidebar): same in-memory log content as Current Session
   return (
     <div className="bg-bg-secondary rounded-xl ring-1 ring-inset ring-border overflow-hidden flex flex-col min-h-0">
-      <div role="button" tabIndex={0} onClick={() => setExpanded(!expanded)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
+      <div role="button" tabIndex={0} onClick={() => { toggle(); addLog(`[Log] ${!expanded ? 'expanded' : 'collapsed'}`) }} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-bg-hover cursor-pointer transition-colors outline-none shrink-0">
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-text-secondary" />
           <span className="text-sm font-medium text-text-primary">Log</span>
-          <span className="text-xs text-text-muted">{currentReversed.length}</span>
+          <span className="text-xs text-text-muted">({displayLines.length})</span>
         </div>
         <div className="flex items-center gap-0.5">
           <Tooltip text="清空日志">
-            <button onClick={e => { e.stopPropagation(); addLog('Action: clear logs'); gLogs = []; gLogListeners.forEach(f => f()) }}
+            <button onClick={e => { e.stopPropagation(); logMgr.clear() }}
               className="p-1 rounded-md text-text-secondary hover:text-error hover:bg-bg-tertiary transition-colors">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -612,13 +782,13 @@ function LogPanel({ compact }: { compact?: boolean }) {
         style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}>
         <div className="overflow-hidden min-h-0">
           <div className="border-t border-border" />
-          <div className="h-[180px] overflow-y-auto p-4 flex flex-col">
-            {currentReversed.length === 0 ? (
+          <div ref={scrollRef} className="h-[180px] overflow-y-auto p-4">
+            {displayLines.length === 0 ? (
               <div className="flex items-center justify-center h-full text-sm text-text-muted">No logs</div>
             ) : (
-              <div className="space-y-1 font-mono text-xs text-text-secondary pt-1">
-                {currentReversed.slice(0, 100).map((l, i) => (
-                  <div key={i}><span className="text-text-muted">[{l.ts}]</span> {l.msg}</div>
+              <div className="space-y-1 font-mono text-xs text-text-muted pt-1">
+                {displayLines.slice(-100).map((l, i) => (
+                  <div key={`c-${i}`}>{l}</div>
                 ))}
               </div>
             )}
@@ -636,7 +806,7 @@ function SettingsCard({ icon, title, defaultExpanded, children }: {
   const [expanded, setExpanded] = useState(defaultExpanded ?? true)
   return (
     <div className="bg-bg-secondary rounded-xl ring-1 ring-inset ring-border overflow-hidden">
-      <div role="button" tabIndex={0} onClick={() => setExpanded(!expanded)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
+      <div role="button" tabIndex={0} onClick={() => { setExpanded(!expanded); addLog(`[Settings] ${title} ${!expanded ? 'expanded' : 'collapsed'}`) }} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
         className="w-full flex items-center justify-between px-3 py-2 hover:bg-bg-hover cursor-pointer transition-colors outline-none">
         <div className="flex items-center gap-2">
           {icon}
@@ -656,33 +826,20 @@ function SettingsCard({ icon, title, defaultExpanded, children }: {
 }
 
 // ═══ Settings Page ═══
-function SettingsPage({ forceMethod, setForceMethod }: { forceMethod: string; setForceMethod: (m: string) => void }) {
+function SettingsPage({ forceMethod, setForceMethod, selWin, winState, onSelect, onDisconnect }: { forceMethod: string; setForceMethod: (m: string) => void; selWin?: WindowInfo; winState: string; onSelect: (w: WindowInfo) => void; onDisconnect: () => void }) {
   const colors = ['#3B82F6','#8B5CF6','#EC4899','#F59E0B','#10B981','#EF4444']
   const [accent, setAccent] = useState('#3B82F6')
-  const methods = [
-    { v: 'auto',          l: 'Auto (auto-detect)' },
-    { v: 'wgc',           l: 'WGC (GPU FramePool)' },
-    { v: 'dxgi',          l: 'DXGI (Desktop Duplication)' },
-    { v: 'gdi',           l: 'GDI (GetWindowDC)' },
-    { v: 'printwindow',   l: 'PrintWindow' },
-    { v: 'screenbitblt',  l: 'Screen BitBlt' },
-  ]
+  const [connExpanded, setConnExpanded] = useState(true)
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-3">
-      <SettingsCard icon={<MonitorUp className="w-4 h-4 text-text-secondary" />} title="Connection">
-        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-28 shrink-0">Window Title</label><Tooltip text="要捕获的游戏窗口标题"><input defaultValue="Tic Tac Toe" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
-        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-28 shrink-0">Server Host</label><Tooltip text="AI模型服务器地址"><input defaultValue="127.0.0.1" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
-        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-28 shrink-0">Server Port</label><Tooltip text="AI模型服务端口"><input defaultValue="9999" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
-        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-28 shrink-0">Capture FPS</label><Tooltip text="截屏预览帧率"><input defaultValue="20" className="w-20 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
-        <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-28 shrink-0">Method</label><Tooltip text="显式选择捕获技术方案，选 Auto 则自动回退"><select value={forceMethod} onChange={e => { setForceMethod(e.target.value); addLog(`Setting: capture method = ${e.target.value}`) }} className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent cursor-pointer">{methods.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}</select></Tooltip></div>
-      </SettingsCard>
+      <ConnectionPanel onSelect={onSelect} onDisconnect={onDisconnect} forceMethod={forceMethod} setForceMethod={setForceMethod} selWin={selWin} winState={winState} showMethod expanded={connExpanded} onToggle={() => setConnExpanded(v => !v)} />
 
       <SettingsCard icon={<Sun className="w-4 h-4 text-text-secondary" />} title="Theme">
         <div className="flex items-center gap-2 mb-2">
           <label className="text-sm text-text-secondary w-28 shrink-0">Mode</label>
           <div className="flex gap-1">
             {[['Light','light'],['Dark','dark'],['System','system']].map(([l,v])=>
-              <button key={v} onClick={()=>document.documentElement.classList.toggle('dark',v==='dark')}
+              <button key={v} onClick={()=>{document.documentElement.classList.toggle('dark',v==='dark'); addLog(`[Theme] ${l}`)}}
                 className="px-3 py-1 rounded-full text-xs font-medium bg-bg-tertiary text-text-secondary hover:bg-bg-hover transition-colors">{l}</button>
             )}
           </div>
@@ -691,7 +848,7 @@ function SettingsPage({ forceMethod, setForceMethod }: { forceMethod: string; se
           <label className="text-sm text-text-secondary w-28 shrink-0">Accent</label>
           <div className="flex gap-1.5">
             {colors.map(c=>(
-              <button key={c} onClick={()=>setAccent(c)}
+              <button key={c} onClick={()=>{setAccent(c); addLog(`[Theme] accent = ${c}`)}}
                 className="w-6 h-6 rounded-full border-2 transition-all" style={{background:c,borderColor:accent===c?'white':'transparent'}} />
             ))}
           </div>
@@ -700,8 +857,8 @@ function SettingsPage({ forceMethod, setForceMethod }: { forceMethod: string; se
 
       <SettingsCard icon={<Settings className="w-4 h-4 text-text-secondary" />} title="Model Context" defaultExpanded={false}>
         <div className="text-xs text-text-muted mb-2">Base model + fine-tuning adapter for specific games.</div>
-        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-28 shrink-0">Base Model</label><Tooltip text="基础视觉模型"><input defaultValue="GenericAgent v1" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
-        <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-28 shrink-0">Adapter</label><Tooltip text="游戏微调权重"><input defaultValue="tictactoe-finetune" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+        <div className="flex items-center gap-3 mb-2"><label className="text-sm text-text-secondary w-28 shrink-0">Base Model</label><Tooltip text="基础视觉模型"><input defaultValue="GenericAgent v1" onBlur={e => addLog(`[Setting] base model = ${e.target.value}`)} className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
+        <div className="flex items-center gap-3"><label className="text-sm text-text-secondary w-28 shrink-0">Adapter</label><Tooltip text="游戏微调权重"><input defaultValue="tictactoe-finetune" onBlur={e => addLog(`[Setting] adapter = ${e.target.value}`)} className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent" /></Tooltip></div>
       </SettingsCard>
 
       <SettingsCard icon={<RefreshCw className="w-4 h-4 text-text-secondary" />} title="Update">
@@ -722,7 +879,7 @@ function SettingsPage({ forceMethod, setForceMethod }: { forceMethod: string; se
         <div className="mt-4 pt-4 border-t border-border">
           <div className="text-xs font-medium text-text-secondary mb-1">Links</div>
           {[{l:'GitHub',u:'https://github.com/Andyqwe44/tictactoe'},{l:'Slint',u:'https://slint.dev'},{l:'Tauri 2',u:'https://v2.tauri.app'}].map(x=>
-          <button key={x.l} onClick={()=>{try{window.open(x.u,'_blank')}catch{}}}
+          <button key={x.l} onClick={()=>{try{window.open(x.u,'_blank')}catch{}; addLog(`[Project] open link: ${x.l}`)}}
             className="block text-sm text-accent hover:underline py-0.5 cursor-pointer">{x.l}</button>
         )}
           <div className="text-xs font-medium text-text-secondary mt-3 mb-1">Credits</div>
@@ -766,12 +923,12 @@ function DashboardView() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div><div className="text-sm text-text-primary">Current: {info.appVer}</div><div className="text-xs text-text-muted">Check for new versions</div></div>
-            <ActionBtn icon={<RefreshCw className="w-3.5 h-3.5" />} label="Check" title="检查更新" variant="outline" />
+            <ActionBtn icon={<RefreshCw className="w-3.5 h-3.5" />} label="Check" title="检查更新" variant="outline" onClick={() => addLog('[Action] check update')} />
           </div>
           <div className="border-t border-border pt-2">
             <div className="flex items-center gap-3">
               <label className="text-sm text-text-secondary w-20 shrink-0">Source</label>
-              <select defaultValue="github" className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent">
+              <select defaultValue="github" onChange={e => addLog(`[Setting] update source = ${e.target.value}`)} className="flex-1 h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent">
                 <option value="github">GitHub Releases</option>
                 <option value="gitee">Gitee Mirror</option>
                 <option value="local">Local File</option>
@@ -798,10 +955,121 @@ export default function App() {
   const [running, setRunning] = useState(false)
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT_WIDTH)
   const [rightCollapsed, setRightCollapsed] = useState(false)
+  const [connectionExpanded, setConnectionExpanded] = useState(true)
+  const [screenshotExpanded, setScreenshotExpanded] = useState(true)
+  const [logExpanded, setLogExpanded] = useState(true)
+  const connectionExpandedRef = useRef(connectionExpanded)
+  connectionExpandedRef.current = connectionExpanded
+  const screenshotExpandedRef = useRef(screenshotExpanded)
+  screenshotExpandedRef.current = screenshotExpanded
+  const logExpandedRef = useRef(logExpanded)
+  logExpandedRef.current = logExpanded
+  const rightPanelRef = useRef<HTMLDivElement>(null)
+
+  // ── Right panel auto-layout state machine ──
+  // Heights measured from DOM: C/S/L = expanded, Cp/Sp/Lp = collapsed (prime).
+  const H = useRef({ C: 180, S: 300, L: 250, Cp: 44, Sp: 44, Lp: 44 })
+  const GAP = 60 // p-3 (24px) + 3 × gap-3 (36px)
+  const prevClientH = useRef(0)
+  const guard = useRef({ C: 0, S: 0, L: 0 })
+
+  const measureLayout = useCallback(() => {
+    const el = rightPanelRef.current; if (!el) return
+    const kids = el.querySelectorAll(':scope > div')
+    if (kids.length < 3) return
+    const gh = (i: number) => (kids[i] as HTMLElement).offsetHeight
+    if (connectionExpandedRef.current) H.current.C = gh(0); else H.current.Cp = gh(0)
+    if (screenshotExpandedRef.current) H.current.S = gh(1); else H.current.Sp = gh(1)
+    if (logExpandedRef.current) H.current.L = gh(2); else H.current.Lp = gh(2)
+    // Estimate expanded height from collapsed state via inner scrollHeight
+    if (!connectionExpandedRef.current) {
+      const inner = kids[0].querySelector('.overflow-hidden.min-h-0') as HTMLElement | null
+      if (inner) H.current.C = Math.max(H.current.C, gh(0) + inner.scrollHeight)
+    }
+    if (!screenshotExpandedRef.current) {
+      const inner = kids[1].querySelector('.overflow-hidden.min-h-0') as HTMLElement | null
+      if (inner) H.current.S = Math.max(H.current.S, gh(1) + inner.scrollHeight)
+    }
+    if (!logExpandedRef.current) {
+      const inner = kids[2].querySelector('.overflow-hidden.min-h-0') as HTMLElement | null
+      if (inner) H.current.L = Math.max(H.current.L, gh(2) + inner.scrollHeight)
+    }
+  }, [])
+
+  // Re-measure after CSS grid animation (150ms) completes
+  useEffect(() => {
+    const t = setTimeout(measureLayout, 200)
+    return () => clearTimeout(t)
+  }, [connectionExpanded, screenshotExpanded, logExpanded, measureLayout])
+
+  useEffect(() => { measureLayout() }, [])
+
+  // Resize event → measure actual kidsH, compare against clientHeight
+  useEffect(() => {
+    const onResize = () => {
+      const el = rightPanelRef.current; if (!el) return
+      const ch = el.clientHeight
+      if (prevClientH.current === 0) { prevClientH.current = ch; return }
+
+      // Measure actual current total height (accounts for manual toggles)
+      const kids = el.querySelectorAll(':scope > div')
+      let kidsH = 0
+      for (let i = 0; i < 3; i++) kidsH += (kids[i] as HTMLElement).offsetHeight
+      const overflow = kidsH + GAP - ch
+
+      const prev = prevClientH.current
+      const now = Date.now()
+      const h = H.current
+
+      if (ch < prev) {
+        // Shrinking: actual overflow → collapse L → S → C (one per event)
+        if (overflow > 4) {
+          if (logExpandedRef.current && now - guard.current.L > 350) {
+            addLog(`[Layout] overflow ${overflow}px → auto-collapse log`)
+            setLogExpanded(false); guard.current.L = now
+          } else if (screenshotExpandedRef.current && now - guard.current.S > 350) {
+            addLog(`[Layout] overflow ${overflow}px → auto-collapse screenshot`)
+            setScreenshotExpanded(false); guard.current.S = now
+          } else if (connectionExpandedRef.current && now - guard.current.C > 350) {
+            addLog(`[Layout] overflow ${overflow}px → auto-collapse connection`)
+            setConnectionExpanded(false); guard.current.C = now
+          }
+        }
+      } else if (ch > prev) {
+        // Growing: if room for next collapsed panel, expand C → S → L (one per event)
+        if (!connectionExpandedRef.current && now - guard.current.C > 350) {
+          const wouldNeed = (kidsH - h.Cp + h.C) + GAP
+          if (ch >= wouldNeed) {
+            addLog(`[Layout] room for C (need ${wouldNeed}px) → auto-expand connection`)
+            setConnectionExpanded(true); guard.current.C = now
+          }
+        } else if (!screenshotExpandedRef.current && now - guard.current.S > 350) {
+          const wouldNeed = (kidsH - h.Sp + h.S) + GAP
+          if (ch >= wouldNeed) {
+            addLog(`[Layout] room for S (need ${wouldNeed}px) → auto-expand screenshot`)
+            setScreenshotExpanded(true); guard.current.S = now
+          }
+        } else if (!logExpandedRef.current && now - guard.current.L > 350) {
+          const wouldNeed = (kidsH - h.Lp + h.L) + GAP
+          if (ch >= wouldNeed) {
+            addLog(`[Layout] room for L (need ${wouldNeed}px) → auto-expand log`)
+            setLogExpanded(true); guard.current.L = now
+          }
+        }
+      }
+
+      prevClientH.current = ch
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   const isResizing = useRef(false)
   const [selWindow, setSelWindow] = useState<WindowInfo>({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
   const [screenRatio, setScreenRatio] = useState(16/9)
-  const [forceMethod, setForceMethod] = useState('auto')
+  const [forceMethod, setForceMethod] = useState('dxgi')
+  const [winState, setWinState] = useState('desktop')
+  const lastWinStateRef = useRef('desktop')
 
   useEffect(() => {
     (async () => {
@@ -829,6 +1097,19 @@ export default function App() {
     }
   }, [selWindow.hwnd])
 
+  // Real-time window state polling for Connection + Screenshot panels
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const s = await invoke<string>('window_state', { hwnd: selWindow.hwnd })
+        if (s !== lastWinStateRef.current) { lastWinStateRef.current = s; setWinState(s) }
+      } catch (_) {}
+    }
+    poll()
+    const iv = setInterval(poll, 500)
+    return () => clearInterval(iv)
+  }, [selWindow.hwnd])
+
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); isResizing.current = true
     document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
@@ -837,7 +1118,7 @@ export default function App() {
       if (w < 160) setRightCollapsed(true)
       else { setRightCollapsed(false); setRightWidth(Math.max(324, Math.min(400, w))) }
     }
-    const onUp = () => { isResizing.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+    const onUp = () => { isResizing.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); addLog('[Layout] right panel resized') }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp)
   }, [])
 
@@ -858,7 +1139,7 @@ export default function App() {
             </div>
           )}
           {tab === 'Log' && <LogPanel />}
-          {tab === 'Settings' && <SettingsPage forceMethod={forceMethod} setForceMethod={setForceMethod} />}
+          {tab === 'Settings' && <SettingsPage forceMethod={forceMethod} setForceMethod={setForceMethod} selWin={selWindow} winState={winState} onSelect={setSelWindow} onDisconnect={() => { setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); addLog('[Connection] disconnected, back to desktop') }} />}
           <BottomBar running={running} fps={0} lat={0} />
         </div>
         <Tooltip text={rightCollapsed ? "向右拖拽展开面板" : "拖拽调整面板宽度，向右拖到底可折叠"}>
@@ -868,13 +1149,14 @@ export default function App() {
           </div>
         </Tooltip>
         {!rightCollapsed && (
-          <div className="flex flex-col p-3 gap-3 overflow-y-auto shrink-0" style={{ width: rightWidth, minWidth: 324, maxWidth: 400 }}>
-            <ConnectionPanel onSelect={setSelWindow} onDisconnect={() => {
+          <div ref={rightPanelRef} className="flex flex-col p-3 gap-3 overflow-hidden min-h-0" style={{ width: rightWidth, minWidth: 324, maxWidth: 400 }}>
+            <div className="shrink-0"><ConnectionPanel onSelect={setSelWindow} onDisconnect={() => {
               setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
-              addLog('Disconnected, back to desktop')
-            }} />
-            <LogPanel compact />
-            <ScreenshotPanel selWin={selWindow} screenRatio={screenRatio} forceMethod={forceMethod} setForceMethod={setForceMethod} />
+              addLog('[Connection] disconnected, back to desktop')
+            }} forceMethod={forceMethod} selWin={selWindow} winState={winState} expanded={connectionExpanded} onToggle={() => setConnectionExpanded(v => !v)} /></div>
+            <div className="shrink-0 overflow-hidden"><ScreenshotPanel selWin={selWindow} screenRatio={screenRatio} forceMethod={forceMethod} winState={winState} expanded={screenshotExpanded} onToggle={() => setScreenshotExpanded(v => !v)} /></div>
+            <div className="shrink-0"><LogPanel compact expanded={logExpanded} onToggle={() => setLogExpanded(v => !v)} /></div>
+            <div className="flex-1" />
           </div>
         )}
       </div>

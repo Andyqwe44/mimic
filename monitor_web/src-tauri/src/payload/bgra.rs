@@ -1,9 +1,9 @@
 //! payload/bgra.rs — BGRA pixel frame payload (PayloadType::BgraFrame).
 //!
-//! Depends on: protocol::protocol (for PayloadType).
-//! Does NOT depend on transport.
-//!
 //! Payload body: [w:4 LE][h:4 LE][ch:4 LE][reserved:4][pixels: w*h*ch bytes]
+//! Some items kept for cross-language protocol parity (Python, C++).
+
+#![allow(dead_code)]
 
 pub struct BgraFrame {
     pub width: u32,

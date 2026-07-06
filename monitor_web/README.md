@@ -1,32 +1,63 @@
-# React + TypeScript + Vite
+# Game Agent Monitor
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Tauri 2 desktop app for screen capture + monitoring. Part of the TicTacToe → Visual Game AI project.
 
-Currently, two official plugins are available:
+## Quick start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd monitor_web
+npm install
+npm run tauri dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Architecture
+
+```
+Rust (Tauri IPC)  ←→  C++ capture_lib.lib (static linked)
+  webview backend       GDI / PrintWindow / ScreenBitBlt / DesktopBlt / WGC
+  overlay / TCP / log
+
+React (TypeScript + Tailwind)
+  MXU-style UI: Dashboard / Monitor / Log / Settings
+```
+
+All capture methods compiled into a single static library. Zero subprocess overhead.
+
+```
+monitor_web/
+├── src/
+│   └── App.tsx              # React UI (LogManager, panels, state machine)
+└── src-tauri/
+    ├── src/main.rs          # Rust backend (IPC, overlay, TCP, FFI wrappers)
+    ├── build.rs             # Invokes MSVC to build C++ lib
+    ├── tauri.conf.json      # App metadata + window config
+    └── capabilities/        # Tauri permission scopes
+
+capture/
+├── src/                     # C++ capture methods (each method = separate file)
+│   ├── capture_common.cpp   # Content validation + window state
+│   ├── capture_gdi.cpp      # GetWindowDC
+│   ├── capture_pw.cpp       # PrintWindow
+│   ├── capture_screen.cpp   # ScreenBitBlt
+│   ├── capture_desktop.cpp  # DesktopBlt
+│   ├── capture_auto.cpp     # Auto-detect fallback chain
+│   ├── capture_wgc.cpp      # WGC GPU FramePool
+│   └── capture_wgc_ffi.cpp  # WGC stream FFI
+├── include/                 # Public FFI headers + internal helpers
+└── build_capture_lib.cmd    # MSVC build script → capture_lib.lib
+```
+
+## Default window size
+
+Defined at top of `src-tauri/src/main.rs`:
+
+```rust
+const DEFAULT_WINDOW_W: u32 = 1280;
+const DEFAULT_WINDOW_H: u32 = 720;
+```
+
+These are **physical pixels** — unaffected by OS scale factor.  
+On startup the app is hidden → queries monitor scale → computes logical size → resizes → shows.  
+**To change default size, edit the Rust consts — NOT `tauri.conf.json`.**
+
+Minimum window size is set in `tauri.conf.json`: 324×216.
