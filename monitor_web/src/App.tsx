@@ -395,8 +395,9 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, setForceMethod }: {
       addLog('Preview stopped')
     } else {
       const hwnd = selWin?.hwnd ?? 0
-      addLog(`Preview: ${selWin?.title ?? 'desktop'} (multi-method BMP)`)
-      try { const method = forceMethod === 'auto' ? null : forceMethod; await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999, method }) }
+      const method = forceMethod === 'auto' ? null : forceMethod
+      addLog(`Preview: ${selWin?.title ?? 'desktop'} [${method ?? 'auto'}]`)
+      try { await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999, method }) }
       catch (e) { addLog(`Stream start failed: ${e}`); return }
 
       previewingRef.current = true; setPreviewing(true); setImgSrc('')
@@ -448,21 +449,22 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, setForceMethod }: {
           <Camera className="w-4 h-4 text-text-secondary" />
           <span className="text-sm font-medium text-text-primary">Screenshot</span>
           {previewing && <span className="text-xs text-accent">{fps} FPS</span>}
+          {previewing && forceMethod !== 'auto' && <span className="text-xs text-success ml-1">{forceMethod}</span>}
           {capMethod && !previewing && <span className="text-xs text-success">{capMethod}</span>}
         </div>
         <div className="flex items-center gap-0.5">
           <Tooltip text="单帧截图">
             <button onClick={e => { e.stopPropagation(); (async () => {
               const hwnd = selWin?.hwnd ?? 0;
-              addLog(`Capturing ${hwnd ? 'window hwnd='+hwnd : 'desktop'}...`)
+              const method = forceMethod === 'auto' ? null : forceMethod
+              addLog(`Capture [${method ?? 'auto'}] ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
               const t0 = Date.now()
               try {
-                const method = forceMethod === 'auto' ? null : forceMethod
                 const json = await invoke<string>('capture_window', { hwnd, method })
                 const elapsed = Date.now() - t0
-                if (applyCaptureJson(json)) { addLog(`Screenshot OK (${elapsed}ms)`) }
-                else { setImgSrc(''); setImgStyle({}); addLog(`Screenshot failed after ${elapsed}ms`) }
-              } catch { addLog(`Screenshot failed after ${Date.now() - t0}ms`) }
+                if (applyCaptureJson(json)) { addLog(`Screenshot [${method ?? 'auto'}] OK (${elapsed}ms)`) }
+                else { setImgSrc(''); setImgStyle({}); addLog(`Screenshot [${method ?? 'auto'}] failed after ${elapsed}ms`) }
+              } catch { addLog(`Screenshot [${method ?? 'auto'}] failed after ${Date.now() - t0}ms`) }
             })() }}
               className="p-1 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors">
               <Camera className="w-3.5 h-3.5" />
