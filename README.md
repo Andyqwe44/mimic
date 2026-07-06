@@ -25,6 +25,8 @@ tictactoe/
 ├── protocol/                  # 线格式 — C++/Rust/Python 共享
 │   ├── protocol.h / .rs / .py
 ├── common/                    # C++ 共享模块
+│   ├── include/
+│   │   └── capture_helpers.hpp # 公共辅助 (ScaleBgra, IsSolidColor等)
 │   ├── payload/bgra.hpp       # BGRA 像素打包/解析
 │   └── transport/             # 传输层 (pipe, tcp)
 ├── capture/                   # C++ 屏幕捕获
@@ -148,6 +150,5 @@ L2: 策略推理 — z + 动作历史 → Transformer → 动作 tokens。
 ## 已知限制
 
 - 项目存在**两套线协议**（protocol/ 12字节 vs stream_protocol 8字节），共享同一 magic，互不兼容。统一计划中。
-- C++ capture 代码大量重复（WGC 3×, DXGI 4×, GDI 4×），待抽取共享库。
-- TCP send 短写会断连客户端，应改为循环发送。
-- recv 路径无 payload_size 上限检查，恶意帧可触发 OOM。
+- C++ capture 代码大量重复（WGC 3×, DXGI 4×, GDI 4×）。公共辅助已抽取到 `common/include/capture_helpers.hpp`，完整后端重构待继续。
+- 覆盖窗口崩溃时可能残留（黄色边框 STATIC 窗口无父窗口清理）。

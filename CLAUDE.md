@@ -29,7 +29,10 @@ tictactoe/
 ├── protocol/                    # Wire format — shared across C++/Rust/Python
 │   ├── protocol.h / .rs / .py
 ├── common/                      # Shared C++ modules
-│   ├── include/                 types.hpp, stream_protocol.hpp
+│   ├── include/
+│   │   ├── types.hpp            Shared types (Rect, sleep_ms)
+│   │   ├── stream_protocol.hpp  8-byte transport protocol
+│   │   └── capture_helpers.hpp  ScaleBgra, IsSolidColor, etc.
 │   ├── payload/bgra.hpp         BGRA pixel frame pack/unpack
 │   └── transport/               pipe.hpp, tcp.hpp
 ├── capture/                     # C++ screen capture tools
@@ -193,8 +196,6 @@ If found (at project root), writes `agent_*.log` there.
 5. **WGC init latency**: ~300ms for first frame after subprocess spawn
 6. **WGC FPS**: Limited by window content change rate. Static window = 0-5 FPS. Dynamic = 60+ FPS. This is by design (event-driven)
 7. **Subprocess cleanup**: WGC subprocess killed 500ms after stream stop. Occasionally leaves orphan `capture_wgc.exe` processes
-8. **Dual wire protocol**: 12-byte (protocol/) vs 8-byte (stream_protocol) headers share same magic — incompatible. Consolidation needed.
-9. **C++ code duplication**: WGC FramePool copied 3×, DXGI capture 4×, GDI capture 4× across capture/*.cpp. Each variant has slight differences (skip-virtual-adapter, solid-black-detection, scale alignment). Should extract shared `CaptureLibrary` with configurable options.
-10. **TCP short writes**: `send()` in `tcp.hpp` / `cpp_sender.hpp` treats partial send as disconnect. Should loop until all bytes sent.
-11. **No payload_size bounds check**: A corrupt frame with giant size causes OOM allocation in all three languages' recv paths.
-12. **Coverlay orphan risk**: Yellow overlay STATIC windows may persist if app crashes without `destroy_overlay_bars()` cleanup.
+8. **Dual wire protocol**: 12-byte (protocol/) vs 8-byte (stream_protocol) headers share same magic — incompatible. Consolidation planned.
+9. **C++ code duplication**: WGC FramePool copied 3×, DXGI capture 4×, GDI capture 4× across capture/*.cpp. Shared helpers extracted to `common/include/capture_helpers.hpp`. Full backend consolidation still needed.
+10. **Overlay orphan risk**: Yellow overlay STATIC windows may persist if app crashes without `destroy_overlay_bars()` cleanup.
