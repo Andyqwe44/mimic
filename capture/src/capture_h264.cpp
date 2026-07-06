@@ -50,14 +50,15 @@
 #pragma comment(lib, "ws2_32.lib")
 
 #include "mf_encoder.hpp"
+#include "../include/capture_wgc.hpp"
+#include "../../common/include/capture_helpers.hpp"
 
 using Microsoft::WRL::ComPtr;
 namespace wgc = winrt::Windows::Graphics::Capture;
 namespace wf = winrt::Windows::Foundation;
 
+namespace ch = capture_helpers;
 static std::atomic<bool> g_running{true};
-
-static void w32(uint32_t v) { fwrite(&v, 4, 1, stdout); }
 
 // -----------------------------------------------------------
 // Scale BGRA (nearest neighbor, max 640px, 16-aligned for H.264 encoder)
@@ -171,16 +172,10 @@ static bool dxgi_capture_fixed(ComPtr<ID3D11Device> dev, ComPtr<ID3D11DeviceCont
             for (int y = 0; y < fh; y++) memcpy(dst + y * fw * 4, s + y * pitch, fw * 4);
             ctx->Unmap(st.Get(), 0);
 
-            // Solid black check
-            if (pixels.size() >= 16) {
-                uint8_t r0 = pixels[2], g0 = pixels[1], b0 = pixels[0];
-                int same = 0, n = 0, step = (int)pixels.size() / 400;
-                if (step < 4) step = 4;
-                for (size_t i = 0; i < pixels.size(); i += (size_t)step * 4) {
-                    n++;
-                    if (pixels[i+2] == r0 && pixels[i+1] == g0 && pixels[i] == b0) same++;
-                }
-                if (n > 0 && same == n && b0 == 0 && g0 == 0 && r0 == 0) {
+            // Solid black check using shared helper
+            if (ch::is_solid_color(pixels.data(), pixels.size())) {
+                // Check if it's specifically black (is_solid_color only checks uniformity)
+                if (pixels[0] == 0 && pixels[1] == 0 && pixels[2] == 0) {
                     fprintf(stderr, "[dxgi] solid black → skip output %u\n", oi);
                     pixels.clear(); output.Reset(); continue;
                 }
@@ -236,136 +231,15 @@ static bool print_window_cap(HWND hwnd, std::vector<uint8_t>& cur, int& w, int& 
     GetDIBits(mem, bmp, 0, wh, cur.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
     SelectObject(mem, (HBITMAP)GetStockObject(NULL_BRUSH));
     DeleteObject(bmp); DeleteDC(mem); ReleaseDC(nullptr, screen);
-    // Solid check
-    if (cur.size() >= 16) {
-        uint8_t r0 = cur[2], g0 = cur[1], b0 = cur[0];
-        int same = 0, n = 0, step = (int)cur.size() / 400;
-        if (step < 4) step = 4;
-        for (size_t i = 0; i < cur.size(); i += (size_t)step * 4) {
-            n++;
-            if (cur[i+2] == r0 && cur[i+1] == g0 && cur[i] == b0) same++;
-        }
-        if (n > 0 && same == n) return false;
-    }
+    // Check magenta sentinel + solid color using shared helpers
+    if (ch::is_solid_color(cur.data(), cur.size())) return false;
+    if (ch::has_magenta_sentinel(cur.data(), cur.size())) return false;
     w = ww; h = wh;
     return true;
 }
 
-// -----------------------------------------------------------
-// FramePool (Windows.Graphics.Capture) for window
-// -----------------------------------------------------------
-struct FramePoolCtx {
-    wgc::Direct3D11CaptureFramePool pool{nullptr};
-    wgc::GraphicsCaptureSession session{nullptr};
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> ctx;
-    ComPtr<ID3D11Texture2D> staging;
-    int staging_w = 0, staging_h = 0;
-    wgc::GraphicsCaptureItem item{nullptr};
-    bool ok = false;
-};
-static FramePoolCtx g_fp;
-
-static bool framepool_init(HWND hwnd) {
-    HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-    ComPtr<IDXGIFactory1> dxgi_factory;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)dxgi_factory.GetAddressOf()))) {
-        fprintf(stderr, "[framepool] CreateDXGIFactory1 failed\n");
-        return false;
-    }
-    ComPtr<IDXGIAdapter1> adapter;
-    bool found = false;
-    for (UINT i = 0; dxgi_factory->EnumAdapters1(i, adapter.GetAddressOf()) != DXGI_ERROR_NOT_FOUND; i++) {
-        ComPtr<IDXGIOutput> output;
-        for (UINT j = 0; adapter->EnumOutputs(j, output.GetAddressOf()) != DXGI_ERROR_NOT_FOUND; j++) {
-            DXGI_OUTPUT_DESC desc;
-            if (SUCCEEDED(output->GetDesc(&desc)) && desc.Monitor == mon) {
-                found = true; break;
-            }
-            output.Reset();
-        }
-        if (found) break;
-        adapter.Reset();
-    }
-    if (!found) { fprintf(stderr, "[framepool] monitor not found on any adapter\n"); adapter.Reset(); }
-
-    D3D_DRIVER_TYPE driver_type = adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
-    IDXGIAdapter* adapter_ptr = adapter ? adapter.Get() : nullptr;
-    if (FAILED(D3D11CreateDevice(adapter_ptr, driver_type, nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-        &g_fp.device, nullptr, &g_fp.ctx))) {
-        fprintf(stderr, "[framepool] D3D11CreateDevice failed\n");
-        return false;
-    }
-    ComPtr<IDXGIDevice> dxgi_dev;
-    if (FAILED(g_fp.device.As(&dxgi_dev))) { fprintf(stderr, "[framepool] No IDXGIDevice\n"); return false; }
-    winrt::com_ptr<::IInspectable> d3d_inspectable;
-    HRESULT hr = CreateDirect3D11DeviceFromDXGIDevice(dxgi_dev.Get(), d3d_inspectable.put());
-    if (FAILED(hr)) { fprintf(stderr, "[framepool] CreateDirect3D11DeviceFromDXGIDevice failed 0x%08lX\n", hr); return false; }
-    auto d3d_device = d3d_inspectable.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
-
-    auto factory = winrt::get_activation_factory<wgc::GraphicsCaptureItem>();
-    auto interop = factory.as<IGraphicsCaptureItemInterop>();
-    winrt::com_ptr<::IUnknown> item_unk;
-    hr = interop->CreateForWindow(hwnd, winrt::guid_of<wgc::GraphicsCaptureItem>(), item_unk.put_void());
-    if (FAILED(hr)) { fprintf(stderr, "[framepool] CreateForWindow failed 0x%08lX\n", hr); return false; }
-    g_fp.item = item_unk.as<wgc::GraphicsCaptureItem>();
-    auto size = g_fp.item.Size();
-    fprintf(stderr, "[framepool] item created %dx%d\n", (int)size.Width, (int)size.Height);
-
-    g_fp.pool = wgc::Direct3D11CaptureFramePool::Create(
-        d3d_device,
-        winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-        2, size);
-    if (!g_fp.pool) { fprintf(stderr, "[framepool] CreateFramePool failed\n"); return false; }
-    g_fp.session = g_fp.pool.CreateCaptureSession(g_fp.item);
-    g_fp.session.StartCapture();
-    g_fp.ok = true;
-    fprintf(stderr, "[framepool] init OK, started\n");
-    return true;
-}
-
-static bool framepool_capture(std::vector<uint8_t>& pixels, int& w, int& h) {
-    if (!g_fp.ok) return false;
-    auto frame = g_fp.pool.TryGetNextFrame();
-    if (!frame) return false;
-    auto surface = frame.Surface();
-    auto access = surface.as<Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
-    ComPtr<ID3D11Texture2D> tex;
-    HRESULT hr = access->GetInterface(__uuidof(ID3D11Texture2D), (void**)tex.GetAddressOf());
-    if (FAILED(hr) || !tex) return false;
-
-    D3D11_TEXTURE2D_DESC desc;
-    tex->GetDesc(&desc);
-    int fw = (int)desc.Width, fh = (int)desc.Height;
-
-    if (!g_fp.staging || g_fp.staging_w != fw || g_fp.staging_h != fh) {
-        D3D11_TEXTURE2D_DESC sd = {};
-        sd.Width = desc.Width; sd.Height = desc.Height; sd.MipLevels = 1;
-        sd.ArraySize = 1; sd.Format = desc.Format; sd.SampleDesc.Count = 1;
-        sd.Usage = D3D11_USAGE_STAGING; sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        g_fp.staging.Reset();
-        if (FAILED(g_fp.device->CreateTexture2D(&sd, nullptr, &g_fp.staging))) return false;
-        g_fp.staging_w = fw; g_fp.staging_h = fh;
-    }
-    g_fp.ctx->CopyResource(g_fp.staging.Get(), tex.Get());
-
-    D3D11_MAPPED_SUBRESOURCE m = {};
-    if (FAILED(g_fp.ctx->Map(g_fp.staging.Get(), 0, D3D11_MAP_READ, 0, &m))) return false;
-    int pitch = (int)m.RowPitch;
-    pixels.resize(fw * fh * 4);
-    uint8_t* dst = pixels.data();
-    uint8_t* src = (uint8_t*)m.pData;
-    for (int y = 0; y < fh; y++) memcpy(dst + y * fw * 4, src + y * pitch, fw * 4);
-    g_fp.ctx->Unmap(g_fp.staging.Get(), 0);
-    w = fw; h = fh;
-    return true;
-}
-
-static void framepool_shutdown() {
-    if (g_fp.ok) { g_fp.session.Close(); g_fp.pool.Close(); g_fp.ok = false;
-        fprintf(stderr, "[framepool] shutdown\n"); }
-}
+// ── WGC capture (shared library, not inline copy) ─────────
+static wgc::WgcCapture g_wgc;
 
 // -----------------------------------------------------------
 // TCP broadcast server
@@ -420,25 +294,30 @@ static bool tcp_start(uint16_t port) {
     return true;
 }
 
+// Send all bytes, looping to handle short writes
+static bool tcp_send_all(SOCKET s, const char* data, int len) {
+    int sent = 0;
+    while (sent < len) {
+        int n = send(s, data + sent, len - sent, 0);
+        if (n == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) { Sleep(1); continue; }
+        if (n <= 0) return false;
+        sent += n;
+    }
+    return true;
+}
+
 /** Broadcast [size:4 LE][h264_data] to all TCP clients. size=0 signals unchanged frame. */
 static void tcp_broadcast_frame(const std::vector<uint8_t>& h264_data) {
     uint32_t sz = (uint32_t)h264_data.size();
     uint8_t hdr[4];
-    hdr[0] = (uint8_t)(sz & 0xFF);
-    hdr[1] = (uint8_t)((sz >> 8) & 0xFF);
-    hdr[2] = (uint8_t)((sz >> 16) & 0xFF);
-    hdr[3] = (uint8_t)((sz >> 24) & 0xFF);
+    ch::w32_le(hdr, sz);
 
     std::lock_guard<std::mutex> lk(g_tcp.mtx);
     auto it = g_tcp.clients.begin();
     while (it != g_tcp.clients.end()) {
-        int sent = send(*it, (char*)hdr, 4, 0);
-        if (sent == 4 && sz > 0) {
-            sent = send(*it, (char*)h264_data.data(), (int)sz, 0);
-        }
-        if (sent == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
-            ++it;  // try next time
-        } else if (sent <= 0) {
+        bool ok = tcp_send_all(*it, (char*)hdr, 4);
+        if (ok && sz > 0) ok = tcp_send_all(*it, (char*)h264_data.data(), (int)sz);
+        if (!ok) {
             closesocket(*it);
             it = g_tcp.clients.erase(it);
             fprintf(stderr, "[tcp] client disconnected (%zu remain)\n", g_tcp.clients.size());
@@ -501,11 +380,11 @@ int main(int argc, char* argv[]) {
     RECT wr = {};
 
     if (!desk) {
-        use_fp = framepool_init(hwnd);
+        use_fp = g_wgc.init(hwnd);
         if (use_fp) {
             method = "FramePool+H264";
         } else {
-            fprintf(stderr, "[h264] FramePool failed, PrintWindow fallback\n");
+            fprintf(stderr, "[h264] WGC failed, PrintWindow fallback\n");
             method = "PrintWindow+H264";
             DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &wr, sizeof(wr));
             if (wr.right - wr.left <= 0) GetWindowRect(hwnd, &wr);
@@ -549,8 +428,10 @@ int main(int argc, char* argv[]) {
 
         // ── Capture ────────────────────────────────────
         if (use_fp) {
-            ok = framepool_capture(cur, w, h);
-            if (!ok) { Sleep(1); continue; }
+            wgc::WgcFrame wf;
+            ok = g_wgc.capture(wf);
+            if (ok) { cur = std::move(wf.pixels); w = wf.width; h = wf.height; }
+            else { Sleep(1); continue; }
         } else if (desk) {
             if (strcmp(method, "DXGI+H264") == 0) ok = dxgi_capture_fixed(device, ctx, cur, w, h);
             if (!ok) ok = gdi_desk(cur, w, h);

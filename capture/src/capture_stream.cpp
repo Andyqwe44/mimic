@@ -3,7 +3,7 @@
  *
  * Usage:   capture_stream.exe <hwnd>
  *
- * Window capture: Windows.Graphics.Capture FramePool (GPU, 2ms)
+ * Window capture: WGC FramePool via capture_wgc library (GPU, 2ms)
  * Desktop capture: DXGI → GDI fallback
  *
  * Frame protocol (LE binary to stdout):
@@ -35,6 +35,9 @@
 #include <io.h>
 #include <fcntl.h>
 
+#include "../include/capture_wgc.hpp"
+#include "../../common/include/capture_helpers.hpp"
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -43,10 +46,10 @@
 #pragma comment(lib, "windowsapp.lib")
 
 using Microsoft::WRL::ComPtr;
-namespace wgc = winrt::Windows::Graphics::Capture;
+namespace wgc_rt = winrt::Windows::Graphics::Capture;
 namespace wf = winrt::Windows::Foundation;
+namespace ch = capture_helpers;
 static std::atomic<bool> g_running{true};
-static void w32(uint32_t v) { fwrite(&v, 4, 1, stdout); }
 
 // ── DXGI desktop capture (try all outputs, skip black/virtual) ──
 static bool dxgi_cap(std::vector<uint8_t>& p, int& w, int& h) {
@@ -56,9 +59,6 @@ static bool dxgi_cap(std::vector<uint8_t>& p, int& w, int& h) {
     ComPtr<IDXGIDevice> d; dev.As(&d);
     ComPtr<IDXGIAdapter> a; d->GetAdapter(&a);
 
-    // Try outputs — skip first one if it's likely virtual (small/suspect)
-    // Virtual displays often have DuplicateOutput succeed but return black.
-    // Strategy: try all outputs with a short timeout, skip solid-black frames.
     for (UINT oi = 0; ; oi++) {
         ComPtr<IDXGIOutput> o;
         if (FAILED(a->EnumOutputs(oi, &o))) break;
@@ -72,7 +72,6 @@ static bool dxgi_cap(std::vector<uint8_t>& p, int& w, int& h) {
         IDXGIOutputDuplication* dup = nullptr;
         if (FAILED(o1->DuplicateOutput(dev.Get(), &dup))) continue;
         IDXGIResource* res = nullptr; DXGI_OUTDUPL_FRAME_INFO fi = {};
-        // Short timeout to quickly skip dead outputs
         HRESULT acq = dup->AcquireNextFrame(16, &fi, &res);
         if (FAILED(acq)) { dup->Release(); continue; }
         ComPtr<ID3D11Texture2D> src;
@@ -92,12 +91,8 @@ static bool dxgi_cap(std::vector<uint8_t>& p, int& w, int& h) {
         p.resize(fw*fh*4); uint8_t* dst=p.data(); uint8_t* s=(uint8_t*)m.pData;
         for (int y=0; y<fh; y++) memcpy(dst+y*fw*4, s+y*pitch, fw*4);
         ctx->Unmap(st.Get(),0);
-        // Skip if solid black (virtual display)
-        if (fw>0 && fh>0 && p.size()>=16) {
-            uint8_t r0=p[2],g0=p[1],b0=p[0]; int same=0,n=0,step=(int)p.size()/400; if(step<4)step=4;
-            for(size_t i=0;i<p.size();i+=(size_t)step*4){n++;if(p[i+2]==r0&&p[i+1]==g0&&p[i]==b0)same++;}
-            if (n>0 && same==n && b0==0 && g0==0 && r0==0) continue; // solid black → try next output
-        }
+        // Skip if solid black (virtual display) — use shared helper
+        if (ch::is_solid_color(p.data(), p.size())) continue;
         w=fw; h=fh; return true;
     }
     return false;
@@ -115,183 +110,30 @@ static bool gdi_desk(std::vector<uint8_t>& p, int& w, int& h) {
     DeleteObject(bmp); DeleteDC(mem); ReleaseDC(nullptr,dc); return true;
 }
 
-// ── Scale BGRA to max 640px ─────────────────────────────
-static void scale_frame(const uint8_t* src, int sw, int sh, std::vector<uint8_t>& dst, int& dw, int& dh) {
-    float s = (640.0f / sw);
-    if (s >= 1.0f) { dw=sw; dh=sh; dst.assign(src, src+sw*sh*4); return; }
-    dw=(int)(sw*s); dh=(int)(sh*s);
-    dst.resize(dw*dh*4);
-    for (int y=0; y<dh; y++) {
-        int sy=(int)(y/s);
-        for (int x=0; x<dw; x++) {
-            int sx=(int)(x/s);
-            memcpy(dst.data()+(y*dw+x)*4, src+(sy*sw+sx)*4, 4);
-        }
-    }
-}
-
-// ── Frame differ ────────────────────────────────────────
-static bool frames_equal(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
-    if (a.size() != b.size()) return false;
-    return memcmp(a.data(), b.data(), a.size()) == 0;
-}
-
-// ── FramePool (Windows.Graphics.Capture) for window ═══════════════════════
-// GPU-accelerated, ~2ms per frame, works for background/minimized windows
-struct FramePoolCtx {
-    winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool pool{nullptr};
-    winrt::Windows::Graphics::Capture::GraphicsCaptureSession session{nullptr};
-    ComPtr<ID3D11Device> device;
-    ComPtr<ID3D11DeviceContext> ctx;
-    ComPtr<ID3D11Texture2D> staging;  // reused across frames
-    int staging_w = 0, staging_h = 0;
-    winrt::Windows::Graphics::Capture::GraphicsCaptureItem item{nullptr};
-    bool ok = false;
-};
-
-static FramePoolCtx g_fp;
-
-static bool framepool_init(HWND hwnd) {
-    // Get the correct GPU adapter for the target window's monitor
-    HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-    ComPtr<IDXGIFactory1> dxgi_factory;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)dxgi_factory.GetAddressOf()))) {
-        fprintf(stderr, "[framepool] CreateDXGIFactory1 failed\n");
-        return false;
-    }
-    ComPtr<IDXGIAdapter1> adapter;
-    bool found = false;
-    for (UINT i = 0; dxgi_factory->EnumAdapters1(i, adapter.GetAddressOf()) != DXGI_ERROR_NOT_FOUND; i++) {
-        ComPtr<IDXGIOutput> output;
-        for (UINT j = 0; adapter->EnumOutputs(j, output.GetAddressOf()) != DXGI_ERROR_NOT_FOUND; j++) {
-            DXGI_OUTPUT_DESC desc;
-            if (SUCCEEDED(output->GetDesc(&desc)) && desc.Monitor == mon) {
-                found = true; break;
-            }
-            output.Reset();
-        }
-        if (found) break;
-        adapter.Reset();
-    }
-    if (!found) {
-        fprintf(stderr, "[framepool] monitor not found on any adapter\n");
-        adapter.Reset();  // fall through to default
-    }
-
-    // Create D3D11 device on correct adapter
-    D3D_DRIVER_TYPE driver_type = adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
-    IDXGIAdapter* adapter_ptr = adapter ? adapter.Get() : nullptr;
-    if (FAILED(D3D11CreateDevice(adapter_ptr, driver_type, nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-        &g_fp.device, nullptr, &g_fp.ctx))) {
-        fprintf(stderr, "[framepool] D3D11CreateDevice failed\n");
-        return false;
-    }
-
-    // Wrap as WinRT IDirect3DDevice via interop
-    ComPtr<IDXGIDevice> dxgi_dev;
-    if (FAILED(g_fp.device.As(&dxgi_dev))) {
-        fprintf(stderr, "[framepool] No IDXGIDevice\n");
-        return false;
-    }
-    winrt::com_ptr<::IInspectable> d3d_inspectable;
-    HRESULT hr = CreateDirect3D11DeviceFromDXGIDevice(dxgi_dev.Get(), d3d_inspectable.put());
-    if (FAILED(hr)) {
-        fprintf(stderr, "[framepool] CreateDirect3D11DeviceFromDXGIDevice failed 0x%08lX\n", hr);
-        return false;
-    }
-    auto d3d_device = d3d_inspectable.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
-
-    // Create GraphicsCaptureItem from HWND (interop)
-    auto factory = winrt::get_activation_factory<wgc::GraphicsCaptureItem>();
-    auto interop = factory.as<IGraphicsCaptureItemInterop>();
-    winrt::com_ptr<::IUnknown> item_unk;
-    hr = interop->CreateForWindow(hwnd, winrt::guid_of<wgc::GraphicsCaptureItem>(),
-        item_unk.put_void());
-    if (FAILED(hr)) {
-        fprintf(stderr, "[framepool] CreateForWindow failed 0x%08lX\n", hr);
-        return false;
-    }
-    g_fp.item = item_unk.as<wgc::GraphicsCaptureItem>();
-    auto size = g_fp.item.Size();
-    fprintf(stderr, "[framepool] item created %dx%d\n", (int)size.Width, (int)size.Height);
-
-    // Create FramePool (2 buffer frames)
-    g_fp.pool = wgc::Direct3D11CaptureFramePool::Create(
-        d3d_device,
-        winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-        2, size);
-    if (!g_fp.pool) {
-        fprintf(stderr, "[framepool] CreateFramePool failed\n");
-        return false;
-    }
-
-    // Start capture (no event needed — we poll TryGetNextFrame)
-    g_fp.session = g_fp.pool.CreateCaptureSession(g_fp.item);
-    g_fp.session.StartCapture();
-    g_fp.ok = true;
-    fprintf(stderr, "[framepool] init OK, started\n");
-    return true;
-}
-
-static bool framepool_capture(std::vector<uint8_t>& pixels, int& w, int& h) {
-    if (!g_fp.ok) return false;
-
-    auto frame = g_fp.pool.TryGetNextFrame();
-    if (!frame) return false;
-
-    auto surface = frame.Surface();
-
-    // Get ID3D11Texture2D from WinRT surface via interop
-    auto access = surface.as<Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
-    ComPtr<ID3D11Texture2D> tex;
-    HRESULT hr = access->GetInterface(__uuidof(ID3D11Texture2D), (void**)tex.GetAddressOf());
-    if (FAILED(hr) || !tex) return false;
-
-    D3D11_TEXTURE2D_DESC desc;
-    tex->GetDesc(&desc);
-    int fw = (int)desc.Width, fh = (int)desc.Height;
-
-    // Reuse staging texture if size unchanged
-    if (!g_fp.staging || g_fp.staging_w != fw || g_fp.staging_h != fh) {
-        D3D11_TEXTURE2D_DESC sd = {};
-        sd.Width = desc.Width; sd.Height = desc.Height; sd.MipLevels = 1;
-        sd.ArraySize = 1; sd.Format = desc.Format;
-        sd.SampleDesc.Count = 1;
-        sd.Usage = D3D11_USAGE_STAGING; sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        g_fp.staging.Reset();
-        if (FAILED(g_fp.device->CreateTexture2D(&sd, nullptr, &g_fp.staging))) return false;
-        g_fp.staging_w = fw; g_fp.staging_h = fh;
-    }
-
-    g_fp.ctx->CopyResource(g_fp.staging.Get(), tex.Get());
-
-    D3D11_MAPPED_SUBRESOURCE m = {};
-    if (FAILED(g_fp.ctx->Map(g_fp.staging.Get(), 0, D3D11_MAP_READ, 0, &m))) return false;
-
-    int pitch = (int)m.RowPitch;
-    pixels.resize(fw * fh * 4);
-    uint8_t* dst = pixels.data();
-    uint8_t* src = (uint8_t*)m.pData;
-    for (int y = 0; y < fh; y++) memcpy(dst + y * fw * 4, src + y * pitch, fw * 4);
-
-    g_fp.ctx->Unmap(g_fp.staging.Get(), 0);
-    w = fw; h = fh;
-    return true;
-}
-
-static void framepool_shutdown() {
-    if (g_fp.ok) {
-        g_fp.session.Close();
-        g_fp.pool.Close();
-        g_fp.ok = false;
-        fprintf(stderr, "[framepool] shutdown\n");
-    }
-}
-
 static void stdin_thread() {
     char c; while(g_running&&fread(&c,1,1,stdin)>0&&c!='q'){}
     g_running=false;
+}
+
+// ── Frame output helpers ────────────────────────────────
+static void emit_unchanged(int pw, int ph) {
+    uint8_t buf[16];
+    ch::w32_le(buf,     (uint32_t)pw);
+    ch::w32_le(buf + 4, (uint32_t)ph);
+    ch::w32_le(buf + 8, 4);
+    ch::w32_le(buf + 12, 0);
+    fwrite(buf, 1, 16, stdout);
+}
+
+static void emit_frame(const uint8_t* data, int w, int h) {
+    uint8_t buf[16];
+    uint32_t sz = (uint32_t)(w * h * 4);
+    ch::w32_le(buf,     (uint32_t)w);
+    ch::w32_le(buf + 4, (uint32_t)h);
+    ch::w32_le(buf + 8, 4);
+    ch::w32_le(buf + 12, sz);
+    fwrite(buf, 1, 16, stdout);
+    fwrite(data, 1, sz, stdout);
 }
 
 // ── main ────────────────────────────────────────────────
@@ -304,15 +146,16 @@ int main(int argc, char* argv[]) {
     bool desk=(hwnd==0||hwnd==GetDesktopWindow());
     fprintf(stderr,"[stream] hwnd=%p desktop=%d\n",hwnd,(int)desk);
 
-    // Window: FramePool first (GPU, now on correct adapter), PrintWindow fallback
-    const char* method = desk ? "GDI" : "FramePool";
-    bool use_fp = false;
+    // Use shared WgcCapture library (not inline FramePool copy)
+    wgc::WgcCapture wgc_cap;
+    const char* method = desk ? "GDI" : "WGC";
+    bool use_wgc = false;
     RECT wr={};
 
     if (!desk) {
-        use_fp = framepool_init(hwnd);
-        if (!use_fp) {
-            fprintf(stderr,"[stream] FramePool failed, PrintWindow fallback\n");
+        use_wgc = wgc_cap.init(hwnd);
+        if (!use_wgc) {
+            fprintf(stderr,"[stream] WGC failed, PrintWindow fallback\n");
             method = "PrintWindow";
             DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &wr, sizeof(wr));
             if (wr.right - wr.left <= 0) GetWindowRect(hwnd, &wr);
@@ -320,12 +163,8 @@ int main(int argc, char* argv[]) {
     } else {
         // Desktop: test DXGI, fallback GDI
         std::vector<uint8_t> t; int tw=0,th=0;
-        if(dxgi_cap(t,tw,th)&&t.size()>=16){
-            int step=(int)t.size()/400; if(step<4)step=4;
-            uint8_t r0=t[2],g0=t[1],b0=t[0]; int same=0,n=0;
-            for(size_t i=0;i<t.size();i+=(size_t)step*4){n++;if(t[i+2]==r0&&t[i+1]==g0&&t[i]==b0)same++;}
-            if(!(n>0&&same==n)) method="DXGI";
-        }
+        if(dxgi_cap(t,tw,th) && !ch::is_solid_color(t.data(), t.size()))
+            method="DXGI";
     }
 
     // Handshake
@@ -343,12 +182,16 @@ int main(int argc, char* argv[]) {
     while(g_running) {
         int w=0,h=0; cur.clear(); bool ok=false;
 
-        if (use_fp) {
-            ok = framepool_capture(cur, w, h);
-            if (!ok) {
-                // No frame → content unchanged → emit empty frame (Rust reuses previous)
+        if (use_wgc) {
+            wgc::WgcFrame wf;
+            ok = wgc_cap.capture(wf);
+            if (ok) {
+                cur = std::move(wf.pixels);
+                w = wf.width; h = wf.height;
+            } else {
+                // No new frame → emit unchanged
                 if (pw > 0 && ph > 0) {
-                    w32((uint32_t)pw); w32((uint32_t)ph); w32(4); w32(0);
+                    emit_unchanged(pw, ph);
                     fflush(stdout); skipped++;
                 }
                 Sleep(1); continue;
@@ -359,7 +202,7 @@ int main(int argc, char* argv[]) {
             }
             if (!ok) ok = gdi_desk(cur, w, h);
         } else {
-            // PrintWindow fallback
+            // PrintWindow fallback for window capture
             int ww=wr.right-wr.left, wh=wr.bottom-wr.top;
             if(ww>0&&wh>0){
                 HDC screen=GetDC(nullptr); if(screen){
@@ -375,36 +218,36 @@ int main(int argc, char* argv[]) {
                 GetDIBits(mem,bmp,0,wh,cur.data(),(BITMAPINFO*)&bi,DIB_RGB_COLORS);
                 SelectObject(mem,(HBITMAP)GetStockObject(NULL_BRUSH)); DeleteObject(bmp);
                 DeleteDC(mem); ReleaseDC(nullptr,screen);
-                if(cur.size()>=16){
-                    uint8_t r0=cur[2],g0=cur[1],b0=cur[0]; int same=0,n=0,step=(int)cur.size()/400; if(step<4)step=4;
-                    for(size_t i=0;i<cur.size();i+=(size_t)step*4){n++;if(cur[i+2]==r0&&cur[i+1]==g0&&cur[i]==b0)same++;}
-                    ok=!(n>0&&same==n);
+                // Check magenta sentinel and solid color using shared helpers
+                ok = !ch::is_solid_color(cur.data(), cur.size())
+                  && !ch::has_magenta_sentinel(cur.data(), cur.size());
                 }}
             }
-            if(!ok){ // DXGI crop
+            if(!ok){ // DXGI crop fallback
                 std::vector<uint8_t> full; int fw=0,fh=0;
                 if(dxgi_cap(full,fw,fh)){
                     int cx=wr.left>0?wr.left:0, cy=wr.top>0?wr.top:0;
-                    int cw=ww<(fw-cx)?ww:(fw-cx), ch=wh<(fh-cy)?wh:(fh-cy);
-                    if(cw>0&&ch>0){cur.resize(cw*ch*4);
-                        for(int y=0;y<ch;y++){int si=((cy+y)*fw+cx)*4; memcpy(cur.data()+y*cw*4,full.data()+si,cw*4);}
-                        w=cw; h=ch; ok=true;}}
+                    int cw=ww<(fw-cx)?ww:(fw-cx), ch_=wh<(fh-cy)?wh:(fh-cy);
+                    if(cw>0&&ch_>0){cur.resize(cw*ch_*4);
+                        for(int y=0;y<ch_;y++){int si=((cy+y)*fw+cx)*4; memcpy(cur.data()+y*cw*4,full.data()+si,cw*4);}
+                        w=cw; h=ch_; ok=true;}}
             } else { w=ww; h=wh; }
         }
 
         if(!ok||w<=0||h<=0){Sleep(1); continue;}
 
-        std::vector<uint8_t> scaled; int sw=0, sh=0;
-        scale_frame(cur.data(), w, h, scaled, sw, sh);
+        // Scale BGRA using shared helper
+        auto [scaled_px, dims] = ch::scale_bgra(cur.data(), w, h, 640);
+        int sw = dims.first, sh = dims.second;
 
-        if(sw==pw && sh==ph && frames_equal(prev, scaled)) {
-            w32((uint32_t)sw); w32((uint32_t)sh); w32(4); w32(0);
+        // Frame differ using shared helper
+        if(sw==pw && sh==ph && ch::frames_equal(prev.data(), scaled_px.data(), scaled_px.size())) {
+            emit_unchanged(sw, sh);
             fflush(stdout); skipped++;
         } else {
-            uint32_t sz=(uint32_t)(sw*sh*4);
-            w32((uint32_t)sw); w32((uint32_t)sh); w32(4); w32(sz);
-            fwrite(scaled.data(),1,sz,stdout); fflush(stdout);
-            prev.swap(scaled); pw=sw; ph=sh; frames++;
+            emit_frame(scaled_px.data(), sw, sh);
+            fflush(stdout);
+            prev.swap(scaled_px); pw=sw; ph=sh; frames++;
         }
         // Timing log every 60 frames
         if (frames > 0 && frames % 60 == 0) {
@@ -416,7 +259,7 @@ int main(int argc, char* argv[]) {
         Sleep(1);
     }
 
-    framepool_shutdown();
+    wgc_cap.shutdown();
     fprintf(stderr,"[stream] exit: %d frames, %d skipped\n",frames,skipped);
     return 0;
 }

@@ -21,7 +21,7 @@ DEFAULT_TCP_PORT: int = 9999
 DEFAULT_HOST: str = "127.0.0.1"
 DEFAULT_PIPE_NAME: str = "tictactoe_stream"
 
-FRAME_MAGIC: int = 0x4D415246  # "FRAM" LE
+FRAME_MAGIC: int = 0x5354524D  # "STRM" LE (distinct from protocol/ magic "FRAM")
 FRAME_HEADER_SIZE: int = 8     # magic(4) + size(4)
 MAX_PAYLOAD_SIZE: int = 256 * 1024 * 1024  # 256 MiB, reject larger as corrupt
 

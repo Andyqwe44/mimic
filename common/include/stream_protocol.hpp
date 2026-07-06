@@ -27,7 +27,7 @@ constexpr char     DEFAULT_HOST[]     = "127.0.0.1";
 constexpr char     DEFAULT_PIPE_NAME[] = "tictactoe_stream";
 
 // ── Frame header ────────────────────────────────────────
-constexpr uint32_t FRAME_MAGIC        = 0x4D415246;  // "FRAM" LE
+constexpr uint32_t FRAME_MAGIC        = 0x5354524D;  // "STRM" LE (distinct from protocol/ magic "FRAM")
 constexpr uint32_t FRAME_HEADER_SIZE  = 8;            // magic(4) + size(4)
 
 // ── Application payload format (defined here for convenience, not enforced) ──
