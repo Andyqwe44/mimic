@@ -13,9 +13,6 @@
 **/target/
 **/node_modules/
 
-# Slint SDK (downloaded)
-**/slint_bin/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -36,6 +33,12 @@ desktop.ini
 
 # Training logs
 ai/logs/
+
+# Log files
+log/
+
+# Caveman compress backup
+*.original.md
 
 # Misc
 *.tmp

@@ -61,3 +61,19 @@ On startup the app is hidden → queries monitor scale → computes logical size
 **To change default size, edit the Rust consts — NOT `tauri.conf.json`.**
 
 Minimum window size is set in `tauri.conf.json`: 324×216.
+
+## Logging
+
+All logs written to `log/` directory (project root):
+- `agent_*.log` — Rust backend (Tauri main process)
+- `wgc_*.log` — C++ WGC per-frame timing
+
+`log/` is gitignored. LogManager class in App.tsx unifies in-memory + disk log views.
+
+## Gitignore
+
+Key entries in `.gitignore`:
+- `log/` — runtime logs (not committed)
+- `*.original.md` — caveman compress backups
+- `**/target/`, `**/node_modules/` — build outputs
+- `*.exe`, `*.lib`, `*.pdb` — binaries

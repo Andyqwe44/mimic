@@ -12,17 +12,17 @@ Python for AI model training/inference.
 ## Architecture
 
 ```
-┌─ monitor_web (Tauri 2) ──────────────────────────────────┐
-│  React (TypeScript + Tailwind)  ←→  Rust (IPC)          │
-│       MXU-style UI               │  Win32 API 直调       │
-│       Dashboard/Monitor/Log       │  TCP server :9999     │
-└──────────────────┬────────────────┴──────────────────────┘
+┌─ monitor_web (Tauri 2) ────────────────────────────────────┐
+│  React (TypeScript + Tailwind)  ←→  Rust (IPC)            │
+│       MXU-style UI               │  Win32 API 直调         │
+│       Dashboard/Monitor/Log       │  TCP server :9999       │
+└──────────────────┬────────────────┴────────────────────────┘
                    │
      ┌─────────────┼──────────────┐
      ▼             ▼              ▼
-  Rust            Rust           TCP :9999
-  EnumWindows     GDI + WGC      (agent.exe / Python)
-  (0ms)           (多方法回退)     binary frames
+  Rust            C++ static lib  TCP :9999
+  EnumWindows     GDI+WGC+DXGI    (agent.exe / Python)
+  (0ms)           (capture_lib)    binary frames
 ```
 
 ## Project Structure
@@ -37,23 +37,33 @@ tictactoe/
 │   │   └── capture_helpers.hpp  ScaleBgra, IsSolidColor, etc.
 │   ├── payload/bgra.hpp         BGRA pixel frame pack/unpack
 │   └── transport/               pipe.hpp, tcp.hpp
-├── capture/                     # C++ screen capture tools
+├── capture/                     # C++ screen capture (static lib + standalone tools)
 │   ├── src/
+│   │   ├── capture_common.cpp   Content validation + window state (FFI)
+│   │   ├── capture_gdi.cpp      GetWindowDC (FFI)
+│   │   ├── capture_pw.cpp       PrintWindow + magenta sentinel (FFI)
+│   │   ├── capture_screen.cpp   ScreenBitBlt (FFI)
+│   │   ├── capture_desktop.cpp  DesktopBlt (FFI)
+│   │   ├── capture_auto.cpp     Auto-detect fallback chain (FFI)
+│   │   ├── capture_wgc.cpp      WGC GPU FramePool (D3D11+WinRT)
+│   │   ├── capture_wgc_ffi.cpp  WGC stream FFI wrapper
 │   │   ├── capture_dxgi.cpp     DXGI Desktop Duplication backend
-│   │   ├── capture_single.cpp   Single-frame screenshot
-│   │   ├── capture_stream.cpp   Stream with frame-differ
-│   │   ├── capture_h264.cpp     H.264 GPU encode (broken)
-│   │   ├── capture_wgc.cpp      WGC FramePool library (GPU, 7ms/frame)
-│   │   └── capture_wgc_main.cpp WGC standalone CLI (single/stream modes)
+│   │   ├── capture_single.cpp   Standalone: single-frame screenshot
+│   │   ├── capture_stream.cpp   Standalone: stream with frame-differ
+│   │   └── capture_wgc_main.cpp Standalone: WGC CLI (single/stream)
 │   ├── include/
-│   │   ├── capture.hpp          ICaptureBackend (DXGI + GDI)
-│   │   └── capture_wgc.hpp      WGC FramePool API
-│   └── build.cmd                MSVC build
+│   │   ├── capture_methods.h    Public FFI header (all methods)
+│   │   ├── capture_wgc_ffi.h    WGC stream FFI header
+│   │   ├── capture_internal.h   Shared GDI inline helpers
+│   │   ├── capture_wgc.hpp      WGC C++ class
+│   │   └── capture.hpp          ICaptureBackend (DXGI + GDI)
+│   ├── build.cmd                MSVC build (standalone exes)
+│   └── build_capture_lib.cmd    MSVC → capture_lib.lib (8 FFI files)
 ├── monitor_web/                 # Tauri 2 + React desktop app
 │   ├── src/
 │   │   └── App.tsx              Main UI (MXU-style, Dashboard/Screenshot/Log)
 │   └── src-tauri/
-│       └── src/main.rs          Rust backend (WGC subprocess, overlay, TCP)
+│       └── src/main.rs          Rust backend (C++ FFI, overlay, TCP)
 ├── model/                       # Python
 │   ├── __init__.py               Re-exports public API
 │   ├── action_space.py           Token vocabulary + serialization (LE)
@@ -92,10 +102,11 @@ Canonical implementations (use for new code):
 ## Build Commands
 
 ```bash
-cd capture  && build.cmd          # C++ tools (capture_wgc.exe + others)
+cd capture  && build.cmd          # Standalone C++ tools (capture_wgc.exe etc.)
+cd capture  && build_capture_lib.cmd  # Static lib (Rust build.rs calls this automatically)
 cd monitor_web
-npm install && npm run tauri dev  # Vite HMR + Cargo watch
-npm run tauri build               # Release .exe
+npm install && npm run tauri dev  # Vite HMR + Cargo watch (auto-builds capture_lib.lib)
+npm run tauri build               # Release .exe (statically linked)
 ```
 
 ## Capture Methods
@@ -105,8 +116,8 @@ npm run tauri build               # Release .exe
 GPU-accelerated FramePool. ~7ms/frame (140+ FPS capable).
 - Works for occluded/background windows (NOT minimized)
 - Event-driven: frames only produced when content changes
-- `capture_stream_start` tries WGC subprocess first for hwnd≠0
-- Falls back to GDI if `capture_wgc.exe` not found or fails
+- `capture_stream_start` calls WGC FFI directly (static lib, zero subprocess)
+- Falls back to GDI if WGC init fails
 - Triple-buffered staging textures for GPU/CPU overlap
 - C++ writes per-frame timing to `log/wgc_*.log`
 
@@ -219,9 +230,11 @@ Build: `build_capture_lib.cmd` (MSVC) → `capture_lib.lib` → linked via `buil
 ## Logging
 
 - Rust: `dlog!()` macro → `agent_*.log` (session-based, max 5 files kept)
+- C++: WGC per-frame timing → `log/wgc_*.log`
 - Frontend: `LogManager` class → in-memory array + `invoke('log_ui_event')` → disk
 - Three views (right panel compact, Log tab, disk file) are unified via LogManager
 - Clear button: archives current log file, opens new session file
+- All `log/` files are gitignored — not committed to repo
 
 ## Known Issues
 
