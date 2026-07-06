@@ -425,11 +425,16 @@ fn capture_single() -> String {
 }
 
 #[tauri::command]
-fn capture_window(hwnd: u64) -> String {
+fn capture_window(hwnd: u64, method: Option<String>) -> String {
     let t0 = Instant::now();
-    dlog!("capture_window: hwnd={}...", hwnd);
+    let method_str = method.as_deref().unwrap_or("auto");
+    dlog!("capture_window: hwnd={} method={}...", hwnd, method_str);
     unsafe {
-        let result = capture_window_internal(hwnd);
+        let result = if method_str == "auto" || method_str.is_empty() {
+            capture_window_internal(hwnd)
+        } else {
+            capture_with_method(hwnd, method_str)
+        };
         if !result.pixels.is_empty() {
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -765,7 +770,6 @@ unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(
                 { Some((pix, w, h)) } else { None }
         }
         "ScreenBitBlt" => {
-            // Get window screen position for correct source coordinates
             let mut wr = RECT::default();
             let src_x = if GetWindowRect(hwnd_ptr, &mut wr).is_ok() { wr.left } else { 0 };
             let src_y = if wr.top >= 0 { wr.top } else { 0 };
@@ -773,6 +777,16 @@ unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(
             if sc.0.is_null() { return None; }
             let r = bitblt_bgra_at(sc, sc, src_x, src_y, w, h);
             let _ = ReleaseDC(None, sc);
+            r
+        }
+        "DXGI" | "dxgi" => {
+            // Desktop capture: GDI BitBlt from screen DC
+            // DXGI Desktop Duplication is available via C++ capture_wgc.exe;
+            // from Rust we use the equivalent GDI path for simplicity.
+            let dc = GetDC(None);
+            if dc.0.is_null() { return None; }
+            let r = bitblt_bgra(dc, dc, w, h);
+            let _ = ReleaseDC(None, dc);
             r
         }
         _ => {
@@ -783,6 +797,43 @@ unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(
             let _ = ReleaseDC(None, dc);
             r
         }
+    }
+}
+
+/// Single-method capture — no fallback, no solid-color/magenta checks.
+unsafe fn capture_with_method(hwnd: u64, method: &str) -> CaptureResult {
+    let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
+    let is_desktop = hwnd_ptr.0.is_null() || hwnd_ptr == GetDesktopWindow();
+    let def = CaptureResult { pixels: vec![], w: 0, h: 0, method: "ALL_FAILED", window_state: "error" };
+
+    // Detect window state and dimensions
+    let (w, h, state) = if is_desktop {
+        (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), "desktop")
+    } else {
+        if !IsWindow(hwnd_ptr).as_bool() {
+            return CaptureResult { window_state: "closed", ..def };
+        }
+        let st = if IsIconic(hwnd_ptr).as_bool() { "minimized" }
+            else if !IsWindowVisible(hwnd_ptr).as_bool() { "hidden" }
+            else { "normal" };
+        let mut wr = RECT::default();
+        if GetWindowRect(hwnd_ptr, &mut wr).is_err() {
+            return CaptureResult { window_state: "no-rect", ..def };
+        }
+        let ww = wr.right - wr.left;
+        let wh = wr.bottom - wr.top;
+        if ww <= 0 || wh <= 0 {
+            return CaptureResult { window_state: "zero-size", ..def };
+        }
+        (ww, wh, st)
+    };
+
+    // Call capture_fast with the explicit method — no solid/magenta checks
+    match capture_fast(method, hwnd_ptr, w, h) {
+        Some((pixels, pw, ph)) => {
+            CaptureResult { pixels, w: pw, h: ph, method: "user-selected", window_state: state }
+        }
+        None => CaptureResult { pixels: vec![], w, h, method: "ALL_FAILED", window_state: state }
     }
 }
 
@@ -916,18 +967,28 @@ fn run_wgc_stream(
 }
 
 #[tauri::command]
-fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>) -> Result<String, String> {
+fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>, method: Option<String>) -> Result<String, String> {
     let _ = capture_stream_stop();
 
     let port = tcp_port.unwrap_or(protocol::DEFAULT_TCP_PORT);
+    let method_str = method.as_deref().unwrap_or("auto");
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
-    // Try WGC first for window capture (hwnd != 0, exe exists)
-    let use_wgc = hwnd != 0 && find_wgc_exe().is_some();
+    // Force WGC if requested, auto-detect otherwise
+    let use_wgc = if method_str == "wgc" {
+        if find_wgc_exe().is_none() {
+            return Err("WGC capture requested but capture_wgc.exe not found".into());
+        }
+        true
+    } else if method_str == "auto" || method_str.is_empty() {
+        hwnd != 0 && find_wgc_exe().is_some()
+    } else {
+        false
+    };
 
-    dlog!("stream_start: hwnd={} port={} use_wgc={}", hwnd, port, use_wgc);
+    dlog!("stream_start: hwnd={} port={} method={} use_wgc={}", hwnd, port, method_str, use_wgc);
 
     // Start TCP broadcast server (works for both WGC and GDI)
     let tcp_running = running.clone();
@@ -945,27 +1006,49 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
         return Ok("started (wgc)".into());
     }
 
-    // ── GDI fallback path: Rust-native multi-method ──
+    // ── GDI / explicit method stream loop ──
+    let explicit_method: Option<String> = if method_str != "auto" && !method_str.is_empty() {
+        Some(method_str.to_string())
+    } else {
+        None
+    };
+
     thread::spawn(move || {
-        // --- First frame: detect best method ---
-        let detect = unsafe { capture_window_internal(hwnd) };
-        let mut method = detect.method.to_string();
-        let mut w = detect.w;
-        let mut h = detect.h;
-        dlog!("stream: detected method={} state={} {}x{}", method, detect.window_state, w, h);
+        let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
+        let mut stream_method: String;
+        let mut w: i32;
+        let mut h: i32;
 
-        if method == "None" || method == "ALL_FAILED" || w <= 0 || h <= 0 {
-            dlog!("stream: no working capture method, aborting");
-            return;
-        }
-
-        // Use first frame pixels
-        if !detect.pixels.is_empty() {
-            let rgba = bgra_to_rgba(&detect.pixels);
-            if let Ok(mut state) = STREAM_FRAME.lock() {
-                *state = (rgba, w, h, method.clone());
+        if let Some(ref m) = explicit_method {
+            stream_method = m.clone();
+            let is_desk = hwnd == 0 || hwnd_ptr == unsafe { GetDesktopWindow() };
+            if is_desk {
+                unsafe { w = GetSystemMetrics(SM_CXSCREEN); h = GetSystemMetrics(SM_CYSCREEN); }
+            } else {
+                let mut wr = RECT::default();
+                if unsafe { GetWindowRect(hwnd_ptr, &mut wr).is_err() } {
+                    dlog!("stream: GetWindowRect failed, aborting"); return;
+                }
+                w = wr.right - wr.left; h = wr.bottom - wr.top;
             }
-            let _ = app.emit("stream-tick", serde_json::json!({"method": &method}));
+            if w <= 0 || h <= 0 { dlog!("stream: zero-size window, aborting"); return; }
+            dlog!("stream: explicit method={} {}x{}", stream_method, w, h);
+        } else {
+            let detect = unsafe { capture_window_internal(hwnd) };
+            stream_method = detect.method.to_string();
+            w = detect.w; h = detect.h;
+            dlog!("stream: detected method={} state={} {}x{}", stream_method, detect.window_state, w, h);
+            if stream_method == "None" || stream_method == "ALL_FAILED" || w <= 0 || h <= 0 {
+                dlog!("stream: no working capture method, aborting"); return;
+            }
+            // Display first frame immediately
+            if !detect.pixels.is_empty() {
+                let rgba = bgra_to_rgba(&detect.pixels);
+                if let Ok(mut state) = STREAM_FRAME.lock() {
+                    *state = (rgba, w, h, stream_method.clone());
+                }
+                let _ = app.emit("stream-tick", serde_json::json!({"method": &stream_method}));
+            }
         }
 
         let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
@@ -983,7 +1066,7 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
             }
 
             let frame_t0 = Instant::now();
-            let result = unsafe { capture_fast(&method, hwnd_ptr, w, h) };
+            let result = unsafe { capture_fast(&stream_method, hwnd_ptr, w, h) };
             let cap_us = frame_t0.elapsed().as_micros();
 
             if let Some((pixels, pw, ph)) = result {
@@ -993,7 +1076,7 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
                 if pixels.len() == prev_pixels.len() && pixels == prev_pixels {
                     // Emit size=0 signal (frontend reuses previous)
                     if let Ok(mut state) = STREAM_FRAME.lock() {
-                        state.3 = method.clone();
+                        state.3 = stream_method.clone();
                     }
                 } else {
                     let t_pack = Instant::now();
@@ -1006,28 +1089,30 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
                     }
                     prev_pixels = pixels;
                     if let Ok(mut state) = STREAM_FRAME.lock() {
-                        *state = (rgba, w, h, method.clone());
+                        *state = (rgba, w, h, stream_method.clone());
                     }
 
                     if frames % 30 == 0 {
                         dlog!("stream timing: cap={}us pack={}us", cap_us, pack_us);
                     }
                 }
-                let _ = app.emit("stream-tick", serde_json::json!({"method": &method}));
+                let _ = app.emit("stream-tick", serde_json::json!({"method": &stream_method}));
                 frames += 1;
                 recheck_counter = 0;
             } else {
-                // Capture failed — may need to re-detect method
-                recheck_counter += 1;
-                if recheck_counter > 30 {
-                    // Re-detect every ~0.5s of failures
-                    let redetect = unsafe { capture_window_internal(hwnd) };
-                    if redetect.method != "None" && redetect.method != "ALL_FAILED" {
-                        method = redetect.method.to_string();
-                        w = redetect.w; h = redetect.h;
-                        dlog!("stream: re-detected method={}", method);
+                // Auto mode: re-detect after 30 consecutive failures
+                // Explicit method: just skip frame, no re-detect
+                if explicit_method.is_none() {
+                    recheck_counter += 1;
+                    if recheck_counter > 30 {
+                        let redetect = unsafe { capture_window_internal(hwnd) };
+                        if redetect.method != "None" && redetect.method != "ALL_FAILED" {
+                            stream_method = redetect.method.to_string();
+                            w = redetect.w; h = redetect.h;
+                            dlog!("stream: re-detected method={}", stream_method);
+                        }
+                        recheck_counter = 0;
                     }
-                    recheck_counter = 0;
                 }
             }
 
@@ -1035,7 +1120,7 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>)
             if frames > 0 && frames % 120 == 0 {
                 let elapsed = fps_t0.elapsed().as_secs_f64();
                 dlog!("stream: {} frames in {:.1}s = {:.0}fps method={}",
-                    frames, elapsed, frames as f64 / elapsed, method);
+                    frames, elapsed, frames as f64 / elapsed, stream_method);
             }
 
             // Frame pacing

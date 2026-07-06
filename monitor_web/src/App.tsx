@@ -356,6 +356,7 @@ function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenR
   const [imgStyle, setImgStyle] = useState<React.CSSProperties>({})
   const [fps, setFps] = useState(0)
   const [capMethod, setCapMethod] = useState('')
+  const [forceMethod, setForceMethod] = useState('auto')
   const previewingRef = useRef(false)
   const framesRef = useRef(0)
   const lastFpsRef = useRef(Date.now())
@@ -396,7 +397,7 @@ function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenR
     } else {
       const hwnd = selWin?.hwnd ?? 0
       addLog(`Preview: ${selWin?.title ?? 'desktop'} (multi-method BMP)`)
-      try { await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999 }) }
+      try { const method = forceMethod === 'auto' ? null : forceMethod; await invoke<string>('capture_stream_start', { hwnd, tcpPort: 9999, method }) }
       catch (e) { addLog(`Stream start failed: ${e}`); return }
 
       previewingRef.current = true; setPreviewing(true); setImgSrc('')
@@ -450,14 +451,26 @@ function ScreenshotPanel({ selWin, screenRatio }: { selWin?: WindowInfo; screenR
           {previewing && <span className="text-xs text-accent">{fps} FPS</span>}
           {capMethod && !previewing && <span className="text-xs text-success">{capMethod}</span>}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1.5">
+          <Tooltip text="选择捕获技术方案">
+            <select value={forceMethod} onChange={e => { e.stopPropagation(); setForceMethod(e.target.value) }}
+              className="h-6 rounded-md border border-border bg-bg-primary px-1.5 text-xs text-text-secondary outline-none cursor-pointer hover:border-accent transition-colors">
+              <option value="auto">Auto</option>
+              <option value="wgc">WGC</option>
+              <option value="dxgi">DXGI</option>
+              <option value="gdi">GDI</option>
+              <option value="printwindow">PrintWindow</option>
+              <option value="screenbitblt">ScreenBlt</option>
+            </select>
+          </Tooltip>
           <Tooltip text="单帧截图">
             <button onClick={e => { e.stopPropagation(); (async () => {
               const hwnd = selWin?.hwnd ?? 0;
               addLog(`Capturing ${hwnd ? 'window hwnd='+hwnd : 'desktop'}...`)
               const t0 = Date.now()
               try {
-                const json = await invoke<string>('capture_window', { hwnd })
+                const method = forceMethod === 'auto' ? null : forceMethod
+                const json = await invoke<string>('capture_window', { hwnd, method })
                 const elapsed = Date.now() - t0
                 if (applyCaptureJson(json)) { addLog(`Screenshot OK (${elapsed}ms)`) }
                 else { setImgSrc(''); setImgStyle({}); addLog(`Screenshot failed after ${elapsed}ms`) }
