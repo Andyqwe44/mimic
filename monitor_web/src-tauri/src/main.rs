@@ -800,11 +800,45 @@ unsafe fn capture_fast(method: &str, hwnd_ptr: HWND, w: i32, h: i32) -> Option<(
     }
 }
 
+/// WGC single-frame capture via subprocess (--single mode).
+fn capture_wgc_single(hwnd: u64) -> Option<(Vec<u8>, i32, i32)> {
+    let exe = find_wgc_exe()?;
+    let output = Command::new(&exe)
+        .arg(hwnd.to_string())
+        .arg("--single")
+        .arg("--scale").arg("1280")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(0x08000000)
+        .output()
+        .ok()?;
+    if !output.status.success() { return None; }
+    let stdout = &output.stdout;
+    // WGC frame format: [ts:8][w:4][h:4][ch:4][reserved:4][pixels...]
+    if stdout.len() < 24 { return None; }
+    let w = i32::from_le_bytes([stdout[8], stdout[9], stdout[10], stdout[11]]);
+    let h = i32::from_le_bytes([stdout[12], stdout[13], stdout[14], stdout[15]]);
+    let ch = i32::from_le_bytes([stdout[16], stdout[17], stdout[18], stdout[19]]);
+    if w <= 0 || h <= 0 || ch <= 0 { return None; }
+    let px_size = (w * h * ch) as usize;
+    if stdout.len() < 24 + px_size { return None; }
+    let pixels = stdout[24..24 + px_size].to_vec();
+    Some((pixels, w, h))
+}
+
 /// Single-method capture — no fallback, no solid-color/magenta checks.
 unsafe fn capture_with_method(hwnd: u64, method: &str) -> CaptureResult {
     let hwnd_ptr = HWND(std::ptr::with_exposed_provenance_mut::<std::ffi::c_void>(hwnd as usize));
     let is_desktop = hwnd_ptr.0.is_null() || hwnd_ptr == GetDesktopWindow();
     let def = CaptureResult { pixels: vec![], w: 0, h: 0, method: "ALL_FAILED", window_state: "error" };
+
+    // WGC single-frame: spawn subprocess with --single
+    if method == "wgc" {
+        if let Some((pixels, pw, ph)) = capture_wgc_single(hwnd) {
+            return CaptureResult { pixels, w: pw, h: ph, method: "WGC", window_state: "normal" };
+        }
+        return def;
+    }
 
     // Detect window state and dimensions
     let (w, h, state) = if is_desktop {
@@ -829,9 +863,16 @@ unsafe fn capture_with_method(hwnd: u64, method: &str) -> CaptureResult {
     };
 
     // Call capture_fast with the explicit method — no solid/magenta checks
+    let label: &'static str = match method {
+        "gdi" => "GDI(GetWindowDC)",
+        "printwindow" => "PrintWindow",
+        "screenbitblt" => "ScreenBitBlt",
+        "dxgi" | "DXGI" => "DXGI",
+        _ => "UserSelected",
+    };
     match capture_fast(method, hwnd_ptr, w, h) {
         Some((pixels, pw, ph)) => {
-            CaptureResult { pixels, w: pw, h: ph, method: "user-selected", window_state: state }
+            CaptureResult { pixels, w: pw, h: ph, method: label, window_state: state }
         }
         None => CaptureResult { pixels: vec![], w, h, method: "ALL_FAILED", window_state: state }
     }
