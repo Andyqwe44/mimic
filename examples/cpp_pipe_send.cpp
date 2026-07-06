@@ -1,13 +1,15 @@
 /**
  * 示例: C++ 捕获桌面 → 构建 BGRA payload → pipe 发送 → Rust 接收
  *
- * 发送端: 知道 payload 格式 (BGRA 像素 + 维度信息)
- * 传输层: 不知道内容, 只管打 [magic][size] 包头
+ * 使用 canonical protocol/ 格式 (12字节头 + type_tag).
+ * 应用层 payload 由 common/payload/bgra.hpp 构建.
  */
 #include <windows.h>
 #include <cstdio>
 #include <vector>
+#include <cstring>
 #include "cpp_sender.hpp"
+#include "../common/payload/bgra.hpp"
 
 std::vector<uint8_t> capture_desktop(int& w, int& h) {
     HDC dc = GetDC(nullptr);
@@ -25,7 +27,7 @@ std::vector<uint8_t> capture_desktop(int& w, int& h) {
 }
 
 int main() {
-    PipeFrameSender pipe;  // 纯传输, 不管内容
+    PipeFrameSender pipe;
 
     printf("[cpp_pipe] capturing desktop at 5fps... (Ctrl+C to stop)\n");
 
@@ -33,7 +35,7 @@ int main() {
         int w, h;
         auto full = capture_desktop(w, h);
 
-        // 缩放
+        // 缩放 (nearest-neighbor)
         float s = 640.0f / w;
         int sw = w, sh = h;
         std::vector<uint8_t> scaled;
@@ -50,17 +52,11 @@ int main() {
             }
         }
 
-        // ── 应用层: 构建 BGRA payload ──
-        // 格式: [w:4][h:4][ch:4][reserved:4][pixels...]
-        // 这是应用层自己的格式, 传输层不管
-        uint8_t bgra_hdr[stream_protocol::BGRA_HEADER_SIZE];
-        stream_protocol::build_bgra_payload_header(bgra_hdr, sw, sh, 4);
-        std::vector<uint8_t> payload;
-        payload.insert(payload.end(), bgra_hdr, bgra_hdr + sizeof(bgra_hdr));
-        payload.insert(payload.end(), scaled.begin(), scaled.end());
+        // 应用层: 用 canonical payload/bgra.hpp 构建 BGRA payload
+        auto payload = payload::bgra_pack(scaled, sw, sh, 4);
 
-        // ── 传输层: 发送 (只负责打 [FRAM][size] 包头) ──
-        pipe.send(payload);
+        // 传输层: 发送 (12字节头 + type_tag)
+        pipe.send(PAYLOAD_TYPE_BGRA_FRAME, payload);
 
         fprintf(stderr, "[cpp] frame %d: %dx%d payload=%zuB\n", fi+1, sw, sh, payload.size());
         Sleep(200);

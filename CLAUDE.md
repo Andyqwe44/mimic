@@ -31,7 +31,6 @@ tictactoe/
 ├── common/                      # Shared C++ modules
 │   ├── include/
 │   │   ├── types.hpp            Shared types (Rect, sleep_ms)
-│   │   ├── stream_protocol.hpp  8-byte transport protocol
 │   │   └── capture_helpers.hpp  ScaleBgra, IsSolidColor, etc.
 │   ├── payload/bgra.hpp         BGRA pixel frame pack/unpack
 │   └── transport/               pipe.hpp, tcp.hpp
@@ -57,7 +56,6 @@ tictactoe/
 │   ├── action_space.py           Token vocabulary + serialization (LE)
 │   ├── generic_agent.py          VisionEncoder + ActionDecoder + GenericAgent
 │   ├── hierarchical.py           PerceptionSpecialist + StrategicReasoner
-│   ├── stream_protocol.py        Transport layer (uses payload/bgra.py)
 │   └── payload/
 │       └── bgra.py               Canonical BGRA pack/unpack for Python
 ├── examples/                    # Protocol examples + Benchmark
@@ -81,25 +79,12 @@ DEFAULT_TCP_PORT=9999, MAGIC=0x4D415246, FRAME_HEADER_SIZE=12
 
 Note: `body_size` = body bytes only (NOT including type_tag). Matches Rust `build_header(payload.len(), type_tag)`.
 
-### Protocol layers
-
-Two wire formats exist in the codebase, sharing the same magic `0x4D415246`:
-
-| Layer | Header | Type tag? | Used by |
-|-------|--------|-----------|---------|
-| protocol/ (canonical) | 12 bytes | Yes (PayloadType enum) | main.rs transport, tcp/pipe C++, wgc_bench |
-| stream_protocol (simplified) | 8 bytes | No | examples/cpp_sender.hpp, model/stream_protocol.py |
-
-**These are incompatible.** A 12-byte receiver reading 8-byte frames gets garbage. Consolidation planned.
-
 ### BGRA payload
 
 Canonical implementations (use these for new code):
 - C++: `common/payload/bgra.hpp` (`payload::bgra_pack/unpack`)
 - Rust: `monitor_web/src-tauri/src/payload/bgra.rs` (`payload::bgra::pack/unpack`)
 - Python: `model/payload/bgra.py` (`pack/unpack`)
-
-Legacy duplicates exist in `stream_protocol.hpp` / `stream_protocol.py` (kept for backward compat with examples/).
 
 ## Build Commands
 
@@ -196,6 +181,5 @@ If found (at project root), writes `agent_*.log` there.
 5. **WGC init latency**: ~300ms for first frame after subprocess spawn
 6. **WGC FPS**: Limited by window content change rate. Static window = 0-5 FPS. Dynamic = 60+ FPS. This is by design (event-driven)
 7. **Subprocess cleanup**: WGC subprocess killed 500ms after stream stop. Occasionally leaves orphan `capture_wgc.exe` processes
-8. **Dual wire protocol**: 12-byte (protocol/) vs 8-byte (stream_protocol) headers share same magic — incompatible. Consolidation planned.
-9. **C++ code duplication**: WGC FramePool copied 3×, DXGI capture 4×, GDI capture 4× across capture/*.cpp. Shared helpers extracted to `common/include/capture_helpers.hpp`. Full backend consolidation still needed.
-10. **Overlay orphan risk**: Yellow overlay STATIC windows may persist if app crashes without `destroy_overlay_bars()` cleanup.
+8. **C++ code duplication**: WGC FramePool copied 2× (capture_stream, capture_h264 now use shared WgcCapture lib; 1 variant remains inline). DXGI/GDI capture still duplicated across capture/*.cpp. Further consolidation planned.
+9. **Overlay orphan risk**: Yellow overlay STATIC windows may persist if app crashes without `destroy_overlay_bars()` cleanup.

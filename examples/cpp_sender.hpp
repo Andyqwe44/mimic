@@ -1,16 +1,16 @@
 /**
- * examples/cpp_sender.hpp — pure transport layer, payload-agnostic.
+ * examples/cpp_sender.hpp — transport layer using canonical protocol/ format.
  *
- * Sender doesn't know or care what the bytes mean. It just wraps them
- * in the stream_protocol header [magic:4][size:4] and sends.
+ * Uses 12-byte header: [magic:4 "FRAM"][body_size:4][type_tag:4][body...]
+ * Payload-agnostic: sender doesn't know or care what the bytes mean.
  *
  * Usage:
  *   PipeFrameSender sender;
- *   sender.send(my_data, my_data_size);
+ *   sender.send(PAYLOAD_TYPE_BGRA_FRAME, my_data, my_data_size);
  *
  *   TcpFrameSender sender;
  *   sender.listen(9999);
- *   sender.broadcast(my_data, my_data_size);
+ *   sender.broadcast(PAYLOAD_TYPE_BGRA_FRAME, my_data, my_data_size);
  */
 #pragma once
 #include <cstdint>
@@ -20,43 +20,41 @@
 #include <ws2tcpip.h>
 #include <io.h>
 #include <fcntl.h>
-#include "../common/include/stream_protocol.hpp"
+#include "../../protocol/protocol.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 // ═══ Pipe 发送端 ═══
-// 通过 stdout pipe 发送任意字节数据。
 struct PipeFrameSender {
     PipeFrameSender() { _setmode(_fileno(stdout), _O_BINARY); }
 
-    bool send(const void* data, uint32_t size) {
-        uint8_t hdr[stream_protocol::FRAME_HEADER_SIZE];
-        stream_protocol::build_frame_header(hdr, size);
+    bool send(uint32_t type_tag, const void* data, uint32_t size) {
+        uint8_t hdr[PROTOCOL_FRAME_HEADER];
+        protocol_build_header(hdr, size, type_tag);
         if (fwrite(hdr, 1, sizeof(hdr), stdout) != sizeof(hdr)) return false;
-        if (fwrite(data, 1, size, stdout) != size) return false;
+        if (size > 0 && fwrite(data, 1, size, stdout) != size) return false;
         fflush(stdout);
         return true;
     }
 
-    bool send(const std::vector<uint8_t>& data) { return send(data.data(), (uint32_t)data.size()); }
+    bool send(uint32_t type_tag, const std::vector<uint8_t>& data) { return send(type_tag, data.data(), (uint32_t)data.size()); }
 };
 
 // ═══ TCP 广播端 ═══
-// 监听端口，多客户端连接，广播任意字节数据。
 struct TcpFrameSender {
     TcpFrameSender() { WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa); }
     ~TcpFrameSender() { close(); WSACleanup(); }
 
-    bool listen(uint16_t port = stream_protocol::DEFAULT_TCP_PORT) {
+    bool listen(uint16_t port = PROTOCOL_DEFAULT_TCP_PORT) {
         sock_ = socket(AF_INET, SOCK_STREAM, 0);
         if (sock_ == INVALID_SOCKET) return false;
         int opt = 1; setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
         sockaddr_in addr = {};
         addr.sin_family = AF_INET; addr.sin_port = htons(port);
-        addr.sin_addr.s_addr = inet_addr(stream_protocol::DEFAULT_HOST);
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
         if (bind(sock_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) return false;
         if (::listen(sock_, 5) == SOCKET_ERROR) return false;
-        printf("[tcp] listening on %s:%d\n", stream_protocol::DEFAULT_HOST, port);
+        printf("[tcp] listening on 127.0.0.1:%d\n", port);
         return true;
     }
 
@@ -68,7 +66,6 @@ struct TcpFrameSender {
         printf("[tcp] client connected (%zu total)\n", clients_.size());
     }
 
-    // Send all bytes, looping to handle short writes. Returns true on success.
     static bool send_all(SOCKET s, const char* data, int len) {
         int sent = 0;
         while (sent < len) {
@@ -79,10 +76,9 @@ struct TcpFrameSender {
         return true;
     }
 
-    /// Broadcast raw bytes to all clients. Slow clients auto-disconnected.
-    void broadcast(const void* data, uint32_t size) {
-        uint8_t hdr[stream_protocol::FRAME_HEADER_SIZE];
-        stream_protocol::build_frame_header(hdr, size);
+    void broadcast(uint32_t type_tag, const void* data, uint32_t size) {
+        uint8_t hdr[PROTOCOL_FRAME_HEADER];
+        protocol_build_header(hdr, size, type_tag);
         auto it = clients_.begin();
         while (it != clients_.end()) {
             bool ok = send_all(*it, (char*)hdr, sizeof(hdr));
@@ -92,7 +88,7 @@ struct TcpFrameSender {
         }
     }
 
-    void broadcast(const std::vector<uint8_t>& data) { broadcast(data.data(), (uint32_t)data.size()); }
+    void broadcast(uint32_t type_tag, const std::vector<uint8_t>& data) { broadcast(type_tag, data.data(), (uint32_t)data.size()); }
 
     void close() {
         for (auto c : clients_) closesocket(c);

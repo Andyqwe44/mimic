@@ -149,6 +149,5 @@ L2: 策略推理 — z + 动作历史 → Transformer → 动作 tokens。
 
 ## 已知限制
 
-- 项目存在**两套线协议**（protocol/ 12字节 vs stream_protocol 8字节），共享同一 magic，互不兼容。统一计划中。
-- C++ capture 代码大量重复（WGC 3×, DXGI 4×, GDI 4×）。公共辅助已抽取到 `common/include/capture_helpers.hpp`，完整后端重构待继续。
+- C++ capture 代码仍有部分重复（DXGI 4×, GDI 4×）。WGC 已统一到共享 `WgcCapture` 库，公共辅助已抽取到 `common/include/capture_helpers.hpp`。
 - 覆盖窗口崩溃时可能残留（黄色边框 STATIC 窗口无父窗口清理）。
