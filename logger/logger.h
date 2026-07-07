@@ -55,9 +55,9 @@ void capture_log_flush(void);
 // ── C/C++ convenience macro ──────────────────────────────
 // Formats with snprintf → calls the ONE write function.
 #ifndef LOG
-  #define LOG(tag, fmt, ...) do { \
+  #define LOG(tag, ...) do { \
       char _lbuf[2048]; \
-      snprintf(_lbuf, sizeof(_lbuf), fmt, ##__VA_ARGS__); \
+      snprintf(_lbuf, sizeof(_lbuf), __VA_ARGS__); \
       capture_log_write_msg(tag, _lbuf); \
   } while(0)
 #endif

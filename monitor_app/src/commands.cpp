@@ -286,6 +286,9 @@ static std::string cmd_capture_window(uint64_t hwnd, const std::string& method) 
 static std::atomic<bool> g_streaming{false};
 static std::thread g_stream_thread;
 static WgcStreamHandle* g_stream_handle = nullptr;
+static std::mutex g_stream_frame_mutex;
+static std::vector<uint8_t> g_stream_frame_pixels;
+static int g_stream_frame_w = 0, g_stream_frame_h = 0;
 
 static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& method, const std::string& transport) {
     HWND h = (HWND)(uintptr_t)hwnd;
@@ -302,8 +305,11 @@ static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& me
             int w, h, ch;
             int size = wgc_stream_read(g_stream_handle, buf.data(), MAX_PX, &w, &h, &ch);
             if (size > 0) {
-                // Frame captured — push to transport (SharedBuffer/MJPEG is handled externally for now)
-                // Future: call shared_buffer_push() or mjpeg_server_push_frame() here
+                // Store frame for stream_poll
+                std::lock_guard<std::mutex> lk(g_stream_frame_mutex);
+                g_stream_frame_pixels.assign(buf.data(), buf.data() + (size_t)size);
+                g_stream_frame_w = w;
+                g_stream_frame_h = h;
             }
             Sleep(1);
         }
@@ -404,6 +410,26 @@ std::string dispatch_command(const std::string& json) {
     }
     else if (cmd == "debug_dump_frames") {
         result = cmd_debug_dump_frames(json_get_int(args, "enable") != 0);
+    }
+    else if (cmd == "screen_info") {
+        int sw = GetSystemMetrics(SM_CXSCREEN);
+        int sh = GetSystemMetrics(SM_CYSCREEN);
+        result = "{\"w\":" + std::to_string(sw) + ",\"h\":" + std::to_string(sh) + "}";
+    }
+    else if (cmd == "window_state") {
+        auto* hw = (HWND)(uintptr_t)json_get_int(args, "hwnd");
+        const char* state = capture_query_window_state(hw);
+        result = std::string("{\"state\":\"") + (state ? state : "unknown") + "\"}";
+    }
+    else if (cmd == "stream_poll") {
+        // Return latest RGBA frame as base64 for Canvas fallback
+        std::lock_guard<std::mutex> lk(g_stream_frame_mutex);
+        if (g_stream_frame_pixels.empty()) { result = "{}"; }
+        else {
+            std::string b64 = base64_encode(g_stream_frame_pixels.data(), g_stream_frame_pixels.size());
+            result = "{\"p\":\"" + b64 + "\",\"w\":" + std::to_string(g_stream_frame_w) +
+                     ",\"h\":" + std::to_string(g_stream_frame_h) + ",\"m\":\"WGC\"}";
+        }
     }
 
     if (id <= 0) return result; // fire-and-forget (no id field)
