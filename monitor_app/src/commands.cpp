@@ -586,12 +586,31 @@ std::string dispatch_command(const std::string& json) {
 }
 
 // ── Init / Shutdown ───────────────────────────────────────
-void backend_init() {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // For WIC
-    capture_log_init("agent", "0.2.0", "log/", 5, 5000);
+// ── MTA daemon thread (WGC needs MTA, main thread is STA for WebView2/WIC) ──
+static std::thread g_mta_thread;
+static std::atomic<bool> g_mta_running{false};
+
+static void mta_daemon() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     wgc_init_apartment();
+    LOG("cmd", "MTA daemon running");
+    while (g_mta_running) Sleep(500);
+    wgc_deinit_apartment();
+    CoUninitialize();
+    LOG("cmd", "MTA daemon stopped");
+}
+
+void backend_init() {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // STA for WebView2/WIC
+    capture_log_init("agent", "0.2.0", "log/", 5, 5000);
     init_wic();
     tcp_server_start();
+
+    // MTA daemon for WGC (separate thread avoids STA vs MTA conflict)
+    g_mta_running = true;
+    g_mta_thread = std::thread(mta_daemon);
+    Sleep(100); // brief wait for MTA init
+
     LOG("cmd", "backend init OK");
 }
 
@@ -603,10 +622,11 @@ void backend_shutdown() {
         if (g_stream_handle) { wgc_stream_stop(g_stream_handle); g_stream_handle = nullptr; }
     }
     LOG("cmd", "backend shutdown");
+    g_mta_running = false;
+    if (g_mta_thread.joinable()) g_mta_thread.join();
     tcp_server_stop();
     destroy_overlay();
     capture_log_flush();
     capture_log_shutdown();
-    wgc_deinit_apartment();
     g_wic = nullptr;
 }

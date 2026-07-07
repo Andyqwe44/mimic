@@ -88,6 +88,11 @@ HRESULT InitWebView2(HWND hwnd);
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
     g_dev_mode = (std::string(lpCmdLine).find("--dev") != std::string::npos);
+    AllocConsole();
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
+    printf("GAM starting (dev=%d)...\n", (int)g_dev_mode);
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     WNDCLASSEXW wc = {};
