@@ -36,7 +36,7 @@ pub fn start_mjpeg_server(port: u16) {
     thread::spawn(move || {
         let listener = loop {
             match TcpListener::bind(&addr) {
-                Ok(l) => { eprintln!("[mjpeg] serving http://{}/stream", addr); break l; }
+                Ok(l) => { dlog!("[mjpeg] serving http://{}/stream", addr); break l; }
                 Err(_) => {
                     std::thread::sleep(std::time::Duration::from_millis(150));
                     // Give up after ~3s

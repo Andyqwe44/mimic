@@ -21,7 +21,7 @@ if %ERRORLEVEL% EQU 0 (echo Build OK: capture\build\capture_stream.exe)
 cl.exe /EHsc /std:c++17 /I include /Fo"build\\" /Fe:build\capture_h264.exe src\capture_h264.cpp src\capture_dxgi.cpp src\mf_encoder.cpp d3d11.lib dxgi.lib dwmapi.lib mfplat.lib mf.lib mfuuid.lib user32.lib gdi32.lib windowsapp.lib ws2_32.lib
 if %ERRORLEVEL% EQU 0 (echo Build OK: capture\build\capture_h264.exe)
 
-cl.exe /EHsc /std:c++17 /I include /Fo"build\\" /Fe:build\capture_wgc.exe src\capture_wgc.cpp src\capture_wgc_main.cpp d3d11.lib dxgi.lib user32.lib gdi32.lib windowsapp.lib
+cl.exe /EHsc /std:c++17 /I include /Fo"build\\" /Fe:build\capture_wgc.exe ..\logger\logger.cpp src\capture_wgc.cpp src\capture_wgc_main.cpp d3d11.lib dxgi.lib user32.lib gdi32.lib windowsapp.lib
 if %ERRORLEVEL% EQU 0 (echo Build OK: capture\build\capture_wgc.exe)
 
 REM === Benchmark tools (examples/) ===

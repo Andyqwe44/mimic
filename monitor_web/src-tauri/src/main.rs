@@ -4,7 +4,20 @@
 const DEFAULT_WINDOW_W: u32 = 1280;
 const DEFAULT_WINDOW_H: u32 = 720;
 
-// ── Capture C++ FFI (static linked, all methods in one .lib) ──
+// ── C++ static libs (our code) ──
+#[link(name = "logger", kind = "static")]
+#[link(name = "common", kind = "static")]
+#[link(name = "wgc", kind = "static")]
+#[link(name = "gdi", kind = "static")]
+#[link(name = "pw", kind = "static")]
+#[link(name = "screen", kind = "static")]
+#[link(name = "desktop", kind = "static")]
+// ── System import libs ──
+#[link(name = "d3d11")]
+#[link(name = "dxgi")]
+#[link(name = "windowsapp")]
+#[link(name = "user32")]
+#[link(name = "gdi32")]
 extern "C" {
     // GDI capture methods
     fn capture_gdi_getwindowdc(hwnd: isize, buf: *mut u8, buf_size: i32,
@@ -15,8 +28,6 @@ extern "C" {
                              w: *mut i32, h: *mut i32) -> i32;
     fn capture_desktop_bitblt(buf: *mut u8, buf_size: i32,
                               w: *mut i32, h: *mut i32) -> i32;
-    fn capture_auto_detect(hwnd: isize, buf: *mut u8, buf_size: i32,
-                           w: *mut i32, h: *mut i32, method_out: *mut *const std::ffi::c_char) -> i32;
     fn capture_query_window_state(hwnd: isize) -> *const std::ffi::c_char;
     fn capture_is_solid_color(pixels: *const u8, len: i32) -> i32;
     fn capture_has_magenta(pixels: *const u8, len: i32) -> i32;
@@ -35,10 +46,9 @@ extern "C" {
     #[allow(dead_code)]
     fn wgc_capture_single_monitor(hmon: isize, buf: *mut u8, buf_size: i32,
                                   out_w: *mut i32, out_h: *mut i32, out_ch: *mut i32) -> i32;
+
 }
 
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::sync::{Mutex, Arc, Barrier};
 use std::thread;
 use serde::Serialize;
@@ -52,37 +62,31 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::Win32::Foundation::{RECT, HWND, BOOL, TRUE, LPARAM};
 
+// ── Shared logger (project-root logger/logger.rs) ──
+// Provides capture_log_* FFI + write/read/init/shutdown helpers.
+#[path = "../../../logger/logger.rs"]
+mod logger;
+
+/// dlog!("format", args...) — unified logging macro.
+/// Formats with Rust format!() → calls logger::write() → C++ capture_log_write_msg().
+macro_rules! dlog {
+    ($($arg:tt)*) => {{
+        $crate::logger::write("rs", &format!($($arg)*));
+    }}
+}
+
 mod protocol;
 mod payload;
 mod mjpeg_server;
 mod h264_encoder;
+mod shared_texture;
 mod transport;
 
-// ── Session-based debug logging ──
-// Each launch creates a new log file: agent_20260704_174500.log, max 5 kept
-// In-memory buffer mirrors the file so read_logs() returns unified content.
-static LOG_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
-static LOG_MEMORY: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new()); // [(ts, msg)]
-
-macro_rules! dlog {
-    ($($arg:tt)*) => {{
-        let ts = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
-        let msg = format!($($arg)*);
-        if let Ok(mut guard) = $crate::LOG_FILE.lock() {
-            if let Some(ref mut f) = *guard {
-                let _ = writeln!(f, "[{}] {}", ts, msg);
-                let _ = f.flush();
-            }
-        }
-        if let Ok(mut guard) = $crate::LOG_MEMORY.lock() {
-            guard.push((ts, msg));
-            if guard.len() > 5000 { guard.remove(0); }
-        }
-    }}
-}
+// ═══════════════════════════════════════════════════════════
+// Logging helpers
+// ═══════════════════════════════════════════════════════════
 
 fn find_project_log_dir() -> std::path::PathBuf {
-    // Walk up from exe dir looking for existing log/ directory (at project root)
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent().unwrap_or(&exe).to_path_buf();
         for _ in 0..8 {
@@ -91,7 +95,6 @@ fn find_project_log_dir() -> std::path::PathBuf {
             if !dir.pop() { break; }
         }
     }
-    // Fallback: create log/ in CWD
     let d = std::path::PathBuf::from("log");
     let _ = std::fs::create_dir_all(&d);
     d
@@ -99,35 +102,8 @@ fn find_project_log_dir() -> std::path::PathBuf {
 
 fn init_log(max_logs: usize) {
     let log_dir = find_project_log_dir();
-
-    // Create per-session log filename with timestamp
-    let ts = chrono::Local::now().format("%Y%m%d_%H%M%S");
-    let log_path = log_dir.join(format!("agent_{}.log", ts));
-
-    // Clean old logs: keep only the newest max_logs-1 (plus current = max_logs total)
-    if let Ok(entries) = std::fs::read_dir(&log_dir) {
-        let mut log_files: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("agent_") && e.file_name().to_string_lossy().ends_with(".log"))
-            .collect();
-        log_files.sort_by_key(|e| e.metadata().map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH)).unwrap_or(std::time::SystemTime::UNIX_EPOCH));
-        while log_files.len() >= max_logs {
-            if let Some(old) = log_files.first() {
-                let _ = std::fs::remove_file(old.path());
-                log_files.remove(0);
-            }
-        }
-    }
-
-    match OpenOptions::new().create(true).append(true).open(&log_path) {
-        Ok(f) => {
-            let _ = writeln!(&f, "=== Game Agent Monitor v{} ===", env!("CARGO_PKG_VERSION"));
-            let _ = writeln!(&f, "Session: {} | PID: {}", ts, std::process::id());
-            let _ = writeln!(&f, "Log: {}", log_path.display());
-            *LOG_FILE.lock().unwrap() = Some(f);
-        }
-        Err(_) => {}
-    }
+    let dir_str = log_dir.to_string_lossy().to_string();
+    logger::init("agent", env!("CARGO_PKG_VERSION"), &dir_str, max_logs, 5000);
 }
 
 #[derive(Clone, Serialize)]
@@ -263,17 +239,14 @@ unsafe fn call_capture_method(hwnd: u64, method: &str) -> Option<(Vec<u8>, i32, 
     Some((buf, w, h, label))
 }
 
-/// Auto-detect with 3-method fallback (GetWindowDC → PrintWindow → ScreenBitBlt).
-unsafe fn capture_auto_detect_ffi(hwnd: u64) -> Option<(Vec<u8>, i32, i32, String)> {
-    let mut buf = vec![0u8; MAX_PX];
-    let (mut w, mut h) = (0i32, 0i32);
-    let mut method_ptr: *const std::ffi::c_char = std::ptr::null();
-    let size = capture_auto_detect(hwnd as isize, buf.as_mut_ptr(), MAX_PX as i32, &mut w, &mut h, &mut method_ptr);
-    if size <= 0 || w <= 0 || h <= 0 { return None; }
-    buf.truncate(size as usize);
-    let method = if method_ptr.is_null() { "ALL_FAILED".to_string() }
-        else { std::ffi::CStr::from_ptr(method_ptr).to_string_lossy().to_string() };
-    Some((buf, w, h, method))
+/// Fallback chain (DesktopBlt → GetWindowDC → PrintWindow → ScreenBitBlt).
+unsafe fn capture_fallback(hwnd: u64) -> Option<(Vec<u8>, i32, i32, String)> {
+    for &method in &["DesktopBlt", "GDI(GetWindowDC)", "PrintWindow", "ScreenBitBlt"] {
+        if let Some((pixels, w, h, name)) = call_capture_method(hwnd, method) {
+            return Some((pixels, w, h, name.to_string()));
+        }
+    }
+    None
 }
 
 fn capture_to_json(pixels: &[u8], w: i32, h: i32, x: i32, y: i32, screen_w: i32, screen_h: i32, method: &str, total_ms: u128) -> String {
@@ -313,7 +286,7 @@ fn capture_single() -> String {
     unsafe {
         let screen_w = GetSystemMetrics(SM_CXSCREEN);
         let screen_h = GetSystemMetrics(SM_CYSCREEN);
-        if let Some((pixels, w, h, method)) = capture_auto_detect_ffi(0) {
+        if let Some((pixels, w, h, method)) = capture_fallback(0) {
             let json = capture_to_json(&pixels, w, h, 0, 0, screen_w, screen_h, &method, t0.elapsed().as_millis());
             dlog!("capture_single: {}x{} method={} → {}b, total={:.0}ms", w, h, method, json.len(), t0.elapsed().as_millis());
             json
@@ -332,7 +305,7 @@ fn capture_window(hwnd: u64, method: Option<String>) -> String {
     dlog!("capture_window: hwnd={} method={}...", hwnd, log_method);
     unsafe {
         let result = if method_str == "auto" || method_str.is_empty() {
-            capture_auto_detect_ffi(hwnd)
+            capture_fallback(hwnd)
         } else {
             call_capture_method(hwnd, normalize_method(method_str))
                 .map(|(p, w, h, m)| (p, w, h, m.to_string()))
@@ -679,10 +652,7 @@ fn normalize_method(input: &str) -> &'static str {
         // "dxgi"/"DXGI" is NOT real DXGI — it's GDI BitBlt from screen DC.
         // Name it honestly so logs are not misleading.
         "dxgi" | "DXGI" | "DesktopBlt" | "desktopblt" => "DesktopBlt",
-        // Auto-detect strings from capture_window_internal — pass through as literals
-        "auto" => "auto",
-        "None" => "None",
-        "ALL_FAILED" => "ALL_FAILED",
+        "auto" | "" => "auto",
         other => {
             dlog!("normalize_method: unknown method '{}' → fallback to DesktopBlt", other);
             "DesktopBlt"
@@ -810,22 +780,30 @@ fn run_wgc_stream(
             *state = (rgba, w, h, "WGC".to_string());
         }
 
-        // Throttle: only emit stream-tick at 30Hz to prevent frontend overload.
-        // STREAM_FRAME is always updated so the latest frame is available when polled.
-        let now = Instant::now();
-        if now.duration_since(last_tick).as_millis() as u64 >= TICK_INTERVAL_MS {
-            last_tick = now;
-            // Push to MJPEG server (zero-overhead <img> rendering in frontend)
-        mjpeg_server::push_mjpeg_frame(pixels, w as u32, h as u32);
+        // Push frame to all active transports
+        let wu = w as u32;
+        let hu = h as u32;
+
+        // SharedBuffer (zero-copy WebView2 → Canvas) — primary, lowest overhead
+        if shared_texture::is_pipeline_ready() {
+            shared_texture::push_shared_frame(pixels, wu, hu);
+        }
+
+        // MJPEG fallback (<img> hardware decode)
+        mjpeg_server::push_mjpeg_frame(pixels, wu, hu);
 
         // Push to H.264 encoder if active
         if let Ok(enc_guard) = H264_ENCODER.lock() {
             if let Some(ref enc) = *enc_guard {
-                enc.push(pixels, w as u32, h as u32);
+                enc.push(pixels, wu, hu);
             }
         }
 
-        let _ = app.emit("stream-tick", serde_json::json!({"method": "WGC"}));
+        // Throttle: only emit stream-tick at 30Hz to prevent frontend event overload
+        let now = Instant::now();
+        if now.duration_since(last_tick).as_millis() as u64 >= TICK_INTERVAL_MS {
+            last_tick = now;
+            let _ = app.emit("stream-tick", serde_json::json!({"method": "WGC"}));
         }
         frames += 1;
 
@@ -859,23 +837,32 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
     // Always use WGC — OBS-compatible approach.
     // GDI disabled: too slow (45ms BitBlt + 35ms scale for 1080p), can't capture
     // background/occluded windows, fails on multi-monitor edge cases.
-    let transport_str = transport.as_deref().unwrap_or("mjpeg");
+    let transport_str = transport.as_deref().unwrap_or("shared");
     dlog!("stream_start: hwnd={} port={} method={} transport={} using=WGC", hwnd, port, method_str, transport_str);
+
+    // SharedBuffer pipeline check — if selected but not available, fall back to MJPEG
+    let actual_transport = if transport_str == "shared" && !shared_texture::is_pipeline_ready() {
+        dlog!("stream_start: SharedBuffer not available, falling back to MJPEG");
+        "mjpeg"
+    } else {
+        transport_str
+    };
 
     // Start TCP broadcast server
     let tcp_running = running.clone();
     thread::spawn(move || { tcp_broadcast_thread(port, tcp_running); });
 
     // Start MJPEG server if transport is mjpeg or h264 (MJPEG as fallback preview)
+    // For "shared" transport, MJPEG is always started as a secondary preview (unless pure-shared mode)
     const MJPEG_PORT: u16 = 9998;
-    if transport_str == "mjpeg" || transport_str == "h264" {
+    if actual_transport == "mjpeg" || actual_transport == "h264" || actual_transport == "shared" {
         mjpeg_server::start_mjpeg_server(MJPEG_PORT);
         dlog!("mjpeg: server started on port {}", MJPEG_PORT);
     }
 
     // Start H.264 encoder if transport is h264
     const H264_PORT: u16 = 9997;
-    if transport_str == "h264" {
+    if actual_transport == "h264" {
         let h264_dir = find_project_root().join("test");
         let _ = std::fs::create_dir_all(&h264_dir);
         match h264_encoder::H264EncoderHandle::new(&h264_dir, 1920, 1080, 30) {
@@ -904,6 +891,20 @@ fn capture_stream_start(app: tauri::AppHandle, hwnd: u64, tcp_port: Option<u16>,
 fn debug_dump_frames(enable: bool) {
     DEBUG_DUMP_FRAMES.store(enable, Ordering::Relaxed);
     dlog!("debug_dump_frames: {}", enable);
+}
+
+/// Check which transports are available on this system.
+/// Returns JSON: {"shared": true/false, "mjpeg": true, "h264": true/false}
+#[tauri::command]
+fn transport_ready() -> String {
+    let shared = shared_texture::is_pipeline_ready();
+    // H.264 MFT check would require attempting MFStartup — for now assume true on Windows
+    let h264 = cfg!(windows);
+    serde_json::json!({
+        "shared": shared,
+        "mjpeg": true,
+        "h264": h264,
+    }).to_string()
 }
 
 #[tauri::command]
@@ -980,38 +981,23 @@ struct LogFile { name: String, lines: Vec<String> }
 
 #[tauri::command]
 fn read_logs(max_files: usize) -> Vec<LogFile> {
-    let log_dir = find_project_log_dir();
     let mut result = Vec::new();
 
-    // First entry: current session's in-memory log buffer (live)
-    if let Ok(guard) = LOG_MEMORY.lock() {
-        if !guard.is_empty() {
-            let lines: Vec<String> = guard.iter().map(|(ts, msg)| format!("[{}] {}", ts, msg)).collect();
-            result.push(LogFile { name: "[live]".into(), lines });
-        }
+    // [live] — in-memory ring buffer
+    let mem_str = logger::read_memory();
+    if !mem_str.is_empty() {
+        let lines: Vec<String> = mem_str.lines().map(|l| l.to_string()).collect();
+        result.push(LogFile { name: "[live]".into(), lines });
     }
 
-    if let Ok(entries) = std::fs::read_dir(&log_dir) {
-        let mut log_files: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("agent_") && e.file_name().to_string_lossy().ends_with(".log"))
-            .collect();
-        // Sort by modification time, newest first
-        log_files.sort_by_key(|e| {
-            e.metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-        });
-        log_files.reverse(); // newest first
-        log_files.truncate(max_files);
-
-        for entry in log_files {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-                if !lines.is_empty() {
-                    result.push(LogFile { name, lines });
-                }
+    // Disk log files
+    let log_dir = find_project_log_dir();
+    for f in logger::list_files(max_files) {
+        let name = f["name"].as_str().unwrap_or("?").to_string();
+        if let Ok(content) = std::fs::read_to_string(log_dir.join(&name)) {
+            let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+            if !lines.is_empty() {
+                result.push(LogFile { name, lines });
             }
         }
     }
@@ -1056,8 +1042,7 @@ fn log_ui_event(msg: String) {
 /// Archive current log file and start a new session log.
 #[tauri::command]
 fn clear_log() {
-    *LOG_FILE.lock().unwrap() = None;
-    LOG_MEMORY.lock().unwrap().clear();
+    logger::shutdown();
     init_log(5);
     dlog!("New session started (previous log archived)");
 }
@@ -1077,17 +1062,13 @@ fn main() {
     // Log panics to disk before crash
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // Try to write panic info to log
-        if let Ok(mut guard) = LOG_FILE.lock() {
-            if let Some(ref mut f) = *guard {
-                let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
-                let msg = info.payload().downcast_ref::<&str>().map(|s| *s)
-                    .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
-                    .unwrap_or("(non-string panic)");
-                let _ = writeln!(f, "[PANIC] {} — {}", loc, msg);
-                let _ = f.flush();
-            }
-        }
+        let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let payload_msg = info.payload().downcast_ref::<&str>().map(|s| *s)
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("(non-string panic)");
+        let msg = format!("[PANIC] {} — {}", loc, payload_msg);
+        logger::write("panic", &msg);
+        logger::flush();
         default_hook(info);
     }));
 
@@ -1124,7 +1105,7 @@ fn main() {
             capture_single, capture_window,
             capture_stream_start, capture_stream_stop, stream_poll,
             highlight_window, screen_info, read_logs, log_ui_event, clear_log,
-            window_state, benchmark_methods, debug_dump_frames
+            window_state, benchmark_methods, debug_dump_frames, transport_ready
         ])
         .setup(|_app| {
             dlog!("Tauri setup complete, window created");
@@ -1142,6 +1123,14 @@ fn main() {
                 use tauri::LogicalSize;
                 let _ = win.set_size(LogicalSize::new(logical_w, logical_h));
                 let _ = win.show();
+
+                // Init SharedBuffer pipeline (zero-copy WebView2 → Canvas)
+                // Gracefully fails if WebView2 Runtime < 122.0.2365.0
+                let _ = win.with_webview(|webview| {
+                    let controller = webview.controller();
+                    let environment = webview.environment();
+                    shared_texture::init_pipeline(controller, environment);
+                });
             }
             Ok(())
         })

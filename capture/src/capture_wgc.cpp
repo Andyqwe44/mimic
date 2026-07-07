@@ -11,6 +11,7 @@
  *   - Format change detection
  */
 #include "../include/capture_wgc.hpp"
+#include "../../logger/logger.h"
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -35,7 +36,7 @@ bool WgcCapture::init(HWND hwnd) {
     if (!create_frame_pool()) return false;
 
     ok_ = true;
-    fprintf(stderr, "[wgc] init OK: %dx%d format=%d\n", item_w_, item_h_, (int)format_);
+    LOG("wgc", "init OK: %dx%d format=%d", item_w_, item_h_, (int)format_);
     return true;
 }
 
@@ -52,7 +53,7 @@ bool WgcCapture::init_monitor(HMONITOR hmon) {
     if (!create_frame_pool()) return false;
 
     ok_ = true;
-    fprintf(stderr, "[wgc] init_monitor OK: %dx%d\n", item_w_, item_h_);
+    LOG("wgc", "init_monitor OK: %dx%d", item_w_, item_h_);
     return true;
 }
 
@@ -158,7 +159,7 @@ bool WgcCapture::create_capture_item_monitor(HMONITOR hmon) {
         item_unk.put_void());
     if (FAILED(hr)) {
         last_error_ = "CreateForMonitor failed";
-        fprintf(stderr, "[wgc] CreateForMonitor failed 0x%08lX\n", hr);
+        LOG("wgc", "CreateForMonitor failed 0x%08lX", hr);
         return false;
     }
     item_ = item_unk.as<wgc_rt::GraphicsCaptureItem>();
@@ -197,7 +198,7 @@ bool WgcCapture::create_capture_item(HWND hwnd) {
         item_unk.put_void());
     if (FAILED(hr)) {
         last_error_ = "CreateForWindow failed";
-        fprintf(stderr, "[wgc] CreateForWindow failed 0x%08lX\n", hr);
+        LOG("wgc", "CreateForWindow failed 0x%08lX", hr);
         return false;
     }
     item_ = item_unk.as<wgc_rt::GraphicsCaptureItem>();
@@ -229,12 +230,13 @@ bool WgcCapture::create_frame_pool() {
     }
     auto d3d_dev = insp.as<wgdd::IDirect3DDevice>();
 
-    // Create FramePool with 2 buffered frames (min latency, matching OBS)
+    // Create FramePool with 3 buffered frames (was 2 — OBS uses 2 but
+    // OBS processes frames entirely on GPU; we need CPU readback headroom)
     auto item_size = winrt::Windows::Graphics::SizeInt32{ item_w_, item_h_ };
     pool_ = wgc_rt::Direct3D11CaptureFramePool::Create(
         d3d_dev,
         winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-        2, item_size);
+        3, item_size);
 
     if (!pool_) {
         last_error_ = "CreateFramePool failed";
@@ -326,7 +328,7 @@ void WgcCapture::on_frame_arrived() {
 
 void WgcCapture::on_closed() {
     // Window destroyed or capture item lost
-    fprintf(stderr, "[wgc] item closed\n");
+    LOG("wgc", "item closed");
     ok_ = false;
     {
         std::lock_guard<std::mutex> lk(frame_mtx_);
@@ -370,7 +372,7 @@ bool WgcCapture::capture(WgcFrame& out, WgcTiming* timing) {
 
     // Format change detection
     if (desc.Format != format_) {
-        fprintf(stderr, "[wgc] format changed %d→%d, marking inactive\n",
+        LOG("wgc", "format changed %d→%d, marking inactive",
                 (int)format_, (int)desc.Format);
         ok_ = false;
         frame_cv_.notify_all();

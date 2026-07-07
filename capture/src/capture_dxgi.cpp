@@ -5,6 +5,7 @@
  * GdiCapture: CPU fallback.
  */
 #include "capture.hpp"
+#include "../../logger/logger.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
   #define WIN32_LEAN_AND_MEAN
@@ -77,7 +78,7 @@ public:
             &d3d_device_, nullptr, &d3d_context_);
 
         if (FAILED(hr)) {
-            fprintf(stderr, "DXGI: D3D11CreateDevice failed (0x%08lX)\n", hr);
+            LOG("dxgi", "D3D11CreateDevice failed (0x%08lX)", hr);
             return false;
         }
         return init_duplication();
@@ -215,7 +216,7 @@ private:
                     if (wcsstr(adesc.Description, L"Virtual") ||
                         wcsstr(adesc.Description, L"Remote") ||
                         wcsstr(adesc.Description, L"Indirect")) {
-                        fprintf(stderr, "DXGI: skip adapter %u: %S\n", adapter_idx, adesc.Description);
+                        LOG("dxgi", "skip adapter %u: %S", adapter_idx, adesc.Description);
                         goto next_adapter;
                     }
                 }
@@ -280,7 +281,7 @@ next_adapter:
         if (factory) factory->Release();
 
         if (!found) {
-            fprintf(stderr, "DXGI: DuplicateOutput failed on all outputs\n");
+            LOG("dxgi", "DuplicateOutput failed on all outputs");
             return false;
         }
 
@@ -318,7 +319,7 @@ next_adapter:
             if (SUCCEEDED(hr)) {
                 found = true;
                 current_output_idx_ = oi;
-                fprintf(stderr, "DXGI: switched to output %u\n", oi);
+                LOG("dxgi", "switched to output %u", oi);
                 break;
             }
         }
@@ -418,7 +419,7 @@ std::unique_ptr<ICaptureBackend> create_capture_backend(const DxgiOptions& opts)
     auto dxgi = std::make_unique<DxgiCapture>(opts);
     if (dxgi->init()) return dxgi;
 
-    fprintf(stderr, "DXGI unavailable, falling back to GDI\n");
+    LOG("dxgi", "unavailable, falling back to GDI");
     auto gdi = std::make_unique<GdiCapture>();
     gdi->init();
     return gdi;

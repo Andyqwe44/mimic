@@ -10,6 +10,7 @@
  */
 #include "../include/capture_wgc.hpp"
 #include "../include/capture_wgc_ffi.h"
+#include "../../logger/logger.h"
 #include <thread>
 #include <atomic>
 #include <mutex>
@@ -92,7 +93,7 @@ struct WgcStreamHandle {
                 }
                 dbg++;
                 if (dbg % 30 == 0) {
-                    fprintf(stderr, "[wgc-worker] %d frames, ok=%d\n", dbg, cap.is_ok() ? 1 : 0);
+                    LOG("wgc-worker", "%d frames, ok=%d", dbg, cap.is_ok() ? 1 : 0);
                 }
 
                 // Scale if max_dim is set and frame is larger

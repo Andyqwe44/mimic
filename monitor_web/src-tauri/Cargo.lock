@@ -273,8 +273,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
 dependencies = [
  "find-msvc-tools",
- "jobserver",
- "libc",
  "shlex",
 ]
 
@@ -905,7 +903,6 @@ dependencies = [
 name = "game-agent-monitor"
 version = "0.2.0"
 dependencies = [
- "cc",
  "chrono",
  "jpeg-encoder",
  "miniz_oxide",
@@ -915,7 +912,10 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
+ "webview2-com",
+ "webview2-com-sys",
  "windows 0.58.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -1602,16 +1602,6 @@ checksum = "38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264"
 dependencies = [
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "jobserver"
-version = "0.1.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
-dependencies = [
- "getrandom 0.4.3",
- "libc",
 ]
 
 [[package]]

@@ -107,7 +107,7 @@ fn encoder_thread(
         MFCreateSinkWriterFromURL(pwsz, None, None)
     } {
         Ok(x) => x,
-        Err(e) => { eprintln!("[h264] SinkWriter: {e:?}"); unsafe { let _ = MFShutdown(); } return; }
+        Err(e) => { dlog!("[h264] SinkWriter: {:?}", e); unsafe { let _ = MFShutdown(); } return; }
     };
 
     // Configure NV12 input
@@ -126,7 +126,7 @@ fn encoder_thread(
 
     let si = match unsafe { sw.AddStream(&mt) } {
         Ok(x) => x,
-        Err(e) => { eprintln!("[h264] AddStream: {e:?}"); unsafe { let _ = MFShutdown(); } return; }
+        Err(e) => { dlog!("[h264] AddStream: {:?}", e); unsafe { let _ = MFShutdown(); } return; }
     };
     unsafe { sw.SetInputMediaType(si, &mt, None).ok(); }
     unsafe { sw.BeginWriting().ok(); }
@@ -172,7 +172,7 @@ fn encoder_thread(
         frame_num += 1;
     }
 
-    eprintln!("[h264] finalizing {} frames", frame_num);
+    dlog!("[h264] finalizing {} frames", frame_num);
     unsafe { let _ = sw.Finalize(); }
     unsafe { let _ = MFShutdown(); }
 }
@@ -184,9 +184,9 @@ pub fn start_video_server(port: u16, file_path: PathBuf, running: Arc<AtomicBool
         let addr = format!("127.0.0.1:{}", port);
         let listener = match TcpListener::bind(&addr) {
             Ok(l) => l,
-            Err(e) => { eprintln!("[h264] bind {}: {}", addr, e); return; }
+            Err(e) => { dlog!("[h264] bind {}: {}", addr, e); return; }
         };
-        eprintln!("[h264] serving http://{}/video.mp4", addr);
+        dlog!("[h264] serving http://{}/video.mp4", addr);
         for stream in listener.incoming() {
             if !running.load(Ordering::Relaxed) { break; }
             let mut tcp = match stream { Ok(s) => s, Err(_) => continue };

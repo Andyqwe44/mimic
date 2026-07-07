@@ -453,7 +453,7 @@ function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, 
 function ScreenshotPanel({ selWin, screenRatio, forceMethod, transportMethod, winState, expanded, onToggle }: { selWin?: WindowInfo; screenRatio: number; forceMethod: string; transportMethod: string; winState: string; expanded: boolean; onToggle: () => void }) {
   const MJPEG_URL = 'http://127.0.0.1:9998/stream'
   const [previewing, setPreviewing] = useState(false)
-  const [imgSrc, setImgSrc] = useState('')       // single-frame PNG (Camera btn)
+  const [imgSrc, setImgSrc] = useState('')       // single-frame PNG / MJPEG fallback
   const [imgStyle, setImgStyle] = useState<React.CSSProperties>({})
   const [fps, setFps] = useState(0)
   const [capMethod, setCapMethod] = useState('')
@@ -462,7 +462,46 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, transportMethod, wi
   const lastFpsRef = useRef(Date.now())
   const unlistenRef = useRef<(() => void) | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [canvasDims, setCanvasDims] = useState({ w: 0, h: 0 })
+  const [canvasDims, setCanvasDims] = useState({ w: 0, h: 0 }) // triggers re-render for canvas sizing
+  const sharedBufActiveRef = useRef(false)        // true if receiving shared buffers
+
+  // ── SharedBuffer → Canvas rendering (zero-copy) ──
+  const setupSharedBufferListener = () => {
+    // WebView2 sharedbufferreceived — raw BGRA pixels straight to Canvas ImageData
+    const wv = (window as any).chrome?.webview
+    if (!wv) {
+      // Fallback: WebView2 SharedBuffer API not available, use MJPEG
+      sharedBufActiveRef.current = false
+      setImgSrc(`${MJPEG_URL}?t=${Date.now()}`)
+      addLog('[Preview] SharedBuffer not available, falling back to MJPEG')
+      return
+    }
+    const handler = (e: any) => {
+      if (!previewingRef.current || !sharedBufActiveRef.current) return
+      try {
+        const buf: ArrayBuffer = e.getBuffer()
+        const metaStr: string = e.getAdditionalData()
+        const meta = JSON.parse(metaStr) as { w: number; h: number; ts: number }
+        // Zero-copy: ArrayBuffer → Uint8ClampedArray → ImageData → Canvas
+        const imgData = new ImageData(
+          new Uint8ClampedArray(buf, 0, meta.w * meta.h * 4),
+          meta.w, meta.h
+        )
+        if (canvasRef.current) {
+          canvasRef.current.width = meta.w
+          canvasRef.current.height = meta.h
+          setCanvasDims({ w: meta.w, h: meta.h })
+          const ctx = canvasRef.current.getContext('2d')
+          if (ctx) ctx.putImageData(imgData, 0, 0)
+        }
+        framesRef.current++
+        const now = Date.now(); const elapsed = now - lastFpsRef.current
+        if (elapsed >= 1000) { setFps(Math.round(framesRef.current * 1000 / elapsed)); framesRef.current = 0; lastFpsRef.current = now }
+      } catch (_) { /* skip corrupt frame */ }
+    }
+    wv.addEventListener('sharedbufferreceived', handler)
+    addLog('[Preview] SharedBuffer pipeline active — zero-copy Canvas')
+  }
 
   // Compute proportional position within screen-aspect container
   const applyCaptureJson = (jsonStr: string) => {
@@ -490,6 +529,7 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, transportMethod, wi
   const togglePreview = async () => {
     if (previewing) {
       previewingRef.current = false; setPreviewing(false); setFps(0); setCapMethod('')
+      sharedBufActiveRef.current = false
       if (unlistenRef.current) { unlistenRef.current(); unlistenRef.current = null }
       try { await invoke<string>('capture_stream_stop') } catch (_) {}
       setImgSrc('')
@@ -506,12 +546,20 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, transportMethod, wi
       // Auto-expand panel
       if (!expanded) onToggle()
       previewingRef.current = true; setPreviewing(true);
-      // Use MJPEG stream — browser <img> natively handles multipart/x-mixed-replace.
-      // Cache-bust to force fresh connection each start.
-      setImgSrc(`${MJPEG_URL}?t=${Date.now()}`)
       setFps(0)
 
-      // Listen for stream-tick for FPS counting only (rendering is via <img>)
+      // SharedBuffer (zero-copy): Canvas rendering, no MJPEG HTTP needed
+      if (transportMethod === 'shared') {
+        sharedBufActiveRef.current = true
+        setImgSrc('') // hide <img>, show <canvas>
+        setupSharedBufferListener()
+      } else {
+        // MJPEG stream — browser <img> natively handles multipart/x-mixed-replace
+        setImgSrc(`${MJPEG_URL}?t=${Date.now()}`)
+        sharedBufActiveRef.current = false
+      }
+
+      // Listen for stream-tick for FPS counting only
       const unlisten = await listen<{ method: string }>('stream-tick', (event) => {
         if (!previewingRef.current) return
         if (event.payload.method) setCapMethod(event.payload.method)
@@ -581,9 +629,17 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, transportMethod, wi
             <div className="w-full rounded-lg bg-bg-primary overflow-hidden flex items-center justify-center relative"
               style={{ aspectRatio: screenRatio }}>
               {previewing ? (
-                <img src={imgSrc || `${MJPEG_URL}?t=${Date.now()}`}
-                  className="max-w-full max-h-full object-contain"
-                  alt="MJPEG stream" />
+                sharedBufActiveRef.current ? (
+                  // SharedBuffer mode: raw BGRA → Canvas (zero-copy)
+                  <canvas ref={canvasRef}
+                    className="max-w-full max-h-full object-contain"
+                    style={{ aspectRatio: canvasDims.w && canvasDims.h ? `${canvasDims.w}/${canvasDims.h}` : '16/9' }} />
+                ) : (
+                  // MJPEG fallback: <img> GPU hardware decode
+                  <img src={imgSrc || `${MJPEG_URL}?t=${Date.now()}`}
+                    className="max-w-full max-h-full object-contain"
+                    alt="MJPEG stream" />
+                )
               ) : imgSrc ? (
                 <img src={imgSrc} style={imgStyle} alt="preview" />
               ) : (
@@ -827,9 +883,10 @@ function SettingsPage({ forceMethod, setForceMethod, transportMethod, setTranspo
         <div className="text-xs text-text-muted mb-2">How frames are sent to the frontend for preview.</div>
         <div className="flex gap-2">
           {[
-            ['mjpeg','MJPEG','JPEG stream via HTTP, browser GPU decode — fast'],
+            ['shared','Canvas (SharedBuffer)','Zero-copy BGRA → Canvas — no encode, no HTTP, lowest latency'],
+            ['mjpeg','MJPEG','JPEG stream via HTTP, browser GPU decode — stable fallback'],
             ['base64','Base64','Raw RGBA via JSON/base64 — legacy, slow'],
-            ['h264','H.264','GPU MFT encode — coming soon'],
+            ['h264','H.264','GPU MFT encode — experimental'],
           ].map(([v, label, desc]) =>
             <button key={v} onClick={() => { setTransportMethod(v); addLog(`[Transport] ${v}`) }}
               className={`flex-1 p-3 rounded-lg border text-left transition-colors ${transportMethod === v ? 'border-accent bg-accent/10' : 'border-border bg-bg-primary hover:bg-bg-hover'}`}>
@@ -1104,7 +1161,7 @@ export default function App() {
   const [selWindow, setSelWindow] = useState<WindowInfo>({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
   const [screenRatio, setScreenRatio] = useState(16/9)
   const [forceMethod, setForceMethod] = useState('dxgi')
-  const [transportMethod, setTransportMethod] = useState('mjpeg')
+  const [transportMethod, setTransportMethod] = useState('shared')
   const [winState, setWinState] = useState('desktop')
   const lastWinStateRef = useRef('desktop')
 
