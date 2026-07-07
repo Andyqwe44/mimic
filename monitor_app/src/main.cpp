@@ -71,6 +71,7 @@ static HWND                  g_hwnd = nullptr;
 static ComPtr<ICoreWebView2Controller> g_webviewController;
 static ComPtr<ICoreWebView2> g_webview;
 static ComPtr<ICoreWebView2Environment12> g_env12;
+static ComPtr<ICoreWebView2_3>      g_webview3;
 static ComPtr<ICoreWebView2_17> g_webview17;
 static bool                  g_dev_mode = false;
 
@@ -78,7 +79,6 @@ static constexpr int  DEFAULT_W  = 1280;
 static constexpr int  DEFAULT_H  = 720;
 static constexpr PCWSTR TITLE   = L"Game Agent Monitor";
 static constexpr int  DEV_PORT  = 1420;
-static constexpr int  PROD_PORT = 8888;
 
 // ── Remaining fwd declarations (referenced before definition) ──
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -168,18 +168,26 @@ HRESULT InitWebView2(HWND hwnd)
                     g_webviewController->get_CoreWebView2(&g_webview);
 
                     // Capture ICoreWebView2_17 for PostSharedBufferToScript
+                    g_webview->QueryInterface(IID_PPV_ARGS(&g_webview3));
                     g_webview->QueryInterface(IID_PPV_ARGS(&g_webview17));
 
                     // Register WebMessage handler (replaces Tauri invoke)
                     g_webview->add_WebMessageReceived(new WebMessageHandler(), nullptr);
 
-                    wchar_t url[128];
                     if (g_dev_mode) {
-                        swprintf_s(url, L"http://localhost:%d", DEV_PORT);
+                        g_webview->Navigate(L"http://localhost:1420");
                     } else {
-                        swprintf_s(url, L"http://127.0.0.1:%d", PROD_PORT);
+                        // Prod: map virtual host to dist/ folder → no HTTP server needed
+                        wchar_t exe_dir[MAX_PATH];
+                        GetModuleFileNameW(nullptr, exe_dir, MAX_PATH);
+                        wchar_t* last_slash = wcsrchr(exe_dir, L'\\');
+                        if (last_slash) *last_slash = L'\0';
+                        wcscat_s(exe_dir, L"\\..\\..\\monitor_web\\dist");
+                        g_webview3->SetVirtualHostNameToFolderMapping(
+                            L"gam.local", exe_dir,
+                            COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+                        g_webview->Navigate(L"https://gam.local/index.html");
                     }
-                    g_webview->Navigate(url);
 
                     RECT rc;
                     GetClientRect(hwnd, &rc);
