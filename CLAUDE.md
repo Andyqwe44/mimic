@@ -46,6 +46,32 @@ LOG("tag", "format_string", args...);
 
 这三个动作是一体的，缺一不可。
 
+### 铁律 4: Tooltip 只用自定义组件
+
+**项目已有自定义 Tooltip 组件（`App.tsx` 顶部）。严禁使用原生 HTML `title` 属性。**
+
+原生 `title` 问题：外观不可控、延迟不一致、在鼠标右下角弹出（常被遮挡）。
+
+自定义 Tooltip 特性：
+- 300ms 统一延迟
+- Portal 到 `document.body`（不受父容器 overflow/clip 影响）
+- 智能定位：上方优先，空间不足自动翻到下方，水平 clamp 防溢出
+- 统一外观：深色背景、白字、圆角阴影
+
+**唯一合法方式**：
+```tsx
+<Tooltip text="提示文字">
+  <button ...>...</button>   {/* 单个 ReactElement，不支持多个 children */}
+</Tooltip>
+```
+
+以下写法**禁止**出现在任何 TSX 文件中：
+```tsx
+<span title="xxx">        // ← 原生 title，禁止
+<button title="xxx">      // ← 原生 title，禁止
+<div title="xxx">         // ← 原生 title，禁止
+```
+
 ## Project Vision
 
 Build self-organizing hierarchical visual game AI. Model interface: **pixels in, actions out**.
@@ -333,9 +359,7 @@ Stop button → hostCall('capture_stream_stop')
 
 1. **WGC FPS**: Event-driven — static content = low FPS. Dynamic window = 60+.
 2. **H.264 MFT**: Encoder creates MP4 for progressive download, `<video>` needs full file.
-3. **Yellow border**: GDI FillRect flickers on window invalidation.
-4. **Overlay orphan**: Yellow overlay STATIC windows may persist if app crashes.
-5. **Chromium background tab throttling**: WebView2 may throttle when app loses focus.
+3. **Chromium background tab throttling**: WebView2 may throttle when app loses focus.
 
 ## Recent Fixes (2026-07-08)
 
@@ -365,8 +389,6 @@ Header split: `[Connection]` left, `[状态 actual] [推荐 WGC/DXGI] [▼]` rig
 `expectedCaptureState` tracked from mode picker; amber warning when actual state differs.
 Method short names: `wgc→WGC`, `dxgi→DXGI`, `DesktopBlt→DXGI`.
 
-### Overlay window fix
-Yellow border overlay windows now use `WS_EX_TOOLWINDOW` — no longer appear in taskbar.
 
 ### Vite HMR fix
 Explicit `hmr: { protocol: 'ws', host: 'localhost' }` in vite.config.ts for WebView2 compatibility.

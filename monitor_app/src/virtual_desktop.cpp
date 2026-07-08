@@ -44,6 +44,7 @@ static bool      g_vd_ok = false;
 static int       g_vd_version = 0;   // 0=unknown, 10=Win10, 11=Win11, 12=Win11_23H2
 static void*     g_vd_mgr = nullptr; // opaque pointer to the manager interface
 static GUID      g_vd_desktop_guid = {}; // IID to use for GetAt (IVirtualDesktop)
+static HWND      g_main_hwnd = nullptr;  // GAM main window for desktop detection
 
 // ── IServiceProvider from Immersive Shell ────────────────────
 static IServiceProvider* vd_get_service_provider() {
@@ -292,6 +293,11 @@ std::string vd_switch_desktop(int index) {
     }
 }
 
+// ── Public API: set main window HWND ──────────────────────────
+void vd_set_main_hwnd(HWND hwnd) {
+    g_main_hwnd = hwnd;
+}
+
 // ── Public API: get current desktop GUID ─────────────────────
 GUID vd_get_current_desktop_guid() {
     GUID guid = GUID_NULL;
@@ -299,12 +305,18 @@ GUID vd_get_current_desktop_guid() {
     HRESULT hr = CoCreateInstance(CLSID_VirtualDesktopManager, nullptr,
         CLSCTX_INPROC_SERVER, IID_IVirtualDesktopManager, (void**)&vdm);
     if (SUCCEEDED(hr) && vdm) {
-        // Use a temporary popup window to query current desktop GUID
-        HWND tmp = CreateWindowExW(0, L"Static", L"", WS_POPUP,
-            0, 0, 1, 1, nullptr, nullptr, nullptr, nullptr);
-        if (tmp) {
-            vdm->GetWindowDesktopId(tmp, &guid);
-            DestroyWindow(tmp);
+        // Prefer GAM's real main window — a temp popup always lands on the
+        // process's home desktop, not where the window was moved via Task View.
+        HWND hwnd = (g_main_hwnd && IsWindow(g_main_hwnd)) ? g_main_hwnd : nullptr;
+        if (hwnd) {
+            vdm->GetWindowDesktopId(hwnd, &guid);
+        } else {
+            HWND tmp = CreateWindowExW(0, L"Static", L"", WS_POPUP,
+                0, 0, 1, 1, nullptr, nullptr, nullptr, nullptr);
+            if (tmp) {
+                vdm->GetWindowDesktopId(tmp, &guid);
+                DestroyWindow(tmp);
+            }
         }
         vdm->Release();
     }

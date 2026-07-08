@@ -216,11 +216,6 @@ static BOOL CALLBACK enum_callback(HWND hwnd, LPARAM lparam) {
         desktop_num = found_at + 1;
     }
 
-    // Label: only show badge for non-current desktop windows in title
-    if (!on_current && desktop_num > 0) {
-        title += " (D" + std::to_string(desktop_num) + ")";
-    }
-
     list->push_back({title, "window", (uint64_t)(uintptr_t)hwnd, desktop_num});
     return TRUE;
 }
@@ -642,60 +637,6 @@ static std::string cmd_debug_dump_frames(bool enable) {
     return R"({"ok":true})";
 }
 
-// ── highlight_window (yellow overlay) ─────────────────────
-static HWND g_overlay_bars[4] = {};
-static std::mutex g_overlay_mutex;
-static constexpr int BORDER_W = 3;
-
-static void destroy_overlay() {
-    std::lock_guard<std::mutex> lk(g_overlay_mutex);
-    for (auto& hw : g_overlay_bars) {
-        if (hw) { DestroyWindow(hw); hw = nullptr; }
-    }
-}
-
-static std::string cmd_highlight_window(uint64_t hwnd_u64) {
-    destroy_overlay();
-    std::lock_guard<std::mutex> lk(g_overlay_mutex);
-    HWND target = (HWND)(uintptr_t)hwnd_u64;
-    if (!target || !IsWindow(target)) return R"({"ok":false})";
-
-    RECT r;
-    if (!GetWindowRect(target, &r)) return R"({"ok":false})";
-    int bw = BORDER_W;
-    int iw = r.right - r.left;
-    int ih = r.bottom - r.top;
-
-    HINSTANCE hi = GetModuleHandle(nullptr);
-    struct { int x, y, w, h; } pos[4] = {
-        {r.left - bw, r.top - bw, iw + bw*2, bw},         // top
-        {r.left - bw, r.bottom,      iw + bw*2, bw},       // bottom
-        {r.left - bw, r.top,          bw,        ih},       // left
-        {r.right,     r.top,          bw,        ih}        // right
-    };
-
-    for (int i = 0; i < 4; i++) {
-        g_overlay_bars[i] = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
-            L"STATIC", nullptr,
-            WS_POPUP | WS_VISIBLE,
-            pos[i].x, pos[i].y, pos[i].w, pos[i].h,
-            nullptr, nullptr, hi, nullptr);
-        if (g_overlay_bars[i]) {
-            SetLayeredWindowAttributes(g_overlay_bars[i], RGB(255,255,0), 180, LWA_ALPHA);
-            HDC dc = GetDC(g_overlay_bars[i]);
-            if (dc) {
-                HBRUSH br = CreateSolidBrush(RGB(255,255,0));
-                RECT fr = {0, 0, pos[i].w, pos[i].h};
-                FillRect(dc, &fr, br);
-                DeleteObject(br);
-                ReleaseDC(g_overlay_bars[i], dc);
-            }
-            ShowWindow(g_overlay_bars[i], SW_SHOWNOACTIVATE);
-        }
-    }
-    return R"({"ok":true})";
-}
 
 // ── Main dispatch ─────────────────────────────────────────
 std::string dispatch_command(const std::string& json) {
@@ -728,9 +669,7 @@ std::string dispatch_command(const std::string& json) {
     else if (cmd == "debug_dump_frames") {
         result = cmd_debug_dump_frames(json_get_int(args, "enable") != 0);
     }
-    else if (cmd == "highlight_window") {
-        result = cmd_highlight_window(json_get_uint64(args, "hwnd"));
-    }
+
     else if (cmd == "get_version") {
         result = "\"" APP_VERSION "\"";
     }
@@ -869,7 +808,6 @@ void backend_shutdown() {
     g_mta_running = false;
     if (g_mta_thread.joinable()) g_mta_thread.join();
     tcp_server_stop();
-    destroy_overlay();
     capture_log_flush();
     capture_log_shutdown();
     g_wic = nullptr;

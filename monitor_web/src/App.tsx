@@ -371,7 +371,7 @@ function TargetPickerModal({ open, onClose, onSelectWindow, onSelectMode }: {
                     </div>
                     {(w.desktop != null || w.category !== 'desktop') && (
                       <span className="absolute bottom-1 right-1 flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-px rounded-full bg-accent-light text-accent whitespace-nowrap">
-                        {isRemote && <span title="需切换桌面">⚡</span>}
+                        {isRemote && <Tooltip text="需切换桌面"><span>⚡</span></Tooltip>}
                         D{winDesktop || '?'}
                       </span>
                     )}
@@ -1535,22 +1535,6 @@ export default function App() {
       } catch (_) {}
     })()
   }, [])
-
-  // Yellow border overlay on selected window
-  useEffect(() => {
-    (async () => {
-      try {
-        await hostCall('highlight_window', { hwnd: selWindow.hwnd })
-      } catch (_) {}
-    })()
-    return () => {
-      (async () => {
-        try {
-          await hostCall('highlight_window', { hwnd: 0 })
-        } catch (_) {}
-      })()
-    }
-  }, [selWindow.hwnd])
 
   // Real-time window state polling for Connection + Screenshot panels
   useEffect(() => {

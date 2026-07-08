@@ -18,6 +18,7 @@
 #include "../../logger/logger.h"
 #include "commands.h"
 #include "mjpeg_server.h"
+#include "virtual_desktop.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -115,6 +116,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCm
         nullptr, nullptr, hInstance, nullptr);
 
     if (!g_hwnd) return 1;
+
+    vd_set_main_hwnd(g_hwnd);  // tell virtual_desktop which HWND to use for desktop detection
 
     ShowWindow(g_hwnd, nCmdShow);
     UpdateWindow(g_hwnd);

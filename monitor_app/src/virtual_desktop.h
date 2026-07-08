@@ -152,6 +152,12 @@ std::string vd_list_desktops();
 /// Returns JSON: {"ok":true} or {"ok":false,"error":"..."}
 std::string vd_switch_desktop(int index);
 
+/// Set the main window HWND for desktop detection.
+/// When set, vd_get_current_desktop_guid() uses this window instead of a temp popup.
+/// This correctly reports the desktop where GAM's window actually resides,
+/// even after the window is moved to a different virtual desktop via Task View.
+void vd_set_main_hwnd(HWND hwnd);
+
 /// Get the current desktop GUID (for matching windows to desktops).
 /// Returns GUID_NULL on failure.
 GUID vd_get_current_desktop_guid();
