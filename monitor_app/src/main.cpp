@@ -13,6 +13,9 @@
 #include <string>
 #include <functional>
 #include <cstdio>
+#include <mutex>
+#include <atomic>
+#include <vector>
 
 #include "../dep/WebView2.h"
 #include "../../logger/logger.h"
@@ -80,10 +83,26 @@ static ComPtr<ICoreWebView2_3>      g_webview3;
 static ComPtr<ICoreWebView2_17> g_webview17;
 static bool                  g_dev_mode = false;
 
+// GIT (Global Interface Table) for cross-thread interface access.
+// CoMarshalInterThreadInterfaceInStream fails (0x80040155) because
+// WebView2 interfaces lack COM proxy/stub registration.
+// GIT works with any COM interface — register once, retrieve from any thread.
+static IGlobalInterfaceTable* g_git = nullptr;
+static DWORD g_git_env12_cookie = 0;
+static DWORD g_git_wv17_cookie = 0;
+
 static constexpr int  DEFAULT_W  = 1280;
 static constexpr int  DEFAULT_H  = 720;
 static constexpr PCWSTR TITLE   = L"Game Agent Monitor";
 static constexpr int  DEV_PORT  = 1420;
+static constexpr UINT WM_STREAM_FRAME = WM_USER + 100;
+
+// Cross-thread frame bridge: stream thread (MTA) writes pixels here,
+// posts WM_STREAM_FRAME to main window, main thread pushes SharedBuffer.
+static std::mutex g_bridge_mutex;
+static std::vector<uint8_t> g_bridge_buf;
+static int g_bridge_w = 0, g_bridge_h = 0;
+static std::atomic<bool> g_bridge_has_frame{false};
 
 // ── Remaining fwd declarations (referenced before definition) ──
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -94,11 +113,6 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCm
 {
     bool auto_stream = (std::string(lpCmdLine).find("--auto-stream") != std::string::npos);
     g_dev_mode = (std::string(lpCmdLine).find("--dev") != std::string::npos);
-    if (std::string(lpCmdLine).find("--console") != std::string::npos) {
-        AllocConsole();
-        freopen("CONOUT$", "w", stdout);
-        freopen("CONOUT$", "w", stderr);
-    }
     LOG("main", "GAM starting (dev=%d auto_stream=%d)", (int)g_dev_mode, (int)auto_stream);
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -159,6 +173,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             g_webviewController->put_Bounds(rc);
         }
         break;
+    case WM_STREAM_FRAME:
+        // Stream thread posted a new frame — push via SharedBuffer on main STA thread
+        if (g_bridge_has_frame.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(g_bridge_mutex);
+            shared_buffer_push_frame(g_bridge_buf.data(), g_bridge_w, g_bridge_h);
+            g_bridge_has_frame.store(false, std::memory_order_release);
+        }
+        break;
     case WM_DESTROY:
         g_webviewController = nullptr;
         g_webview = nullptr;
@@ -195,6 +217,20 @@ HRESULT InitWebView2(HWND hwnd)
                     // Register WebMessage handler (replaces Tauri invoke)
                     g_webview->add_WebMessageReceived(new WebMessageHandler(), nullptr);
 
+                    // Register interfaces in GIT for cross-thread access.
+                    // CoMarshalInterThreadInterfaceInStream fails (0x80040155)
+                    // because WebView2 lacks COM proxy/stub. GIT works always.
+                    CoCreateInstance(CLSID_StdGlobalInterfaceTable, nullptr,
+                        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g_git));
+                    if (g_git) {
+                        if (g_env12) g_git->RegisterInterfaceInGlobal(
+                            g_env12.Get(), __uuidof(ICoreWebView2Environment12), &g_git_env12_cookie);
+                        if (g_webview17) g_git->RegisterInterfaceInGlobal(
+                            g_webview17.Get(), __uuidof(ICoreWebView2_17), &g_git_wv17_cookie);
+                        LOG("main", "GIT registered: env12=%lu wv17=%lu",
+                            (unsigned long)g_git_env12_cookie, (unsigned long)g_git_wv17_cookie);
+                    }
+
                     if (g_dev_mode) {
                         g_webview->Navigate(L"http://localhost:1420");
                     } else {
@@ -222,13 +258,27 @@ HRESULT InitWebView2(HWND hwnd)
 }
 
 // ── SharedBuffer helper (exposed to commands.cpp) ──────────
-void shared_buffer_push_frame(const uint8_t* bgra, int w, int h) {
-    if (!g_env12 || !g_webview17) return;
+void shared_buffer_push_frame(const uint8_t* bgra, int w, int h,
+                               ICoreWebView2Environment12* env12_opt,
+                               ICoreWebView2_17* wv17_opt) {
+    auto* env12 = env12_opt ? env12_opt : g_env12.Get();
+    auto* wv17  = wv17_opt  ? wv17_opt  : g_webview17.Get();
+    if (!env12 || !wv17) {
+        LOG("main", "shared_buffer_push_frame: missing interfaces env12=%d webview17=%d",
+            env12 ? 1 : 0, wv17 ? 1 : 0);
+        return;
+    }
     size_t size = (size_t)w * h * 4;
     ComPtr<ICoreWebView2SharedBuffer> buf;
-    if (FAILED(g_env12->CreateSharedBuffer((UINT)size, &buf))) return;
+    if (FAILED(env12->CreateSharedBuffer((UINT)size, &buf))) {
+        LOG("main", "shared_buffer_push_frame: CreateSharedBuffer FAILED");
+        return;
+    }
     BYTE* dst = nullptr;
-    if (FAILED(buf->get_Buffer(&dst)) || !dst) return;
+    if (FAILED(buf->get_Buffer(&dst)) || !dst) {
+        LOG("main", "shared_buffer_push_frame: get_Buffer FAILED");
+        return;
+    }
 
     // Convert BGRA → RGBA inline (ImageData expects RGBA)
     for (int i = 0; i < w * h; i++) {
@@ -244,8 +294,41 @@ void shared_buffer_push_frame(const uint8_t* bgra, int w, int h) {
 
     // CRITICAL: PostSharedBufferToScript BEFORE Close — per WebView2 docs,
     // the buffer must remain open when posted to script.
-    g_webview17->PostSharedBufferToScript(buf.Get(), COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, meta);
+    wv17->PostSharedBufferToScript(buf.Get(), COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, meta);
     buf->Close();
+    LOG("main", "shared_buffer_push_frame: %dx%d OK", w, h);
+}
+
+// ── Cross-thread SharedBuffer helpers ───────────────────────
+// g_env12/g_webview17 are STA-created; stream thread (MTA) can't use them
+// directly. GIT cookies allow retrieval from any COM apartment.
+
+void shared_buffer_marshal_for_stream(DWORD* out_env_cookie, DWORD* out_wv_cookie) {
+    *out_env_cookie = g_git_env12_cookie;
+    *out_wv_cookie = g_git_wv17_cookie;
+    LOG("main", "shared_buffer GIT cookies: env12=%lu wv17=%lu git=%d",
+        (unsigned long)g_git_env12_cookie, (unsigned long)g_git_wv17_cookie,
+        g_git ? 1 : 0);
+}
+
+IGlobalInterfaceTable* shared_buffer_get_git() { return g_git; }
+
+// ── Stream thread → main thread frame bridge ──────────────
+// Stream thread captures on MTA; SharedBuffer needs STA (main thread).
+// Stream calls this → copies frame + PostMessage → WndProc pushes SharedBuffer.
+
+void stream_bridge_push_frame(const uint8_t* bgra, int w, int h) {
+    if (!g_hwnd) return;
+    {
+        std::lock_guard<std::mutex> lk(g_bridge_mutex);
+        size_t sz = (size_t)w * h * 4;
+        if (g_bridge_buf.size() < sz) g_bridge_buf.resize(sz);
+        memcpy(g_bridge_buf.data(), bgra, sz);
+        g_bridge_w = w;
+        g_bridge_h = h;
+    }
+    g_bridge_has_frame.store(true, std::memory_order_release);
+    PostMessageW(g_hwnd, WM_STREAM_FRAME, 0, 0);
 }
 
 // ── WebMessage bridge (replaces Tauri invoke) ───────────────

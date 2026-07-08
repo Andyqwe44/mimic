@@ -9,8 +9,8 @@ Desktop monitor for visual game AI — **pixels in, actions out**.
 │  React UI (TypeScript + Tailwind)  ←→  C++ backend           │
 │  WebView2 browser control            WebMessage bridge        │
 │  Dashboard / Monitor / Log           SharedBuffer zero-copy   │
-│                                      MJPEG HTTP :9998         │
-│  Dev:  WebView2 → localhost:1420    TCP protocol :9999       │
+│  Dev:  WebView2 → localhost:1420    Stream bridge             │
+│  Prod: WebView2 → gam.local         TCP protocol :9999       │
 │  Prod: WebView2 → gam.local                                 │
 └──────────┬───────────────────────────────────────────────────┘
            │
@@ -25,7 +25,7 @@ Desktop monitor for visual game AI — **pixels in, actions out**.
 
 | Language | Role |
 |----------|------|
-| C++17 | Host: Win32 window, WebView2, capture, MJPEG, TCP, logging |
+| C++17 | Host: Win32 window, WebView2, capture, SharedBuffer, stream bridge, TCP, logging |
 | TypeScript/React | UI inside WebView2 (same code regardless of host) |
 | Python | AI model training/inference (separate process, TCP :9999) |
 
@@ -48,15 +48,17 @@ cd monitor_app && build.cmd
 # 3. Start Vite dev server (terminal 1)
 cd monitor_web && npm install && npm run dev
 
-# 4. Launch GUI (terminal 2) — Vite HMR, no console window
+# 4. Launch GUI (terminal 2) — Vite HMR
 cd monitor_app && build\monitor_app.exe --dev
-
-# Or with debug console
-cd monitor_app && build\monitor_app.exe --dev --console
 ```
 
-`--dev`: navigate to Vite dev server (hot reload). No console window by default.
-`--console`: show debug console window (AllocConsole). Independent flag.
+`--dev`: navigate to Vite dev server (hot reload).
+
+### Developer Mode
+Enable via **Settings → General → Dev mode**. Saves captured frames as PNG:
+- **Save single-frame captures** — each 📷 snapshot to disk
+- **Save live preview frames** — each ▶ preview frame to disk
+- Pick output directory via folder picker, open in Explorer
 
 ### Production
 

@@ -36,6 +36,9 @@ inline int json_get_int(const std::string& json, const std::string& key) {
     size_t p = json.find(s);
     if (p == std::string::npos) return 0;
     p += s.length();
+    // Handle JSON boolean literals (JS sends true/false, not 1/0)
+    if (json.compare(p, 4, "true") == 0) return 1;
+    if (json.compare(p, 5, "false") == 0) return 0;
     return (int)strtol(json.c_str() + p, nullptr, 10);
 }
 

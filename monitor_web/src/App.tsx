@@ -578,44 +578,71 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, winState, expanded,
   useEffect(() => {
     const wv = (window as any).chrome?.webview
     if (!wv) { addLog('[Screenshot] SharedBuffer not available'); return }
+    let firstFrame = true
     const handler = (e: any) => {
       const active = previewingRef.current || snapshotRef.current
-      if (!active) return
+      if (!active) {
+        addLog(`[SB] event ignored — previewing=${previewingRef.current} snapshot=${snapshotRef.current}`)
+        return
+      }
+      if (firstFrame) { firstFrame = false; addLog('[Screenshot] first SharedBuffer frame received') }
       try {
         const buf: ArrayBuffer = e.getBuffer()
-        const metaStr: string = e.getAdditionalData()
-        const meta = JSON.parse(metaStr) as { w: number; h: number }
-        if (!meta.w || !meta.h || meta.w <= 0 || meta.h <= 0) return
+        addLog(`[SB] getBuffer OK size=${buf.byteLength}`)
+        const metaRaw = e.additionalData  // may be object or JSON string depending on WebView2 version
+        const meta: { w: number; h: number } = typeof metaRaw === 'string' ? JSON.parse(metaRaw) : metaRaw
+        if (!meta.w || !meta.h || meta.w <= 0 || meta.h <= 0) {
+          addLog(`[SB] BAD meta: w=${meta.w} h=${meta.h}`)
+          return
+        }
+        addLog(`[SB] meta w=${meta.w} h=${meta.h}`)
+        const pixelCount = meta.w * meta.h * 4
+        if (buf.byteLength < pixelCount) {
+          addLog(`[SB] buffer too small: ${buf.byteLength} < ${pixelCount}`)
+          return
+        }
         const imgData = new ImageData(
-          new Uint8ClampedArray(buf, 0, meta.w * meta.h * 4),
+          new Uint8ClampedArray(buf, 0, pixelCount),
           meta.w, meta.h
         )
-        if (canvasRef.current) {
-          canvasRef.current.width = meta.w
-          canvasRef.current.height = meta.h
+        addLog(`[SB] ImageData created ${meta.w}x${meta.h}`)
+        const c = canvasRef.current
+        addLog(`[SB] canvasRef.current = ${c ? 'OK' : 'NULL'}`)
+        if (c) {
+          c.width = meta.w
+          c.height = meta.h
           setCanvasDims({ w: meta.w, h: meta.h })
-          const ctx = canvasRef.current.getContext('2d')
-          if (ctx) ctx.putImageData(imgData, 0, 0)
+          const ctx = c.getContext('2d')
+          addLog(`[SB] ctx = ${ctx ? 'OK' : 'NULL'}`)
+          if (ctx) {
+            ctx.putImageData(imgData, 0, 0)
+            addLog(`[SB] putImageData OK ${meta.w}x${meta.h}`)
+          }
         }
         setHasContent(true)
+        addLog(`[SB] hasContent=true`)
         framesRef.current++
         const now = Date.now(); const elapsed = now - lastFpsRef.current
         if (elapsed >= 1000) { setFps(Math.round(framesRef.current * 1000 / elapsed)); framesRef.current = 0; lastFpsRef.current = now }
         // Snapshot: one shot, then stop consuming
-        if (snapshotRef.current) { snapshotRef.current = false }
-      } catch (_) {}
+        if (snapshotRef.current) { snapshotRef.current = false; addLog('[SB] snapshot consumed') }
+      } catch (ex: any) {
+        addLog(`[SB] EXCEPTION: ${ex?.message || ex}`)
+      }
     }
     handlerRef.current = handler
     wv.addEventListener('sharedbufferreceived', handler)
+    addLog('[Screenshot] SharedBuffer listener registered')
     return () => { wv.removeEventListener('sharedbufferreceived', handler) }
   }, [])
 
   // ── Snapshot (Camera button) ──
   const takeSnapshot = async () => {
     const hwnd = selWin?.hwnd ?? 0
-    // Desktop (hwnd=0): WGC single-frame needs CreateForMonitor which we don't have.
-    // Use DXGI (DesktopBlt) instead. For windows, use the auto-recommended method.
-    const method = hwnd === 0 ? 'dxgi' : forceMethod
+    // WGC single-frame needs DispatcherQueue + WinRT on calling thread,
+    // which conflicts with main STA thread (crash). Always use DesktopBlt
+    // (GDI-based) for single-frame — safe, fast, captures entire desktop.
+    const method = 'dxgi'
     if (cantCaptureMinimized(method, winState)) {
       addLog(`[Capture] blocked: window minimized, ${method} cannot capture`); return
     }
@@ -623,18 +650,15 @@ function ScreenshotPanel({ selWin, screenRatio, forceMethod, winState, expanded,
     const t0 = Date.now()
     try {
       snapshotRef.current = true
-      const json = await hostCall('capture_window', { hwnd, method })
+      const info = await hostCall('capture_window', { hwnd, method }) as { ok?: boolean; method?: string; w?: number; h?: number }
       const elapsed = Date.now() - t0
-      try {
-        const info = JSON.parse(json)
-        if (info.ok) {
-          if (info.method) setCapMethod(info.method)
-          addLog(`[Capture] OK (${elapsed}ms) [${info.method || '?'}]`)
-        } else {
-          snapshotRef.current = false
-          addLog(`[Capture] failed (${elapsed}ms)`)
-        }
-      } catch { snapshotRef.current = false; addLog(`[Capture] failed (${elapsed}ms)`) }
+      if (info && info.ok) {
+        if (info.method) setCapMethod(info.method)
+        addLog(`[Capture] OK ${info.w}x${info.h} (${elapsed}ms) [${info.method || '?'}]`)
+      } else {
+        snapshotRef.current = false
+        addLog(`[Capture] failed (${elapsed}ms)`)
+      }
     } catch { snapshotRef.current = false; addLog(`[Capture] failed after ${Date.now() - t0}ms`) }
   }
 
@@ -1069,7 +1093,7 @@ function StatusBar({ screen, appVersion }: { screen: string; appVersion: string 
   )
 }
 
-function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, selWin, winState, expectedCaptureState, setExpectedCaptureState, onSelect, onDisconnect, keepFiles, setKeepFiles, appVersion, theme, setTheme }: { forceMethod: string; setForceMethod: (m: string) => void; autoMethod?: boolean; setAutoMethod?: (v: boolean) => void; selWin?: WindowInfo; winState: string; expectedCaptureState?: string; setExpectedCaptureState?: (s: string) => void; onSelect: (w: WindowInfo) => void; onDisconnect: () => void; keepFiles: number; setKeepFiles: (n: number) => void; appVersion: string; theme: string; setTheme: (t: 'light'|'dark'|'system') => void }) {
+function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, selWin, winState, expectedCaptureState, setExpectedCaptureState, onSelect, onDisconnect, keepFiles, setKeepFiles, appVersion, theme, setTheme, devMode, setDevMode, saveCaptureFrames, setSaveCaptureFrames, saveStreamFrames, setSaveStreamFrames, frameDumpDir, setFrameDumpDir }: { forceMethod: string; setForceMethod: (m: string) => void; autoMethod?: boolean; setAutoMethod?: (v: boolean) => void; selWin?: WindowInfo; winState: string; expectedCaptureState?: string; setExpectedCaptureState?: (s: string) => void; onSelect: (w: WindowInfo) => void; onDisconnect: () => void; keepFiles: number; setKeepFiles: (n: number) => void; appVersion: string; theme: string; setTheme: (t: 'light'|'dark'|'system') => void; devMode: boolean; setDevMode: (v: boolean) => void; saveCaptureFrames: boolean; setSaveCaptureFrames: (v: boolean) => void; saveStreamFrames: boolean; setSaveStreamFrames: (v: boolean) => void; frameDumpDir: string; setFrameDumpDir: (d: string) => void }) {
   const colors = ['#3B82F6','#8B5CF6','#EC4899','#F59E0B','#10B981','#EF4444']
   const [accent, setAccent] = useState('#3B82F6')
   const [screenRes, setScreenRes] = useState('?×?')
@@ -1139,8 +1163,40 @@ function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, 
             <label className="text-sm text-text-secondary w-24 shrink-0">Keep files</label>
             <Tooltip text="Log 菜单中显示的历史日志文件数"><select value={keepFiles} onChange={e => setKeepFiles(Number(e.target.value))} className="h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent">{[3,5,7,10].map(n=><option key={n} value={n}>{n} files</option>)}</select></Tooltip>
           </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-text-secondary w-24 shrink-0">Dev mode</label>
+            <button onClick={() => { setDevMode(!devMode); addLog(`[Dev] ${!devMode ? 'ON' : 'OFF'}`) }}
+              className={`relative w-10 h-5 rounded-full transition-colors ${devMode ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${devMode ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
         </div>
       </SettingsCard>
+
+      {devMode && <SettingsCard icon={<Cpu className="w-4 h-4 text-amber-400" />} title="Developer Mode" defaultExpanded={true}>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div><div className="text-sm text-text-primary">Save single-frame captures</div><div className="text-xs text-text-muted">Save each 📷 snapshot as PNG to disk</div></div>
+            <button onClick={() => { const v = !saveCaptureFrames; setSaveCaptureFrames(v); hostCall('set_frame_dump', { capture: v, stream: saveStreamFrames, dir: frameDumpDir }).catch(() => {}) }}
+              className={`relative w-10 h-5 rounded-full transition-colors ${saveCaptureFrames ? 'bg-success' : 'bg-bg-tertiary'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${saveCaptureFrames ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <div><div className="text-sm text-text-primary">Save live preview frames</div><div className="text-xs text-text-muted">Save each ▶ preview frame as PNG to disk</div></div>
+            <button onClick={() => { const v = !saveStreamFrames; setSaveStreamFrames(v); hostCall('set_frame_dump', { capture: saveCaptureFrames, stream: v, dir: frameDumpDir }).catch(() => {}) }}
+              className={`relative w-10 h-5 rounded-full transition-colors ${saveStreamFrames ? 'bg-success' : 'bg-bg-tertiary'}`}>
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${saveStreamFrames ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-text-secondary w-24 shrink-0">Dump dir</label>
+            <Tooltip text="帧保存路径" className="flex-1 min-w-0"><input value={frameDumpDir || '(not set)'} readOnly className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-muted outline-none cursor-default font-mono text-xs truncate" /></Tooltip>
+            <Tooltip text="选择保存目录"><button onClick={async () => { try { const res = await hostCall('pick_dir'); if (res?.dir) { setFrameDumpDir(res.dir); const cap = saveCaptureFrames || true; const str = saveStreamFrames || true; if (!saveCaptureFrames) setSaveCaptureFrames(true); if (!saveStreamFrames) setSaveStreamFrames(true); hostCall('set_frame_dump', { capture: true, stream: true, dir: res.dir }).catch(() => {}); addLog(`[Dev] dump dir = ${res.dir}`) } } catch(_) {} }} className="shrink-0 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"><Pencil className="w-4 h-4" /></button></Tooltip>
+            <Tooltip text="在资源管理器中打开保存目录"><button onClick={() => { if (frameDumpDir) hostCall('open_dir', { dir: frameDumpDir }).catch(() => {}) }} className="shrink-0 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"><FolderOpen className="w-4 h-4" /></button></Tooltip>
+          </div>
+        </div>
+      </SettingsCard>}
 
       <SettingsCard icon={<RefreshCw className="w-4 h-4 text-text-secondary" />} title="About">
         <div className="space-y-3">
@@ -1418,6 +1474,10 @@ export default function App() {
   const [autoMethod, setAutoMethod] = useState(true)
   const [expectedCaptureState, setExpectedCaptureState] = useState('desktop')
   const [keepFiles, setKeepFiles] = useState(5)
+  const [devMode, setDevMode] = useState(false)
+  const [saveCaptureFrames, setSaveCaptureFrames] = useState(false)
+  const [saveStreamFrames, setSaveStreamFrames] = useState(false)
+  const [frameDumpDir, setFrameDumpDir] = useState('')
   const [winState, setWinState] = useState('desktop')
   const lastWinStateRef = useRef('desktop')
 
@@ -1471,7 +1531,7 @@ export default function App() {
         dark={resolvedDark} onToggleTheme={() => setTheme(resolvedDark ? 'light' : 'dark')} />
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden border-r border-border" style={{ minWidth: MIN_LEFT_WIDTH }}>
-          {tab === 'Settings' && <SettingsView forceMethod={forceMethod} setForceMethod={setForceMethod} autoMethod={autoMethod} setAutoMethod={setAutoMethod} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} onSelect={setSelWindow} onDisconnect={() => { setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); setExpectedCaptureState('desktop'); addLog('[Connection] disconnected, back to desktop') }} keepFiles={keepFiles} setKeepFiles={setKeepFiles} appVersion={appVersion} theme={theme} setTheme={setTheme} />}
+          {tab === 'Settings' && <SettingsView forceMethod={forceMethod} setForceMethod={setForceMethod} autoMethod={autoMethod} setAutoMethod={setAutoMethod} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} onSelect={setSelWindow} onDisconnect={() => { setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); setExpectedCaptureState('desktop'); addLog('[Connection] disconnected, back to desktop') }} keepFiles={keepFiles} setKeepFiles={setKeepFiles} appVersion={appVersion} theme={theme} setTheme={setTheme} devMode={devMode} setDevMode={setDevMode} saveCaptureFrames={saveCaptureFrames} setSaveCaptureFrames={setSaveCaptureFrames} saveStreamFrames={saveStreamFrames} setSaveStreamFrames={setSaveStreamFrames} frameDumpDir={frameDumpDir} setFrameDumpDir={setFrameDumpDir} />}
           {tab === 'Monitor' && (
             <div className="flex-1 flex items-center justify-center p-6">
               <div className="rounded-xl bg-bg-secondary p-8 text-center space-y-3 max-w-md w-full">

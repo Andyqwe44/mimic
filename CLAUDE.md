@@ -201,12 +201,18 @@ cd monitor_app && build.cmd          # → monitor_app.exe
 cd monitor_web && npm run dev        # Vite on :1420 (already running usually)
 cd monitor_app && build\monitor_app.exe --dev   # WebView2 → localhost:1420
 
-# 3b. Dev mode with debug console (when you need console output)
-cd monitor_app && build\monitor_app.exe --dev --console   # Vite HMR + console window
+`--dev` flag: navigates to Vite dev server (hot reload).
+Default launch: **`--dev` mode (Vite HMR)**.
 
-`--dev` flag: navigates to Vite dev server (hot reload). No console window.
-`--console` flag: shows console window (AllocConsole) for debug output. Independent of `--dev`.
-Default launch: **`--dev` mode (Vite HMR)** — development is always with hot reload, no black box.
+### Developer Mode
+
+Enable via Settings → General → Dev mode toggle. Shows "Developer Mode" tile with:
+- **Save single-frame captures**: saves each 📷 snapshot as PNG to chosen directory
+- **Save live preview frames**: saves each ▶ preview frame as PNG to chosen directory
+- **Dump dir**: folder picker + open folder buttons
+
+C++ commands: `set_frame_dump {capture, stream, dir}` / `pick_dir` / `open_dir {dir}`.
+Frames saved as `snap_YYYYMMDD_HHMMSS_ms.png` or `stream_YYYYMMDD_HHMMSS_ms.png`.
 
 # 4. Prod mode
 cd monitor_web && npm run build      # Vite → dist/
@@ -232,7 +238,7 @@ Key: `hostCall` internally extracts `.result` from the `{id, result}` envelope, 
 |---------|------|---------|
 | `list_windows` | — | `[{title, category, hwnd, desktop}, ...]` (绝对编号 D1/D2=任务视图左右顺序, 注册表获取) |
 | `list_processes` | — | `[{title, category:"process", hwnd:pid}, ...]` |
-| `capture_window` | `{hwnd, method}` | PNG base64 + dimensions (失败返回 `{}`) |
+| `capture_window` | `{hwnd, method}` | `{ok, w, h, method}` — frame via SharedBuffer, no base64 |
 | `capture_stream_start` | `{hwnd, method, transport}` | `{ok:true}` |
 | `capture_stream_stop` | — | `{ok:true}` |
 | `read_logs` | `{max_files}` | `{files:[{name, size}, ...]}` (不含当前 session) |
@@ -247,7 +253,9 @@ Key: `hostCall` internally extracts `.result` from the `{id, result}` envelope, 
 | `benchmark_methods` | `{hwnd, method}` | `{results:[{method, time_ms, size, ok},...]}` |
 | `list_desktops` | — | `[{name, index, current}, ...]` (undocumented COM) |
 | `switch_desktop` | `{index}` | `{ok:true}` (switches entire desktop — user visible) |
-| `debug_dump_frames` | `{enable}` | `{ok:true}` |
+| `set_frame_dump` | `{capture, stream, dir}` | `{ok:true}` |
+| `pick_dir` | — | `{dir}` (Windows folder picker) |
+| `open_dir` | `{dir}` | `{ok:true}` (ShellExecute open) |
 
 ### Logging architecture (event-driven, zero polling)
 
@@ -289,32 +297,47 @@ History files accessible via Log tab; each tile has refresh + copy buttons.
 ```
 WGC → condition_variable → TryGetNextFrame → CopyResource(GPU) → Map(CPU)
   → BGRA pixels
-  → SharedBuffer: CreateSharedBuffer(w*h*4) → memcpy → PostSharedBufferToScript
-  → MJPEG fallback: WIC JPEG encode → HTTP multipart → <img src=":9998/stream">
+  → [stream thread, MTA] stream_bridge_push_frame → PostMessage(WM_STREAM_FRAME)
+  → [main thread, STA] WndProc → shared_buffer_push_frame → PostSharedBufferToScript
+  → [JS] sharedbufferreceived → ImageData → Canvas putImageData
+
+Single-frame: capture_window → call_capture → shared_buffer_push_frame (main STA thread directly)
 ```
+
+### Stream bridge (cross-thread SharedBuffer)
+
+WebView2 interfaces (`ICoreWebView2Environment12`, `ICoreWebView2_17`) are STA-created.
+Stream thread runs WGC on MTA (WinRT requirement). Direct cross-apartment COM calls fail
+because WebView2 has no proxy/stub registered (CoMarshalInterThreadInterfaceInStream → 0x80040155).
+
+**Bridge**: `stream_bridge_push_frame(bgra, w, h)` — stream thread copies pixels to mutex-guarded
+global buffer, posts `WM_STREAM_FRAME` to main window. WndProc handler calls
+`shared_buffer_push_frame` on the STA thread where the interfaces are valid.
 
 ### SharedBuffer (zero-copy, no FFI)
 
-C++ native COM — no Rust transmute overhead:
+C++ native COM, BGRA→RGBA inline:
 ```cpp
 ICoreWebView2Environment12* env12;
-env->QueryInterface(IID_PPV_ARGS(&env12));
 ComPtr<ICoreWebView2SharedBuffer> buf;
 env12->CreateSharedBuffer(w * h * 4, &buf);
 BYTE* dst;
-buf->Open(&dst);
-memcpy(dst, bgra, w * h * 4);
-buf->Close();
-
+buf->get_Buffer(&dst);  // COM method, not Open()
+// BGRA→RGBA conversion inline
+for (int i = 0; i < w * h; i++) { /* swap R↔B */ }
 ICoreWebView2_17* wv17;
-webview->QueryInterface(IID_PPV_ARGS(&wv17));
-wv17->PostSharedBufferToScript(buf.Get(), COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, L"{}");
+wv17->PostSharedBufferToScript(buf.Get(), COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, meta);
+buf->Close();  // AFTER Post — buffer must remain open when posted
 ```
 
-### MJPEG server (port 9998)
-- Winsock2 accept loop + per-client send thread
-- WIC (Windows Imaging Component) BGRA→JPEG encode, quality 0.70
-- Multipart/x-mixed-replace format: `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n<bytes>\r\n`
+JS handler:
+```tsx
+// e.additionalData is already parsed object (not JSON string)
+const meta = typeof e.additionalData === 'string' ? JSON.parse(e.additionalData) : e.additionalData
+const buf = e.getBuffer()
+new ImageData(new Uint8ClampedArray(buf, 0, meta.w * meta.h * 4), meta.w, meta.h)
+ctx.putImageData(imgData, 0, 0)
+```
 
 ### Capture methods
 
@@ -381,8 +404,48 @@ Stop button → hostCall('capture_stream_stop')
 1. **WGC FPS**: Event-driven — static content = low FPS. Dynamic window = 60+.
 2. **H.264 MFT**: Encoder creates MP4 for progressive download, `<video>` needs full file.
 3. **Chromium background tab throttling**: WebView2 may throttle when app loses focus.
+4. **WebView2 cross-thread COM**: `ICoreWebView2Environment12`/`ICoreWebView2_17` are STA-only;
+   COM marshaling fails (no proxy/stub, 0x80040155). Stream uses PostMessage bridge to
+   push SharedBuffer from main STA thread. Single-frame capture works directly on main thread.
+
+## Frontend Type System
+
+**WebView2 host objects** (`window.chrome.webview`) have no `@types/*` npm package.
+Local type declarations in `monitor_web/src/webview2.d.ts` cover:
+- `SharedBufferReceivedEvent` — `getBuffer()`, `additionalData` (object|string), `source`
+- `WebView2Host` — `postMessage()`, `addEventListener`/`removeEventListener` for `sharedbufferreceived` and `message`
+
+Never use `any` for WebView2 event handlers — the `.d.ts` enables compile-time checking
+of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
 ## Recent Fixes (2026-07-08)
+
+### Screenshot panel SharedBuffer pipeline (major)
+JS handler had 3 silent bugs all swallowed by `catch(_){}`:
+1. `e.getAdditionalData()` is not a function → `e.additionalData` (COM `get_AdditionalData` → JS property)
+2. `e.additionalData` is already a parsed object (WebView2 auto-parses JSON) → `typeof === 'string' ? JSON.parse : as-is`
+3. `json_get_int` couldn't parse `true`/`false` booleans → added string comparison for JSON literals
+
+### Stream bridge (PostMessage-based cross-thread SharedBuffer)
+Stream thread runs MTA (WGC/WinRT requirement). WebView2 SharedBuffer interfaces are STA-only.
+GIT and CoMarshalInterThreadInterfaceInStream both fail (0x80040155 — no COM proxy/stub).
+Solution: `stream_bridge_push_frame()` copies pixels to mutex-guarded global buffer,
+posts `WM_STREAM_FRAME` to main window. WndProc handler calls `shared_buffer_push_frame`
+on the STA thread.
+
+### Developer mode + frame dump
+Settings → General → Dev mode toggle. Enables frame dump to disk as PNG:
+- `set_frame_dump {capture, stream, dir}` — enable per-type + set directory
+- `pick_dir` / `open_dir {dir}` — folder picker / open in Explorer
+- Frames saved as `snap_YYYYMMDD_HHMMSS_ms.png` or `stream_YYYYMMDD_HHMMSS_ms.png`
+- `bgra_to_png` now logs every failure step with HRESULT
+
+### --console flag removed
+AllocConsole/freopen removed — debug output only goes to log files (fflush on every write).
+
+### WebView2 types (webview2.d.ts)
+Local `.d.ts` declarations for `chrome.webview` host objects.
+Catches method name errors at compile time (e.g. `getAdditionalData` vs `additionalData`).
 
 ### WebMessage bridge response wrapping
 `HandleWebMessage` wraps every response as `{"id":N,"result":{...}}`.

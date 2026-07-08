@@ -13,6 +13,7 @@
 #include "../../logger/logger.h"
 #include "../../capture/include/capture_methods.h"
 #include "../../capture/include/capture_wgc_ffi.h"
+#include "../dep/WebView2.h"  // IID_PPV_ARGS for ICoreWebView2Environment12/17
 #include <shobjidl.h>  // IVirtualDesktopManager
 #include "virtual_desktop.h"  // vd_list_desktops, vd_switch_desktop
 #include <shellapi.h>  // ShellExecuteA
@@ -29,11 +30,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 
 using Microsoft::WRL::ComPtr;
 
 // Shared by main.cpp — pushed from stream thread
-extern void shared_buffer_push_frame(const uint8_t* bgra, int w, int h);
 extern void PostJsonToWebView(const std::string& json);
 
 static constexpr int MAX_PX = 3840 * 2160 * 4;
@@ -67,18 +68,19 @@ static bool init_wic() {
 
 // BGRA pixels → PNG bytes
 static bool bgra_to_png(const uint8_t* bgra, int w, int h, std::vector<uint8_t>& out) {
-    if (!init_wic()) return false;
+    if (!init_wic()) { LOG("cmd", "bgra_to_png: init_wic FAILED"); return false; }
 
     ComPtr<IWICBitmap> bitmap;
-    if (FAILED(g_wic->CreateBitmapFromMemory((UINT)w, (UINT)h,
+    HRESULT hr = g_wic->CreateBitmapFromMemory((UINT)w, (UINT)h,
         GUID_WICPixelFormat32bppBGRA, (UINT)(w * 4), (UINT)(w * h * 4),
-        (BYTE*)bgra, &bitmap))) return false;
+        (BYTE*)bgra, &bitmap);
+    if (FAILED(hr)) { LOG("cmd", "bgra_to_png: CreateBitmapFromMemory FAILED hr=0x%x", (unsigned)hr); return false; }
 
     ComPtr<IStream> stream;
-    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) return false;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) { LOG("cmd", "bgra_to_png: CreateStreamOnHGlobal FAILED"); return false; }
 
     ComPtr<IWICBitmapEncoder> encoder;
-    if (FAILED(g_wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) return false;
+    if (FAILED(g_wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) { LOG("cmd", "bgra_to_png: CreateEncoder FAILED"); return false; }
     encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
 
     ComPtr<IWICBitmapFrameEncode> frame;
@@ -306,6 +308,7 @@ static std::string cmd_list_processes() {
 
 // ── Capture dispatch ──────────────────────────────────────
 struct CaptureResult { std::vector<uint8_t> pixels; int w, h; std::string method; };
+void dump_frame_if_enabled(const uint8_t* bgra, int w, int h, bool is_stream);
 
 static CaptureResult call_capture(uint64_t hwnd, const std::string& method) {
     std::vector<uint8_t> buf(MAX_PX);
@@ -314,7 +317,18 @@ static CaptureResult call_capture(uint64_t hwnd, const std::string& method) {
     std::string used = method;
 
     if (method == "WGC" || method == "wgc") {
-        size = wgc_capture_single(hw, buf.data(), MAX_PX, &w, &h, nullptr);
+        // wgc_capture_single creates DispatcherQueue + uses wait_frame(cv)
+        // which does not pump Windows messages. On main STA thread this
+        // prevents FrameArrived delivery → timeout or crash on shutdown.
+        // Run on temporary MTA thread to isolate WinRT from main thread.
+        std::atomic<bool> done{false};
+        std::thread t([&]() {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            size = wgc_capture_single(hw, buf.data(), MAX_PX, &w, &h, nullptr);
+            CoUninitialize();
+            done = true;
+        });
+        t.join();
     } else if (method == "GDI(GetWindowDC)") {
         size = capture_gdi_getwindowdc(hw, buf.data(), MAX_PX, &w, &h);
     } else if (method == "PrintWindow") {
@@ -343,6 +357,14 @@ static CaptureResult call_capture(uint64_t hwnd, const std::string& method) {
     }
     return {{}, 0, 0, "ALL_FAILED"};
 }
+
+// ── Frame dump (developer mode) ─────────────────────────
+// Globals: defined here so all functions can reference them
+static bool g_dump_capture_frames = false;
+static bool g_dump_stream_frames = false;
+static std::string g_dump_dir;
+
+void dump_frame_if_enabled(const uint8_t* bgra, int w, int h, bool is_stream);
 
 // ── BGRA→RGBA→scale→PNG→base64 for single frame ──────────
 static std::string frame_to_json(const CaptureResult& r, int x, int y, int sw, int sh, double total_ms) {
@@ -386,6 +408,10 @@ static std::string cmd_capture_window(uint64_t hwnd, const std::string& method) 
     // Push frame via SharedBuffer (zero-copy) — no more base64 PNG.
     // Frontend receives the frame via 'sharedbufferreceived' event.
     shared_buffer_push_frame(r.pixels.data(), r.w, r.h);
+
+    // Developer mode: dump frame to disk
+    LOG("cmd", "capture_window: calling dump_frame_if_enabled (snapshot)");
+    dump_frame_if_enabled(r.pixels.data(), r.w, r.h, false);
 
     std::string json = "{\"ok\":true,\"w\":" + std::to_string(r.w) +
         ",\"h\":" + std::to_string(r.h) +
@@ -503,18 +529,21 @@ static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& me
             int w, h, ch;
             int size = wgc_stream_read(g_stream_handle, buf.data(), MAX_PX, &w, &h, &ch);
             if (size > 0 && w > 0 && h > 0 && w <= 3840 && h <= 2160) {
-                // Push via SharedBuffer (zero-copy) + TCP (agents)
-                shared_buffer_push_frame(buf.data(), w, h);
+                // SharedBuffer via bridge: stream thread (MTA) → PostMessage → main STA thread
+                stream_bridge_push_frame(buf.data(), w, h);
                 tcp_broadcast_frame(buf.data(), w, h);
+                // Developer mode: dump stream frame to disk
+                dump_frame_if_enabled(buf.data(), w, h, true);
             } else {
-                // No new frame — yield CPU, avoid busy-wait
                 Sleep(1);
             }
         }
         CoUninitialize();
     });
 
-    LOG("cmd", "stream_start: hwnd=%llu method=%s transport=%s", (unsigned long long)hwnd, method.c_str(), transport.c_str());
+    LOG("cmd", "stream_start: hwnd=%llu method=%s transport=%s dump_cap=%d dump_str=%d dump_dir='%s'",
+        (unsigned long long)hwnd, method.c_str(), transport.c_str(),
+        (int)g_dump_capture_frames, (int)g_dump_stream_frames, g_dump_dir.c_str());
     return R"({"ok":true})";
 }
 
@@ -617,11 +646,98 @@ static std::string cmd_benchmark_methods(uint64_t hwnd, const std::string& metho
     return json;
 }
 
-// ── Debug dump ────────────────────────────────────────────
-static bool g_dump_frames = false;
-static std::string cmd_debug_dump_frames(bool enable) {
-    g_dump_frames = enable;
+// ── Frame dump commands ─────────────────────────────────
+static std::string cmd_set_frame_dump(bool capture, bool stream, const std::string& dir) {
+    g_dump_capture_frames = capture;
+    g_dump_stream_frames = stream;
+    if (!dir.empty()) g_dump_dir = dir;
+    LOG("cmd", "set_frame_dump: capture=%d stream=%d dir=%s",
+        (int)capture, (int)stream, g_dump_dir.c_str());
     return R"({"ok":true})";
+}
+
+static std::string cmd_pick_dir() {
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool needs_uninit = SUCCEEDED(hr);
+    std::string result = "{}";
+    IFileDialog* dlg = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(&dlg))) && dlg) {
+        dlg->SetOptions(FOS_PICKFOLDERS | FOS_PATHMUSTEXIST);
+        if (SUCCEEDED(dlg->Show(nullptr))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item)) && item) {
+                wchar_t* path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
+                    std::string dir(len - 1, '\0');
+                    WideCharToMultiByte(CP_UTF8, 0, path, -1, &dir[0], len, nullptr, nullptr);
+                    result = "{\"dir\":\"" + json_escape(dir) + "\"}";
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+    if (needs_uninit) CoUninitialize();
+    return result;
+}
+
+static std::string cmd_open_dir(const std::string& dir) {
+    if (!dir.empty()) {
+        ShellExecuteA(nullptr, "open", dir.c_str(), nullptr, nullptr, SW_SHOW);
+    }
+    return R"({"ok":true})";
+}
+
+// Save a single BGRA frame as PNG to dump dir
+static void dump_frame_to_disk(const uint8_t* bgra, int w, int h, const char* prefix) {
+    if (g_dump_dir.empty()) {
+        LOG("cmd", "dump_frame_to_disk: SKIP — g_dump_dir is empty");
+        return;
+    }
+    // Generate filename: prefix_YYYYMMDD_HHMMSS_ms.png
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char fname[256];
+    snprintf(fname, sizeof(fname), "%s_%04d%02d%02d_%02d%02d%02d_%03d.png",
+             prefix, st.wYear, st.wMonth, st.wDay,
+             st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    std::string full = g_dump_dir + "\\" + fname;
+    LOG("cmd", "dump_frame_to_disk: target=%s %dx%d", full.c_str(), w, h);
+
+    // Convert BGRA → RGBA
+    std::vector<uint8_t> rgba(w * h * 4);
+    for (int i = 0; i < w * h; i++) {
+        rgba[i * 4 + 0] = bgra[i * 4 + 2];
+        rgba[i * 4 + 1] = bgra[i * 4 + 1];
+        rgba[i * 4 + 2] = bgra[i * 4 + 0];
+        rgba[i * 4 + 3] = 255;
+    }
+
+    std::vector<uint8_t> png;
+    if (bgra_to_png(rgba.data(), w, h, png)) {
+        FILE* f = fopen(full.c_str(), "wb");
+        if (f) {
+            size_t written = fwrite(png.data(), 1, png.size(), f);
+            fclose(f);
+            LOG("cmd", "frame dump OK: %s (%dx%d png=%zu written=%zu)", fname, w, h, png.size(), written);
+        } else {
+            LOG("cmd", "frame dump FAIL: fopen '%s' err=%d", full.c_str(), errno);
+        }
+    } else {
+        LOG("cmd", "frame dump FAIL: bgra_to_png returned false");
+    }
+}
+
+void dump_frame_if_enabled(const uint8_t* bgra, int w, int h, bool is_stream) {
+    bool enabled = is_stream ? g_dump_stream_frames : g_dump_capture_frames;
+    LOG("cmd", "dump_frame_if_enabled: is_stream=%d enabled=%d dir='%s' capture_en=%d stream_en=%d",
+        (int)is_stream, (int)enabled, g_dump_dir.c_str(),
+        (int)g_dump_capture_frames, (int)g_dump_stream_frames);
+    if (!enabled) return;
+    dump_frame_to_disk(bgra, w, h, is_stream ? "stream" : "snap");
 }
 
 
@@ -653,9 +769,14 @@ std::string dispatch_command(const std::string& json) {
     else if (cmd == "benchmark_methods") {
         result = cmd_benchmark_methods(json_get_uint64(args, "hwnd"), json_get_str(args, "method"));
     }
-    else if (cmd == "debug_dump_frames") {
-        result = cmd_debug_dump_frames(json_get_int(args, "enable") != 0);
+    else if (cmd == "set_frame_dump") {
+        result = cmd_set_frame_dump(
+            json_get_int(args, "capture") != 0,
+            json_get_int(args, "stream") != 0,
+            json_get_str(args, "dir"));
     }
+    else if (cmd == "pick_dir") result = cmd_pick_dir();
+    else if (cmd == "open_dir") result = cmd_open_dir(json_get_str(args, "dir"));
 
     else if (cmd == "get_version") {
         result = "\"" APP_VERSION "\"";
