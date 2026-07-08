@@ -295,19 +295,28 @@ C++ sends via `PostWebMessageAsJson` (pre-parsed object → JS `e.data` is alrea
 Frontend `hostCall` auto-unwraps `.result` internally — all callers receive raw command results.
 `json_get_str` handles escaped quotes (`\"`) in JSON values.
 
-### Logger: history + file read
-`capture_log_read_file(filename)` reads historical log files from disk.
-`capture_log_list_files` excludes the current session file (`g_current_file` tracking).
-`read_logs` response no longer includes `live` ring buffer (prevents recursive JSON growth → PostWebMessageAsJson dropping).
+### TargetPickerModal — unified window + mode picker
+`WindowPickerModal` + `CaptureModeModal` merged into `TargetPickerModal`.
+Two pages (window list / capture mode) slide horizontally via `translateX` transition.
+`animReady` guard prevents stale page state animation on re-open.
+Both pages share same dimensions: `w-[520px] max-h-[min(560px,85vh)]`.
+Back button (`ChevronLeft`) on mode page returns to window list.
 
-### Settings → Log retention wiring
-`keepFiles` state drives Settings select value and LogPanel `loadHistory(N)`.
-LogPanel: collapsible Current Session + N history file tiles loaded on click.
+### Auto Method toggle
+`autoMethod` state (default ON) in App. When ON, `forceMethod` auto-syncs to `winState`:
+`minimized → dxgi`, else `→ wgc`. `useEffect([winState, autoMethod])` drives sync.
+Toggle switch in Capture Method section. Auto ON → active method gets amber border,
+all radios disabled. Auto OFF → manual blue-border selection.
+GDI/PrintWindow/ScreenBitBlt removed from UI (C++ impl preserved).
 
-### WGC stability
-`ShutdownQueueAsync().get()` → fire-and-forget (prevents STA thread self-deadlock).
-`worker.join()` → `worker.detach()` on init failure/timeout (prevents main thread hang).
+### Connection header restructure
+Header split: `[Connection]` left, `[状态 actual] [推荐 WGC/DXGI] [▼]` right.
+`recommendedMethod` derived from `winState` (not `forceMethod`) — always reactive.
+`expectedCaptureState` tracked from mode picker; amber warning when actual state differs.
+Method short names: `wgc→WGC`, `dxgi→DXGI`, `DesktopBlt→DXGI`.
 
-### Virtual desktop window enumeration
-`IVirtualDesktopManager` used in `enum_callback` — windows on other desktops no longer filtered out.
-Windows on non-current desktops labeled with `(Desktop N)`.
+### Overlay window fix
+Yellow border overlay windows now use `WS_EX_TOOLWINDOW` — no longer appear in taskbar.
+
+### Vite HMR fix
+Explicit `hmr: { protocol: 'ws', host: 'localhost' }` in vite.config.ts for WebView2 compatibility.
