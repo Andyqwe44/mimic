@@ -286,8 +286,12 @@ function TargetPickerModal({ open, onClose, onSelectWindow, onSelectMode }: {
       addLog('[Capture] desktop → dxgi')
       onClose()
     } else {
-      setPendingWin(w)
-      setPage('mode')
+      // DEV: skip mode picker page 2 — directly use wgc/foreground
+      onSelectMode('wgc', 'foreground')
+      addLog('[Capture] auto → wgc (mode picker skipped)')
+      onClose()
+      // setPendingWin(w)   // ← page 2 code preserved, not deleted
+      // setPage('mode')
     }
   }
 
@@ -443,8 +447,8 @@ function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, 
   const recommendedMethod = winState === 'minimized' ? 'dxgi' : 'wgc'
 
   const methods = [
-    { v: 'wgc',  l: 'WGC (GPU FramePool)', desc: 'GPU 加速，支持后台/遮挡窗口，前台后台首选' },
-    { v: 'dxgi', l: 'DXGI (DesktopBlt)',   desc: '全桌面 GDI 位图，最小化窗口或桌面时唯一可行方案' },
+    { v: 'wgc',  name: 'WGC', eng: 'GPU FramePool', rec: '前台/后台', desc: 'GPU 加速，支持后台/遮挡窗口，前台后台首选' },
+    { v: 'dxgi', name: 'DXGI', eng: 'DesktopBlt',   rec: '最小化/桌面', desc: '全桌面 GDI 位图，最小化窗口或桌面时唯一可行方案' },
   ]
 
   return (
@@ -476,7 +480,8 @@ function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, 
                 窗口已最小化，{forceMethod.toUpperCase()} 无法截取。请切换为 WGC 或将窗口恢复前台。
               </div>
             )}
-            {expectedCaptureState && winState !== 'desktop' && expectedCaptureState !== winState && (
+            {/* DEV: expected state mismatch warning — disabled during development */}
+            {false && expectedCaptureState && winState !== 'desktop' && expectedCaptureState !== winState && (
               <div className="text-xs text-amber-400 bg-amber-500/10 rounded-lg px-2 py-1.5 flex items-center gap-1.5">
                 <span className="shrink-0">⚠</span>
                 <span>预期状态: <b>{STATE_LABEL[expectedCaptureState] || expectedCaptureState}</b>，实际状态: <b>{STATE_LABEL[winState] || winState}</b>。截图可能失败或画面异常。</span>
@@ -521,13 +526,13 @@ function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, 
                     </button>
                   </label>
                 </div>
-                <div className="space-y-1">{methods.map(m => {
+                <div className="flex flex-col gap-3">{methods.map(m => {
                   const isActive = forceMethod === m.v
-                  const ringClass = !autoMethod && isActive ? 'bg-accent/10 ring-1 ring-accent cursor-pointer'
-                    : autoMethod && isActive ? 'bg-amber-500/10 ring-1 ring-amber-500 cursor-not-allowed'
-                    : autoMethod ? 'opacity-50 cursor-not-allowed'
-                    : 'hover:bg-bg-hover cursor-pointer'
-                  return <Tooltip key={m.v} text={m.desc}><label className={`flex items-center gap-2 px-2 py-1 rounded transition-colors ${ringClass}`}><input type="radio" name="method" value={m.v} checked={isActive} disabled={autoMethod} onChange={e => { if (!autoMethod) { setForceMethod(e.target.value); addLog(`[Setting] capture method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.l}</span></label></Tooltip>
+                  const ringClass = !autoMethod && isActive ? 'border-accent bg-accent/10 cursor-pointer'
+                    : autoMethod && isActive ? 'border-amber-500 bg-amber-500/10 cursor-not-allowed'
+                    : autoMethod ? 'border-border bg-bg-primary opacity-50 cursor-not-allowed'
+                    : 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
+                  return <Tooltip key={m.v} text={m.desc}><label className={`flex items-center w-full px-3 py-2 rounded-lg border transition-colors ${ringClass}`}><input type="radio" name="method" value={m.v} checked={isActive} disabled={autoMethod} onChange={e => { if (!autoMethod) { setForceMethod(e.target.value); addLog(`[Setting] capture method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className="ml-auto text-xs font-medium text-text-primary">{m.rec}</span></label></Tooltip>
                 })}</div>
               </div>
             )}
@@ -1035,18 +1040,18 @@ function SettingsPage({ forceMethod, setForceMethod, autoMethod, setAutoMethod, 
 
       <SettingsCard icon={<Monitor className="w-4 h-4 text-text-secondary" />} title="Transport">
         <div className="text-xs text-text-muted mb-2">How frames are sent to the frontend for preview.</div>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-3">
           {[
-            ['shared','Canvas (SharedBuffer)','Zero-copy BGRA → Canvas — no encode, no HTTP, lowest latency'],
-            ['mjpeg','MJPEG','JPEG stream via HTTP, browser GPU decode — stable fallback'],
-            ['base64','Base64','Raw RGBA via JSON/base64 — legacy, slow'],
-            ['h264','H.264','GPU MFT encode — experimental'],
-          ].map(([v, label, desc]) =>
-            <button key={v} onClick={() => { setTransportMethod(v); addLog(`[Transport] ${v}`) }}
-              className={`flex-1 p-3 rounded-lg border text-left transition-colors ${transportMethod === v ? 'border-accent bg-accent/10' : 'border-border bg-bg-primary hover:bg-bg-hover'}`}>
-              <div className="text-sm font-medium text-text-primary">{label}</div>
-              <div className="text-xs text-text-muted mt-1">{desc}</div>
-            </button>
+            { v:'shared', name:'Canvas', eng:'SharedBuffer', rec:'首选', desc:'Zero-copy BGRA → Canvas — no encode, no HTTP, lowest latency' },
+            { v:'mjpeg',  name:'MJPEG',  eng:'HTTP Stream',  rec:'备用', desc:'JPEG stream via HTTP, browser GPU decode — stable fallback' },
+            { v:'base64', name:'Base64', eng:'JSON',         rec:'旧版', desc:'Raw RGBA via JSON/base64 — legacy, slow' },
+            { v:'h264',   name:'H.264',  eng:'GPU MFT',      rec:'实验', desc:'GPU MFT encode — experimental' },
+          ].map(t =>
+            <Tooltip key={t.v} text={t.desc}><button onClick={() => { setTransportMethod(t.v); addLog(`[Transport] ${t.v}`) }}
+              className={`flex items-center w-full px-3 py-2 rounded-lg border transition-colors ${transportMethod === t.v ? 'border-accent bg-accent/10' : 'border-border bg-bg-primary hover:bg-bg-hover'}`}>
+              <span className="text-xs font-medium text-text-primary">{t.name} <span className="text-text-muted">({t.eng})</span></span>
+              <span className="ml-auto text-xs font-medium text-text-primary">{t.rec}</span>
+            </button></Tooltip>
           )}
         </div>
       </SettingsCard>
