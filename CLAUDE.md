@@ -153,6 +153,8 @@ cd monitor_app && build.cmd          # → monitor_app.exe
 cd monitor_web && npm run dev        # Vite on :5173
 cd monitor_app && build\monitor_app.exe --dev   # WebView2 → localhost:5173
 
+`--dev` flag also enables: console window (AllocConsole), verbose debug output.
+
 # 4. Prod mode
 cd monitor_web && npm run build      # Vite → dist/
 cd monitor_app && build\monitor_app.exe         # WebView2 → localhost:8888

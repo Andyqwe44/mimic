@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, Square, Camera, Monitor, Settings, Moon, Sun, ChevronDown, ChevronLeft, FileText, X, MonitorUp, Search, MonitorSmartphone, RefreshCw, FolderOpen, Cpu, Pencil, Copy, Check, ArrowDown } from 'lucide-react'
+import { Play, Square, Camera, Monitor, Settings, Moon, Sun, ChevronDown, ChevronLeft, FileText, X, MonitorUp, Search, MonitorSmartphone, RefreshCw, FolderOpen, Cpu, Pencil, Copy, Check, ArrowDown, Unlink } from 'lucide-react'
 // ── WebView2 WebMessage bridge (replaces Tauri invoke) ──
 type PendingCall = {
   resolve: (value: any) => void;
@@ -494,8 +494,8 @@ function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, 
                 {onDisconnect && (
                   <Tooltip text="断开当前窗口连接，回到桌面">
                     <button onClick={() => { onDisconnect(); setSelTitle(' Entire Desktop') }}
-                      className="h-8 w-8 flex items-center justify-center rounded-md bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0">
-                      <X className="w-3.5 h-3.5" />
+                      className="h-8 w-8 flex items-center justify-center rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 transition-colors shrink-0">
+                      <Unlink className="w-3.5 h-3.5" />
                     </button>
                   </Tooltip>
                 )}
@@ -520,7 +520,7 @@ function ConnectionPanel({ onSelect, onDisconnect, forceMethod, setForceMethod, 
                     <span className="text-[10px] text-text-muted">Auto</span>
                     <button onClick={e => { e.stopPropagation(); setAutoMethod(!autoMethod); addLog(`[Setting] auto method = ${!autoMethod}`) }}
                       className={`relative w-8 h-5 rounded-full transition-colors ${autoMethod ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
-                      <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoMethod ? 'left-4' : 'left-0.5'}`} />
+                      <span className={`absolute top-[3px] w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoMethod ? 'left-4' : 'left-0.5'}`} />
                     </button>
                   </label>
                 </div>
@@ -1158,7 +1158,7 @@ function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, 
                 <span className="text-[10px] text-text-muted">Auto</span>
                 <button onClick={e => { e.stopPropagation(); setAutoTransport(!autoTransport); addLog(`[Setting] auto transport = ${!autoTransport}`) }}
                   className={`relative w-8 h-5 rounded-full transition-colors ${autoTransport ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
-                  <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoTransport ? 'left-4' : 'left-0.5'}`} />
+                  <span className={`absolute top-[3px] w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoTransport ? 'left-4' : 'left-0.5'}`} />
                 </button>
               </label>
             )}

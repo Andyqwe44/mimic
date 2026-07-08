@@ -90,9 +90,11 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCm
 {
     bool auto_stream = (std::string(lpCmdLine).find("--auto-stream") != std::string::npos);
     g_dev_mode = (std::string(lpCmdLine).find("--dev") != std::string::npos);
-    AllocConsole();
-    freopen("CONOUT$", "w", stdout);
-    freopen("CONOUT$", "w", stderr);
+    if (g_dev_mode) {
+        AllocConsole();
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
     LOG("main", "GAM starting (dev=%d auto_stream=%d)", (int)g_dev_mode, (int)auto_stream);
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
