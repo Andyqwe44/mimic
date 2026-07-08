@@ -109,12 +109,18 @@ const COLLAPSIBLE_HEADER = 'w-full flex items-center justify-between px-3 py-2 h
 // Shared CSS: selectable option button (capture method + transport)
 const SELECTABLE_BTN = 'flex items-center w-full px-3 py-2 rounded-lg border transition-colors'
 
+// ── Smooth theme switch: add class for 200ms, all elements animate in sync ──
+function applyTheme(isDark: boolean) {
+  document.documentElement.classList.add('theme-switching')
+  document.documentElement.classList.toggle('dark', isDark)
+  setTimeout(() => document.documentElement.classList.remove('theme-switching'), 220)
+}
+
 // ═══ Theme btn ───
-function ThemeBtn() {
-  const [dark, setDark] = useState(false)
+function ThemeBtn({ dark, onToggle }: { dark: boolean; onToggle: () => void }) {
   return (
     <Tooltip text={dark ? "切换亮色主题" : "切换暗色主题"}>
-      <button onClick={() => { const d = !dark; setDark(d); document.documentElement.classList.toggle('dark', d); addLog(`[Theme] ${d ? 'dark' : 'light'}`) }}
+      <button onClick={onToggle}
         className="p-2 rounded-md hover:bg-bg-hover transition-colors">
         {dark ? <Sun className="w-4 h-4 text-text-secondary" /> : <Moon className="w-4 h-4 text-text-secondary" />}
       </button>
@@ -146,8 +152,9 @@ function ActionBtn({ icon, label, title, variant, onClick, className }: {
 }
 
 // ═══ TopBar (MXU-style tab bar) ───
-function TopBar({ tab, setTab, running, onStart, onStop }: {
-  tab: string; setTab: (t: 'Monitor'|'Log'|'Settings') => void; running: boolean; onStart: () => void; onStop: () => void
+function TopBar({ tab, setTab, running, onStart, onStop, dark, onToggleTheme }: {
+  tab: string; setTab: (t: 'Monitor'|'Log'|'Settings') => void; running: boolean; onStart: () => void; onStop: () => void;
+  dark: boolean; onToggleTheme: () => void;
 }) {
   const tabs = [
     { id: 'Monitor' as const, icon: <Monitor className="w-3.5 h-3.5" />, label: 'Monitor' },
@@ -172,7 +179,7 @@ function TopBar({ tab, setTab, running, onStart, onStop }: {
           : <ActionBtn icon={<Play className="w-3.5 h-3.5" />} label="Start" title="启动agent任务" variant="primary" onClick={() => { onStart(); addLog('[Action] Start') }} />
         }
         <div className="mx-1 h-4 w-px bg-border" />
-        <ThemeBtn />
+        <ThemeBtn dark={dark} onToggle={onToggleTheme} />
       </div>
     </div>
   )
@@ -1129,7 +1136,7 @@ function StatusBar({ screen, appVersion }: { screen: string; appVersion: string 
   )
 }
 
-function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, transportMethod, setTransportMethod, autoTransport, setAutoTransport, selWin, winState, expectedCaptureState, setExpectedCaptureState, onSelect, onDisconnect, keepFiles, setKeepFiles, appVersion }: { forceMethod: string; setForceMethod: (m: string) => void; autoMethod?: boolean; setAutoMethod?: (v: boolean) => void; transportMethod: string; setTransportMethod: (m: string) => void; autoTransport?: boolean; setAutoTransport?: (v: boolean) => void; selWin?: WindowInfo; winState: string; expectedCaptureState?: string; setExpectedCaptureState?: (s: string) => void; onSelect: (w: WindowInfo) => void; onDisconnect: () => void; keepFiles: number; setKeepFiles: (n: number) => void; appVersion: string }) {
+function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, transportMethod, setTransportMethod, autoTransport, setAutoTransport, selWin, winState, expectedCaptureState, setExpectedCaptureState, onSelect, onDisconnect, keepFiles, setKeepFiles, appVersion, theme, setTheme }: { forceMethod: string; setForceMethod: (m: string) => void; autoMethod?: boolean; setAutoMethod?: (v: boolean) => void; transportMethod: string; setTransportMethod: (m: string) => void; autoTransport?: boolean; setAutoTransport?: (v: boolean) => void; selWin?: WindowInfo; winState: string; expectedCaptureState?: string; setExpectedCaptureState?: (s: string) => void; onSelect: (w: WindowInfo) => void; onDisconnect: () => void; keepFiles: number; setKeepFiles: (n: number) => void; appVersion: string; theme: string; setTheme: (t: 'light'|'dark'|'system') => void }) {
   const colors = ['#3B82F6','#8B5CF6','#EC4899','#F59E0B','#10B981','#EF4444']
   const [accent, setAccent] = useState('#3B82F6')
   const [screenRes, setScreenRes] = useState('?×?')
@@ -1193,8 +1200,8 @@ function SettingsView({ forceMethod, setForceMethod, autoMethod, setAutoMethod, 
             <label className="text-sm text-text-secondary w-24 shrink-0">Theme</label>
             <div className="flex gap-1">
               {[['Light','light'],['Dark','dark'],['System','system']].map(([l,v])=>
-                <button key={v} onClick={()=>{document.documentElement.classList.toggle('dark',v==='dark'); addLog(`[Theme] ${l}`)}}
-                  className="px-3 py-1 rounded-full text-xs font-medium bg-bg-tertiary text-text-secondary hover:bg-bg-hover transition-colors">{l}</button>
+                <button key={v} onClick={()=>{setTheme(v as 'light'|'dark'|'system'); addLog(`[Theme] ${l}`)}}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${theme === v ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'}`}>{l}</button>
               )}
             </div>
           </div>
@@ -1259,6 +1266,25 @@ export default function App() {
   const logExpandedRef = useRef(logExpanded)
   logExpandedRef.current = logExpanded
   const rightPanelRef = useRef<HTMLDivElement>(null)
+
+  // ── Theme state (shared by ThemeBtn + Settings General) ──
+  const [theme, setTheme] = useState<'light'|'dark'|'system'>('dark')
+  const [systemDark, setSystemDark] = useState(false)
+  const resolvedDark = theme === 'system' ? systemDark : theme === 'dark'
+
+  // Listen to OS color scheme changes
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    setSystemDark(mq.matches)
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  // Apply theme when resolvedDark changes
+  useEffect(() => {
+    applyTheme(resolvedDark)
+  }, [resolvedDark])
 
   // ── Right panel auto-layout state machine ──
   // Heights measured from DOM: C/S/L = expanded, Cp/Sp/Lp = collapsed (prime).
@@ -1550,10 +1576,11 @@ export default function App() {
   return (
     <div className="h-full flex flex-col bg-bg-primary">
       <TopBar tab={tab} setTab={setTab} running={running}
-        onStart={() => setRunning(true)} onStop={() => setRunning(false)} />
+        onStart={() => setRunning(true)} onStop={() => setRunning(false)}
+        dark={resolvedDark} onToggleTheme={() => setTheme(resolvedDark ? 'light' : 'dark')} />
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden border-r border-border" style={{ minWidth: MIN_LEFT_WIDTH }}>
-          {tab === 'Settings' && <SettingsView forceMethod={forceMethod} setForceMethod={setForceMethod} autoMethod={autoMethod} setAutoMethod={setAutoMethod} transportMethod={transportMethod} setTransportMethod={setTransportMethod} autoTransport={autoTransport} setAutoTransport={setAutoTransport} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} onSelect={setSelWindow} onDisconnect={() => { setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); setExpectedCaptureState('desktop'); addLog('[Connection] disconnected, back to desktop') }} keepFiles={keepFiles} setKeepFiles={setKeepFiles} appVersion={appVersion} />}
+          {tab === 'Settings' && <SettingsView forceMethod={forceMethod} setForceMethod={setForceMethod} autoMethod={autoMethod} setAutoMethod={setAutoMethod} transportMethod={transportMethod} setTransportMethod={setTransportMethod} autoTransport={autoTransport} setAutoTransport={setAutoTransport} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} onSelect={setSelWindow} onDisconnect={() => { setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); setExpectedCaptureState('desktop'); addLog('[Connection] disconnected, back to desktop') }} keepFiles={keepFiles} setKeepFiles={setKeepFiles} appVersion={appVersion} theme={theme} setTheme={setTheme} />}
           {tab === 'Monitor' && (
             <div className="flex-1 flex items-center justify-center p-6">
               <div className="rounded-xl bg-bg-secondary p-8 text-center space-y-3 max-w-md w-full">
