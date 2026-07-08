@@ -148,11 +148,17 @@ struct WgcStreamHandle {
     void stop() {
         running = false;
         cap.signal_stop();
-        // Don't join — the worker checks `running` and exits on its own.
-        // Joining can hang if the worker is blocked in a WinRT callback.
-        // The thread resources are cleaned up when the process exits.
+        // signal_stop() wakes wait_frame() → worker checks !running → breaks loop → exits.
+        // join() is safe because FrameArrived callback is brief (flag+notify, no blocking).
+        // Previously used detach() which leaked DispatcherQueue + WGC session,
+        // causing crash when next capture targets same window.
         if (worker.joinable()) {
-            worker.detach();
+            worker.join();
+        }
+        // Worker has exited — safe to tear down DispatcherQueue
+        if (dispatcher_ctrl_) {
+            dispatcher_ctrl_.ShutdownQueueAsync();
+            dispatcher_ctrl_ = nullptr;
         }
     }
 };
@@ -252,7 +258,9 @@ int wgc_capture_single(HWND hwnd, uint8_t* buf, int buf_size,
             *out_w = frame.width;
             *out_h = frame.height;
             *out_ch = frame.channels;
+            LOG("wgc", "wgc_capture_single: calling cap.shutdown()...");
             cap.shutdown();
+            LOG("wgc", "wgc_capture_single: cap.shutdown() OK, calling dq.ShutdownQueueAsync()...");
             dq.ShutdownQueueAsync();
             LOG("wgc", "wgc_capture_single: SUCCESS %dx%d ch=%d size=%d",
                 *out_w, *out_h, *out_ch, needed);
@@ -391,7 +399,9 @@ int wgc_capture_single_monitor(HMONITOR hmon, uint8_t* buf, int buf_size,
             *out_w = frame.width;
             *out_h = frame.height;
             *out_ch = frame.channels;
+            LOG("wgc", "wgc_capture_single_monitor: calling cap.shutdown()...");
             cap.shutdown();
+            LOG("wgc", "wgc_capture_single_monitor: cap.shutdown() OK, calling dq.ShutdownQueueAsync()...");
             dq.ShutdownQueueAsync();
             LOG("wgc", "wgc_capture_single_monitor: SUCCESS %dx%d ch=%d size=%d",
                 *out_w, *out_h, *out_ch, needed);

@@ -430,7 +430,7 @@ function TargetPickerModal({ open, onClose, onSelectWindow, onSelectMode }: {
 const METHOD_SHORT: Record<string,string> = { wgc:'WGC', gdi:'GDI', dxgi:'DXGI', printwindow:'PW', screenbitblt:'SBlt', GDI:'GDI', 'GDI(GetWindowDC)':'GDI', PrintWindow:'PW', 'PrintWindow(minimized)':'PW', ScreenBitBlt:'SBlt', DesktopBlt:'DXGI', WGC:'WGC' }
 const METHODS_NO_MINIMIZED = ['wgc','gdi','printwindow','screenbitblt']
 const cantCaptureMinimized = (method: string, ws: string) => ws === 'minimized' && METHODS_NO_MINIMIZED.includes(method)
-const STATE_LABEL: Record<string,string> = { desktop:'Desktop', foreground:'前台', background:'后台', minimized:'最小化', hidden:'隐藏', closed:'已关闭', unknown:'未知' }
+const STATE_LABEL: Record<string,string> = { desktop:'桌面', foreground:'前台', background:'后台', minimized:'最小化', hidden:'隐藏', closed:'已关闭', unknown:'未知' }
 const STATE_COLOR: Record<string,string> = { desktop:'text-text-muted', foreground:'text-success', background:'text-accent', minimized:'text-error', hidden:'text-error', closed:'text-error', unknown:'text-text-muted' }
 
 const CAPTURE_METHODS = [
@@ -488,7 +488,7 @@ function ConnectionPanel({ onSelect, onDisconnect, snapMethod, setSnapMethod, st
             {STATE_LABEL[winState] || winState}
           </span>
           <span className="text-[10px] text-text-muted shrink-0">推荐</span>
-          <span className="text-xs text-accent truncate">{METHOD_SHORT[recommendedMethod] || recommendedMethod}</span>
+          <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">{METHOD_SHORT[recommendedMethod] || recommendedMethod}</span>
           {cantCapture && <span className="text-xs text-error shrink-0">⚠</span>}
           <ChevronDown className={`w-4 h-4 text-text-muted transition-transform duration-150 ${expanded?'rotate-180':''}`} />
         </div>
@@ -548,20 +548,26 @@ function ConnectionPanel({ onSelect, onDisconnect, snapMethod, setSnapMethod, st
 // ═══ Screenshot Panel ───
 // Single Canvas for both snapshot and real-time preview.
 // Frames arrive via SharedBuffer (zero-copy) → sharedbufferreceived event → putImageData.
-function ScreenshotPanel({ selWin, screenRatio, snapMethod, streamMethod, renderMethod, winState, expanded, onToggle }: { selWin?: WindowInfo; screenRatio: number; snapMethod: string; streamMethod: string; renderMethod: string; winState: string; expanded: boolean; onToggle: () => void }) {
-  const [previewing, setPreviewing] = useState(false)
-  const [hasContent, setHasContent] = useState(false)  // true when snapshot or preview rendered
-  const [fps, setFps] = useState(0)
-  const [capMethod, setCapMethod] = useState('')
+function ScreenshotPanel({ selWin, screenRatio, snapMethod, streamMethod, renderMethod, winState, expanded, onToggle, previewing, previewingRef, snapshotRef, snapshotStartRef, capMethod, onTakeSnapshot, onTogglePreview }: {
+  selWin?: WindowInfo; screenRatio: number; snapMethod: string; streamMethod: string; renderMethod: string; winState: string; expanded: boolean; onToggle: () => void;
+  previewing: boolean; previewingRef: React.MutableRefObject<boolean>; snapshotRef: React.MutableRefObject<boolean>; snapshotStartRef: React.MutableRefObject<number>;
+  capMethod: string;
+  onTakeSnapshot: () => void; onTogglePreview: () => void;
+}) {
+  const [hasContent, setHasContent] = useState(false)
   const [snapshotLatency, setSnapshotLatency] = useState<number | null>(null)
-  const previewingRef = useRef(false)
-  const snapshotRef = useRef(false)        // one-shot: capture next SharedBuffer frame then stop
-  const snapshotStartRef = useRef(0)        // timestamp when 📷 button pressed
+  const [fps, setFps] = useState(0)
   const framesRef = useRef(0)
   const lastFpsRef = useRef(Date.now())
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [canvasDims, setCanvasDims] = useState({ w: 0, h: 0 })
   const handlerRef = useRef<((e: any) => void) | null>(null)
+
+  // Reset fps and latency when previewing state changes
+  useEffect(() => {
+    setFps(0); framesRef.current = 0; lastFpsRef.current = Date.now()
+    if (previewing) setSnapshotLatency(null)
+  }, [previewing])
 
   // ── SharedBuffer → Canvas (shared by snapshot + stream) ──
   useEffect(() => {
@@ -577,39 +583,23 @@ function ScreenshotPanel({ selWin, screenRatio, snapMethod, streamMethod, render
       if (firstFrame) { firstFrame = false; addLog('[Screenshot] first SharedBuffer frame received') }
       try {
         const buf: ArrayBuffer = e.getBuffer()
-        addLog(`[SB] getBuffer OK size=${buf.byteLength}`)
-        const metaRaw = e.additionalData  // may be object or JSON string depending on WebView2 version
+        const metaRaw = e.additionalData
         const meta: { w: number; h: number } = typeof metaRaw === 'string' ? JSON.parse(metaRaw) : metaRaw
-        if (!meta.w || !meta.h || meta.w <= 0 || meta.h <= 0) {
-          addLog(`[SB] BAD meta: w=${meta.w} h=${meta.h}`)
-          return
-        }
-        addLog(`[SB] meta w=${meta.w} h=${meta.h}`)
+        if (!meta.w || !meta.h || meta.w <= 0 || meta.h <= 0) { return }
         const pixelCount = meta.w * meta.h * 4
-        if (buf.byteLength < pixelCount) {
-          addLog(`[SB] buffer too small: ${buf.byteLength} < ${pixelCount}`)
-          return
-        }
+        if (buf.byteLength < pixelCount) { return }
         const imgData = new ImageData(
           new Uint8ClampedArray(buf, 0, pixelCount),
           meta.w, meta.h
         )
-        addLog(`[SB] ImageData created ${meta.w}x${meta.h}`)
         const c = canvasRef.current
-        addLog(`[SB] canvasRef.current = ${c ? 'OK' : 'NULL'}`)
         if (c) {
-          c.width = meta.w
-          c.height = meta.h
+          c.width = meta.w; c.height = meta.h
           setCanvasDims({ w: meta.w, h: meta.h })
           const ctx = c.getContext('2d')
-          addLog(`[SB] ctx = ${ctx ? 'OK' : 'NULL'}`)
-          if (ctx) {
-            ctx.putImageData(imgData, 0, 0)
-            addLog(`[SB] putImageData OK ${meta.w}x${meta.h}`)
-          }
+          if (ctx) { ctx.putImageData(imgData, 0, 0) }
         }
         setHasContent(true)
-        addLog(`[SB] hasContent=true`)
         framesRef.current++
         const now = Date.now(); const elapsed = now - lastFpsRef.current
         if (elapsed >= 1000) { setFps(Math.round(framesRef.current * 1000 / elapsed)); framesRef.current = 0; lastFpsRef.current = now }
@@ -630,61 +620,6 @@ function ScreenshotPanel({ selWin, screenRatio, snapMethod, streamMethod, render
     return () => { wv.removeEventListener('sharedbufferreceived', handler) }
   }, [])
 
-  // ── Snapshot (Camera button) ──
-  const takeSnapshot = async () => {
-    const hwnd = selWin?.hwnd ?? 0
-    const method = snapMethod
-    addLog(`[Capture] 📷 snapshot start: hwnd=${hwnd} method=${method} winState=${winState}`)
-    if (cantCaptureMinimized(method, winState)) {
-      addLog(`[Capture] blocked: window minimized, ${method} cannot capture`); return
-    }
-    addLog(`[Capture] ${METHOD_SHORT[method] || method} ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
-    const t0 = Date.now()
-    snapshotStartRef.current = t0
-    try {
-      snapshotRef.current = true
-      addLog(`[Capture] calling hostCall capture_window...`)
-      const info = await hostCall('capture_window', { hwnd, method }) as { ok?: boolean; method?: string; w?: number; h?: number }
-      const elapsed = Date.now() - t0
-      addLog(`[Capture] hostCall returned: ok=${info?.ok} w=${info?.w} h=${info?.h} method=${info?.method} (${elapsed}ms)`)
-      if (info && info.ok) {
-        if (info.method) setCapMethod(info.method)
-        addLog(`[Capture] OK ${info.w}x${info.h} (${elapsed}ms) [${info.method || '?'}]`)
-      } else {
-        snapshotRef.current = false
-        addLog(`[Capture] failed (${elapsed}ms)`)
-      }
-    } catch (ex: any) {
-      snapshotRef.current = false
-      addLog(`[Capture] EXCEPTION: ${ex?.message || ex} after ${Date.now() - t0}ms`)
-    }
-  }
-
-  // ── Preview toggle ──
-  const togglePreview = async () => {
-    if (previewing) {
-      previewingRef.current = false; setPreviewing(false); setFps(0)
-      try { await hostCall('capture_stream_stop') } catch (_) {}
-      addLog('[Preview] stopped')
-    } else {
-      const hwnd = selWin?.hwnd ?? 0
-      if (cantCaptureMinimized(streamMethod, winState)) {
-        addLog(`[Preview] blocked: window minimized, ${streamMethod} cannot capture`); return
-      }
-      addLog(`[Preview] ${selWin?.title ?? 'desktop'} [${streamMethod}]`)
-      previewingRef.current = true; setPreviewing(true); setFps(0); setCapMethod(streamMethod); setSnapshotLatency(null)
-      try { await hostCall('capture_stream_start', { hwnd, tcpPort: 9999, method: streamMethod, transport: renderMethod }) }
-      catch (e) { previewingRef.current = false; setPreviewing(false); addLog(`[Preview] start failed: ${e}`); return }
-      if (!expanded) onToggle()
-    }
-  }
-
-  // Cleanup on unmount
-  useEffect(() => { return () => {
-    previewingRef.current = false; snapshotRef.current = false
-    hostCall('capture_stream_stop').catch(() => {})
-  } }, [])
-
   return (
     <div className="bg-bg-secondary rounded-xl ring-1 ring-inset ring-border overflow-hidden">
       <div role="button" tabIndex={0} onClick={() => { onToggle(); addLog(`[Screenshot] ${!expanded ? 'expanded' : 'collapsed'}`) }} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){(e.currentTarget as HTMLElement).click()}}}
@@ -700,15 +635,15 @@ function ScreenshotPanel({ selWin, screenRatio, snapMethod, streamMethod, render
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <Tooltip text="单帧截图">
-            <button onClick={e => { e.stopPropagation(); takeSnapshot() }}
+            <button onClick={e => { e.stopPropagation(); onTakeSnapshot() }}
               className="p-1 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors">
               <Camera className="w-3.5 h-3.5" />
             </button>
           </Tooltip>
           {previewing
-            ? <Tooltip text="停止实时预览"><button onClick={e => { e.stopPropagation(); togglePreview() }}
+            ? <Tooltip text="停止实时预览"><button onClick={e => { e.stopPropagation(); onTogglePreview() }}
                 className="p-1 rounded-md text-success hover:bg-bg-tertiary transition-colors"><Square className="w-3.5 h-3.5" /></button></Tooltip>
-            : <Tooltip text="开始实时预览"><button onClick={e => { e.stopPropagation(); togglePreview() }}
+            : <Tooltip text="开始实时预览"><button onClick={e => { e.stopPropagation(); onTogglePreview() }}
                 className="p-1 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"><Play className="w-3.5 h-3.5" /></button></Tooltip>
           }
           <ChevronDown className={`w-4 h-4 text-text-muted transition-transform duration-150 ${expanded?'rotate-180':''}`} />
@@ -1545,6 +1480,15 @@ export default function App() {
   const [winState, setWinState] = useState('desktop')
   const lastWinStateRef = useRef('desktop')
 
+  // ── Capture operation state machine (TS-side conflict resolution) ──
+  const opStateRef = useRef<'idle' | 'snapshotting' | 'streaming'>('idle')
+  const snapCancelRef = useRef(0)
+  const [previewing, setPreviewing] = useState(false)
+  const previewingRef = useRef(false)
+  const snapshotRef = useRef(false)
+  const snapshotStartRef = useRef(0)
+  const [capMethod, setCapMethod] = useState('')
+
   useEffect(() => {
     (async () => {
       try {
@@ -1580,6 +1524,110 @@ export default function App() {
     }
   }, [selWindow.hwnd, winState, autoSnap, autoStream])
 
+  // ── Capture operations (TS-side conflict resolution — last action wins) ──
+
+  const stopStream = useCallback(async () => {
+    if (opStateRef.current !== 'streaming') return
+    previewingRef.current = false; setPreviewing(false)
+    try { await hostCall('capture_stream_stop') } catch (_) {}
+    opStateRef.current = 'idle'
+    addLog('[Capture] stream stopped')
+  }, [])
+
+  const takeSnapshot = useCallback(async () => {
+    // Auto-stop stream before snapshot (newer action wins)
+    if (opStateRef.current === 'streaming') {
+      addLog('[Capture] auto-stop stream before snapshot')
+      await stopStream()
+    }
+    // Guard: no concurrent snapshot
+    if (opStateRef.current === 'snapshotting') {
+      addLog('[Capture] snapshot already in progress, ignoring')
+      return
+    }
+    opStateRef.current = 'snapshotting'
+    const snapId = ++snapCancelRef.current
+
+    const hwnd = selWindow.hwnd ?? 0
+    const method = snapMethod
+    addLog(`[Capture] 📷 snapshot start: hwnd=${hwnd} method=${method} winState=${winState}`)
+    if (cantCaptureMinimized(method, winState)) {
+      addLog(`[Capture] blocked: window minimized, ${method} cannot capture`)
+      opStateRef.current = 'idle'
+      return
+    }
+    addLog(`[Capture] ${METHOD_SHORT[method] || method} ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
+    const t0 = Date.now()
+    snapshotStartRef.current = t0
+    snapshotRef.current = true
+    try {
+      const info = await hostCall('capture_window', { hwnd, method }) as { ok?: boolean; method?: string; w?: number; h?: number }
+      const elapsed = Date.now() - t0
+      addLog(`[Capture] hostCall returned: ok=${info?.ok} w=${info?.w} h=${info?.h} method=${info?.method} (${elapsed}ms)`)
+      // Check if cancelled by later operation (e.g. stream start)
+      if (snapId !== snapCancelRef.current) {
+        addLog('[Capture] snapshot cancelled by later operation')
+        return
+      }
+      if (info && info.ok) {
+        if (info.method) setCapMethod(info.method)
+        addLog(`[Capture] OK ${info.w}x${info.h} (${elapsed}ms) [${info.method || '?'}]`)
+      } else {
+        snapshotRef.current = false
+        addLog(`[Capture] failed (${elapsed}ms)`)
+      }
+    } catch (ex: any) {
+      if (snapId !== snapCancelRef.current) return
+      snapshotRef.current = false
+      addLog(`[Capture] EXCEPTION: ${ex?.message || ex} after ${Date.now() - t0}ms`)
+    }
+    opStateRef.current = 'idle'
+  }, [selWindow.hwnd, snapMethod, winState, stopStream])
+
+  const startStream = useCallback(async () => {
+    // Cancel any pending snapshot (newer action wins)
+    ++snapCancelRef.current
+    snapshotRef.current = false
+
+    // Guard: stream already starting
+    if (opStateRef.current === 'streaming') {
+      addLog('[Capture] stream already starting, ignoring')
+      return
+    }
+
+    const hwnd = selWindow.hwnd ?? 0
+    if (cantCaptureMinimized(streamMethod, winState)) {
+      addLog(`[Preview] blocked: window minimized, ${streamMethod} cannot capture`)
+      return
+    }
+
+    opStateRef.current = 'streaming'
+    previewingRef.current = true; setPreviewing(true)
+    setCapMethod(streamMethod)
+
+    addLog(`[Preview] ${selWindow?.title ?? 'desktop'} [${streamMethod}]`)
+    try {
+      await hostCall('capture_stream_start', { hwnd, tcpPort: 9999, method: streamMethod, transport: renderMethod })
+    } catch (e) {
+      previewingRef.current = false; setPreviewing(false)
+      opStateRef.current = 'idle'
+      addLog(`[Preview] start failed: ${e}`)
+      return
+    }
+    // Auto-expand ScreenshotPanel if collapsed
+    if (!screenshotExpanded) setScreenshotExpanded(true)
+  }, [selWindow.hwnd, selWindow?.title, streamMethod, winState, renderMethod, screenshotExpanded])
+
+  const togglePreview = useCallback(async () => {
+    if (previewing) { await stopStream() }
+    else { await startStream() }
+  }, [previewing, stopStream, startStream])
+
+  // Cleanup on unmount
+  useEffect(() => { return () => {
+    previewingRef.current = false; snapshotRef.current = false
+    hostCall('capture_stream_stop').catch(() => {})
+  } }, [])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     autoCollapsedByWidth.current = false // manual drag overrides auto-collapse
@@ -1601,7 +1649,7 @@ export default function App() {
         dark={resolvedDark} onToggleTheme={() => setTheme(resolvedDark ? 'light' : 'dark')} />
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden border-r border-border" style={{ minWidth: MIN_LEFT_WIDTH }}>
-          {tab === 'Settings' && <SettingsView snapMethod={snapMethod} setSnapMethod={setSnapMethod} streamMethod={streamMethod} setStreamMethod={setStreamMethod} renderMethod={renderMethod} setRenderMethod={setRenderMethod} autoSnap={autoSnap} setAutoSnap={setAutoSnap} autoStream={autoStream} setAutoStream={setAutoStream} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} onSelect={setSelWindow} onDisconnect={() => { setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); setExpectedCaptureState('desktop'); addLog('[Connection] disconnected, back to desktop') }} keepFiles={keepFiles} setKeepFiles={setKeepFiles} appVersion={appVersion} theme={theme} setTheme={setTheme} devMode={devMode} setDevMode={setDevMode} saveCaptureFrames={saveCaptureFrames} setSaveCaptureFrames={setSaveCaptureFrames} saveStreamFrames={saveStreamFrames} setSaveStreamFrames={setSaveStreamFrames} frameDumpDir={frameDumpDir} setFrameDumpDir={setFrameDumpDir} />}
+          {tab === 'Settings' && <SettingsView snapMethod={snapMethod} setSnapMethod={setSnapMethod} streamMethod={streamMethod} setStreamMethod={setStreamMethod} renderMethod={renderMethod} setRenderMethod={setRenderMethod} autoSnap={autoSnap} setAutoSnap={setAutoSnap} autoStream={autoStream} setAutoStream={setAutoStream} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} onSelect={(w: WindowInfo) => { if (opStateRef.current === 'streaming') stopStream(); setSelWindow(w) }} onDisconnect={() => { if (opStateRef.current === 'streaming') stopStream(); setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 }); setExpectedCaptureState('desktop'); addLog('[Connection] disconnected, back to desktop') }} keepFiles={keepFiles} setKeepFiles={setKeepFiles} appVersion={appVersion} theme={theme} setTheme={setTheme} devMode={devMode} setDevMode={setDevMode} saveCaptureFrames={saveCaptureFrames} setSaveCaptureFrames={setSaveCaptureFrames} saveStreamFrames={saveStreamFrames} setSaveStreamFrames={setSaveStreamFrames} frameDumpDir={frameDumpDir} setFrameDumpDir={setFrameDumpDir} />}
           {tab === 'Monitor' && (
             <div className="flex-1 flex items-center justify-center p-6">
               <div className="rounded-xl bg-bg-secondary p-8 text-center space-y-3 max-w-md w-full">
@@ -1622,12 +1670,13 @@ export default function App() {
         </Tooltip>
         {!rightCollapsed && (
           <div ref={rightPanelRef} className="flex flex-col p-3 gap-3 overflow-hidden min-h-0" style={{ width: rightWidth, minWidth: 324, maxWidth: 400 }}>
-            <div className="shrink-0"><ConnectionPanel onSelect={setSelWindow} onDisconnect={() => {
+            <div className="shrink-0"><ConnectionPanel onSelect={(w: WindowInfo) => { if (opStateRef.current === 'streaming') stopStream(); setSelWindow(w) }} onDisconnect={() => {
+              if (opStateRef.current === 'streaming') stopStream()
               setSelWindow({ title: ' Entire Desktop', category: 'desktop', hwnd: 0 })
               setExpectedCaptureState('desktop')
               addLog('[Connection] disconnected, back to desktop')
             }} snapMethod={snapMethod} setSnapMethod={setSnapMethod} streamMethod={streamMethod} setStreamMethod={setStreamMethod} selWin={selWindow} winState={winState} expectedCaptureState={expectedCaptureState} setExpectedCaptureState={setExpectedCaptureState} expanded={connectionExpanded} onToggle={() => setConnectionExpanded(v => !v)} /></div>
-            <div className="shrink-0 overflow-hidden"><ScreenshotPanel selWin={selWindow} screenRatio={screenRatio} snapMethod={snapMethod} streamMethod={streamMethod} renderMethod={renderMethod} winState={winState} expanded={screenshotExpanded} onToggle={() => setScreenshotExpanded(v => !v)} /></div>
+            <div className="shrink-0 overflow-hidden"><ScreenshotPanel selWin={selWindow} screenRatio={screenRatio} snapMethod={snapMethod} streamMethod={streamMethod} renderMethod={renderMethod} winState={winState} expanded={screenshotExpanded} onToggle={() => setScreenshotExpanded(v => !v)} previewing={previewing} previewingRef={previewingRef} snapshotRef={snapshotRef} snapshotStartRef={snapshotStartRef} capMethod={capMethod} onTakeSnapshot={takeSnapshot} onTogglePreview={togglePreview} /></div>
             <div className="shrink-0"><LogPanel compact expanded={logExpanded} onToggle={() => setLogExpanded(v => !v)} /></div>
             <div className="flex-1" />
           </div>

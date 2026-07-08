@@ -525,7 +525,9 @@ static std::string cmd_capture_stream_stop(); // fwd decl for cmd_capture_stream
 
 static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& method, const std::string& transport) {
     // Stop any existing stream first
-    cmd_capture_stream_stop();
+    // NOTE: TS now handles conflict resolution (auto-stop before start).
+    // This auto-stop is commented out to ensure TS-side bugs are surfaced, not silently fixed.
+    // cmd_capture_stream_stop();
 
     HWND h = (HWND)(uintptr_t)hwnd;
 

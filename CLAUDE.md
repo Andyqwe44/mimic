@@ -437,6 +437,9 @@ Stop button → hostCall('capture_stream_stop')
 4. **WebView2 cross-thread COM**: `ICoreWebView2Environment12`/`ICoreWebView2_17` are STA-only;
    COM marshaling fails (no proxy/stub, 0x80040155). Stream uses PostMessage bridge to
    push SharedBuffer from main STA thread. Single-frame capture works directly on main thread.
+5. **WGC same-window session conflict**: Starting WGC stream while previous session still
+   alive crashes. TS state machine prevents this; C++ `cmd_capture_stream_start` auto-stop
+   removed to surface TS bugs. `WgcStreamHandle::stop()` now `join()`s worker thread.
 
 ## Frontend Type System
 
@@ -449,6 +452,40 @@ Never use `any` for WebView2 event handlers — the `.d.ts` enables compile-time
 of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
 ## Recent Fixes (2026-07-09)
+
+### UI operation conflict resolution — TS-side state machine (major)
+All capture operation conflicts resolved in TypeScript (铁律 5 推广: C++ 不替前端做决策).
+**Principle**: last action wins — newer operation auto-cancels older one.
+
+| Old state | New action | Behavior |
+|-----------|-----------|----------|
+| ▶ streaming | 📷 snapshot | Auto-stop stream → take snapshot |
+| ▶ streaming | 🔄 change target | Auto-stop stream → switch target |
+| ▶ streaming | 🔌 disconnect | Auto-stop stream → reset to desktop |
+| 📷 snapshotting | ▶ start stream | Cancel snapshot → start stream |
+| 📷 snapshotting | 📷 snapshot | Ignore (re-entry guard) |
+
+**Architecture**: `ScreenshotPanel` → pure view. Operation state machine (`opStateRef` +
+`snapCancelRef`) + `takeSnapshot`/`startStream`/`stopStream` live in `App`.
+`ScreenshotPanel` receives refs (`previewingRef`, `snapshotRef`, `snapshotStartRef`)
+as props for the SharedBuffer handler.
+
+### WGC thread cleanup: detach → join
+`WgcStreamHandle::stop()`: `detach()` → `join()` + `ShutdownQueueAsync()`.
+Old code detached worker thread and immediately `delete h`, destroying `WgcCapture cap`
+while worker was still using it (use-after-free). Old DispatcherQueue never shut down,
+leaving stale WGC session that crashed next capture on same window.
+Added defensive LOG before `cap.shutdown()` and `dq.ShutdownQueueAsync()`.
+
+### C++ stream auto-stop removed
+`cmd_capture_stream_start` no longer calls `cmd_capture_stream_stop()` internally.
+TS handles conflict resolution exclusively. `cmd_clear_log` + `backend_shutdown`
+safety nets preserved.
+
+### STATE_LABEL desktop → 桌面 + method badge in Connection header
+`STATE_LABEL['desktop']` changed from `'Desktop'` to `'桌面'` (matches 前台/后台/最小化).
+Connection header method (推荐) now uses ScreenshotPanel badge style:
+`text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded`.
 
 ### Split capture method: snapshot vs stream + render method selector
 Settings → Capture card now has three independent selectors:
