@@ -107,7 +107,7 @@ const DEFAULT_RIGHT_WIDTH = 324
 // Shared CSS: collapsible card header (used in 6 places)
 const COLLAPSIBLE_HEADER = 'w-full flex items-center justify-between px-3 py-2 hover:bg-bg-hover cursor-pointer transition-colors outline-none'
 // Shared CSS: selectable option button (capture method + transport)
-const SELECTABLE_BTN = 'flex items-center w-full px-3 py-2 rounded-lg border transition-colors'
+const SELECTABLE_BTN = 'flex items-center w-full px-3 py-2 rounded-lg border transition'
 
 // ── Smooth theme switch: add class for 200ms, all elements animate in sync ──
 function applyTheme(isDark: boolean) {
@@ -434,8 +434,8 @@ const STATE_LABEL: Record<string,string> = { desktop:'桌面', foreground:'前�
 const STATE_COLOR: Record<string,string> = { desktop:'text-text-muted', foreground:'text-success', background:'text-accent', minimized:'text-error', hidden:'text-error', closed:'text-error', unknown:'text-text-muted' }
 
 const CAPTURE_METHODS = [
-  { v: 'wgc',  name: 'WGC', eng: 'GPU FramePool', rec: '前台窗口/后台窗口/桌面', desc: 'GPU 加速，支持后台/遮挡窗口，前台后台及桌面首选' },
-  { v: 'dxgi', name: 'DXGI', eng: 'DesktopBlt',   rec: '最小化窗口', desc: '全桌面 GDI 位图，最小化窗口时唯一可行方案' },
+  { v: 'wgc',  name: 'WGC', eng: 'GPU FramePool', rec: '前台/后台/桌面', desc: 'GPU 加速，支持后台/遮挡窗口，前台后台及桌面首选' },
+  { v: 'dxgi', name: 'DXGI', eng: 'DesktopBlt',   rec: '桌面/最小化', desc: '全桌面 GDI 位图，最小化窗口时唯一可行方案' },
 ]
 
 const RENDER_METHODS = [
@@ -482,14 +482,14 @@ function ConnectionPanel({ onSelect, onDisconnect, setSnapMethod, streamMethod, 
           <MonitorUp className="w-4 h-4 text-text-secondary shrink-0" />
           <span className="text-sm font-medium text-text-primary shrink-0">Connection</span>
         </div>
-        <div className="flex items-baseline gap-2 ml-2">
-          <span className="text-[10px] text-text-muted shrink-0">状态</span>
-          <span className={`text-xs ${STATE_COLOR[winState] || 'text-text-muted'} shrink-0`}>
-            {STATE_LABEL[winState] || winState}
-          </span>
-          <span className="text-[10px] text-text-muted shrink-0">推荐</span>
-          <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">{METHOD_SHORT[recommendedMethod] || recommendedMethod}</span>
-          {cantCapture && <span className="text-xs text-error shrink-0">⚠</span>}
+        <div className="flex items-center gap-2 ml-2">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[10px] text-text-muted shrink-0">状态</span>
+            <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">{STATE_LABEL[winState] || winState}</span>
+            <span className="text-[10px] text-text-muted shrink-0">推荐</span>
+            <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">{METHOD_SHORT[recommendedMethod] || recommendedMethod}</span>
+            {cantCapture && <span className="text-xs text-error shrink-0">⚠</span>}
+          </div>
           {onTogglePin && (
             <Tooltip text={pinned ? "取消固定" : "固定面板"}>
               <button onClick={e => { e.stopPropagation(); onTogglePin() }}
@@ -1081,12 +1081,12 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
           <div className="flex gap-0">
             <div className="flex-1 space-y-2 pr-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-text-muted">📷 Snapshot</span>
+                <span className="text-xs text-text-muted inline-flex items-center gap-1"><Camera className="w-3.5 h-3.5" /> Snapshot</span>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <span className="text-[10px] text-text-muted">Auto</span>
-                  <button onClick={e => { e.stopPropagation(); setAutoSnap?.(!autoSnap); addLog(`[Setting] auto snap = ${!autoSnap}`) }}
-                    className={`relative w-8 h-5 rounded-full transition-colors ${autoSnap ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
-                    <span className={`absolute top-[3px] w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoSnap ? 'left-4' : 'left-0.5'}`} />
+                  <span className="text-xs text-text-muted">Auto</span>
+                  <button onClick={e => { e.stopPropagation(); const next = !autoSnap; setAutoSnap?.(next); if (next && selWin) { const isDesktop = selWin.hwnd === 0; setSnapMethod(isDesktop || winState === 'minimized' ? 'dxgi' : 'wgc'); } addLog(`[Setting] auto snap = ${next}`) }}
+                    className={`relative w-10 h-5 rounded-full transition-colors ${autoSnap ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
+                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${autoSnap ? 'translate-x-5' : ''}`} />
                   </button>
                 </label>
               </div>
@@ -1096,18 +1096,18 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
                   : autoSnap && isActive ? 'border-amber-500 bg-amber-500/10 cursor-not-allowed'
                   : autoSnap ? 'border-border bg-bg-primary opacity-50 cursor-not-allowed'
                   : 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
-                return <Tooltip key={m.v} text={m.desc}><label className={`${SELECTABLE_BTN} ${ringClass}`}><input type="radio" name="snapMethod" value={m.v} checked={isActive} disabled={autoSnap} onChange={e => { if (!autoSnap) { setSnapMethod(e.target.value); addLog(`[Setting] snap method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className="ml-auto text-xs font-medium text-text-primary">{m.rec}</span></label></Tooltip>
+                return <Tooltip key={m.v} text={m.desc}><label className={`${SELECTABLE_BTN} ${ringClass}`}><input type="radio" name="snapMethod" value={m.v} checked={isActive} disabled={autoSnap} onChange={e => { if (!autoSnap) { setSnapMethod(e.target.value); addLog(`[Setting] snap method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className="ml-auto flex items-center gap-1">{m.rec.split('/').map((t: string) => <span key={t} className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded">{t}</span>)}</span></label></Tooltip>
               })}</div>
             </div>
             <div className="w-px bg-border shrink-0" />
             <div className="flex-1 space-y-2 pl-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-text-muted">▶ Stream</span>
+                <span className="text-xs text-text-muted inline-flex items-center gap-1"><Play className="w-3.5 h-3.5" /> Stream</span>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <span className="text-[10px] text-text-muted">Auto</span>
-                  <button onClick={e => { e.stopPropagation(); setAutoStream?.(!autoStream); addLog(`[Setting] auto stream = ${!autoStream}`) }}
-                    className={`relative w-8 h-5 rounded-full transition-colors ${autoStream ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
-                    <span className={`absolute top-[3px] w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoStream ? 'left-4' : 'left-0.5'}`} />
+                  <span className="text-xs text-text-muted">Auto</span>
+                  <button onClick={e => { e.stopPropagation(); const next = !autoStream; setAutoStream?.(next); if (next) setStreamMethod('wgc'); addLog(`[Setting] auto stream = ${next}`) }}
+                    className={`relative w-10 h-5 rounded-full transition-colors ${autoStream ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
+                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${autoStream ? 'translate-x-5' : ''}`} />
                   </button>
                 </label>
               </div>
@@ -1118,7 +1118,7 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
                   : autoStream && isActive ? 'border-amber-500 bg-amber-500/10 cursor-not-allowed'
                   : autoStream || unsupported ? 'border-border bg-bg-primary opacity-50 cursor-not-allowed'
                   : 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
-                return <Tooltip key={m.v} text={unsupported ? 'DXGI 流未实现，仅 WGC 支持实时预览' : m.desc}><label className={`${SELECTABLE_BTN} ${ringClass}`}><input type="radio" name="streamMethod" value={m.v} checked={isActive} disabled={autoStream || unsupported} onChange={e => { if (!autoStream && !unsupported) { setStreamMethod(e.target.value); addLog(`[Setting] stream method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className="ml-auto text-xs font-medium text-text-primary">{unsupported ? 'N/A' : m.rec}</span></label></Tooltip>
+                return <Tooltip key={m.v} text={unsupported ? 'DXGI 流未实现，仅 WGC 支持实时预览' : m.desc}><label className={`${SELECTABLE_BTN} ${ringClass}`}><input type="radio" name="streamMethod" value={m.v} checked={isActive} disabled={autoStream || unsupported} onChange={e => { if (!autoStream && !unsupported) { setStreamMethod(e.target.value); addLog(`[Setting] stream method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className="ml-auto flex items-center gap-1">{unsupported ? <span className="text-[11px] font-medium text-text-muted bg-bg-tertiary px-1.5 py-0.5 rounded">未实现</span> : m.rec.split('/').map((t: string) => <span key={t} className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded">{t}</span>)}</span></label></Tooltip>
               })}</div>
             </div>
           </div>
@@ -1133,7 +1133,7 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
               const ringClass = isActive && implemented ? 'border-accent bg-accent/10 cursor-pointer'
                 : implemented ? 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
                 : 'border-border bg-bg-primary opacity-50 cursor-not-allowed'
-              return <Tooltip key={m.v} text={m.desc}><label className={`${SELECTABLE_BTN} ${ringClass}`}><input type="radio" name="renderMethod" value={m.v} checked={isActive} disabled={!implemented} onChange={e => { if (implemented) { setRenderMethod(e.target.value); addLog(`[Setting] render method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className={`ml-auto text-xs font-medium ${implemented ? 'text-text-primary' : 'text-text-muted'}`}>{m.rec}</span></label></Tooltip>
+              return <Tooltip key={m.v} text={m.desc}><label className={`${SELECTABLE_BTN} ${ringClass}`}><input type="radio" name="renderMethod" value={m.v} checked={isActive} disabled={!implemented} onChange={e => { if (implemented) { setRenderMethod(e.target.value); addLog(`[Setting] render method = ${e.target.value}`) } }} className="sr-only" /><span className="text-xs font-medium text-text-primary">{m.name} <span className="text-text-muted">({m.eng})</span></span><span className="ml-auto flex items-center gap-1">{m.rec.split('/').map((t: string) => <span key={t} className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${implemented ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'}`}>{t}</span>)}</span></label></Tooltip>
             })}</div>
           </div>
         </div>
