@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import {
   Camera, Play, Cpu, Sun, RefreshCw, ChevronDown,
-  Monitor, Pencil, FolderOpen,
+  Monitor, Pencil, FolderOpen, MousePointer2, Keyboard,
 } from 'lucide-react'
 import { Tooltip, ActionBtn } from './Toolkit'
 import { ConnectionPanel } from './ConnectionPanel'
@@ -119,7 +119,10 @@ export function SettingsView({
   inputMethod: string; setInputMethod: (m: string) => void
 }) {
   const colors = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#EF4444']
-  const [accent, setAccent] = useState('#3B82F6')
+  const [accent, setAccent] = useState(() => {
+    const v = document.documentElement.style.getPropertyValue('--color-accent').trim()
+    return v || '#3B82F6'
+  })
   const [screenRes, setScreenRes] = useState('?×?')
   const [logDir, setLogDir] = useState('...')
   const [connExpanded, setConnExpanded] = useState(true)
@@ -316,7 +319,9 @@ export function SettingsView({
           {/* Render Method */}
           <div className="border-t border-border pt-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted">Render Method (🎨)</span>
+              <span className="text-xs text-text-muted inline-flex items-center gap-1">
+                <Monitor className="w-3.5 h-3.5" /> Render Method
+              </span>
             </div>
             <div className="flex flex-col gap-2">
               {RENDER_METHODS.map((m) => {
@@ -364,7 +369,9 @@ export function SettingsView({
           {/* ── Input Method (mouse + keyboard forwarding) ── */}
           <div className="border-t border-border pt-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted">Input Method (🖱 + ⌨)</span>
+              <span className="text-xs text-text-muted inline-flex items-center gap-1">
+                <MousePointer2 className="w-3.5 h-3.5" /> Input Method
+              </span>
               <span className="text-[10px] text-text-muted">Monitor 预览区支持：单击/双击/拖拽/滚轮/键盘/组合键</span>
             </div>
             <div className="flex flex-col gap-2">
@@ -413,7 +420,9 @@ export function SettingsView({
           {/* ── Keyboard forwarding ── */}
           <div className="border-t border-border pt-3 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted">Keyboard (⌨)</span>
+              <span className="text-xs text-text-muted inline-flex items-center gap-1">
+                <Keyboard className="w-3.5 h-3.5" /> Keyboard
+              </span>
               <span className="text-[10px] text-text-muted">点击预览画面获取焦点后，键盘输入转发到目标窗口</span>
             </div>
             <div className="text-[11px] text-text-muted space-y-1">
