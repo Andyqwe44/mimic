@@ -285,12 +285,12 @@ function TargetPickerModal({ open, onClose, onSelectWindow, onSelectMode }: {
     }
     if (w.hwnd === 0 || w.category === 'desktop') {
       onSelectMode('dxgi', 'desktop')
-      addLog('[Capture] desktop → dxgi')
+      // addLog('[Capture] desktop → dxgi')
       onClose()
     } else {
       // DEV: skip mode picker page 2 — directly use wgc/foreground
       onSelectMode('wgc', 'foreground')
-      addLog('[Capture] auto → wgc (mode picker skipped)')
+      // addLog('[Capture] auto → wgc (mode picker skipped)')
       onClose()
       // setPendingWin(w)   // ← page 2 code preserved, not deleted
       // setPage('mode')
@@ -299,7 +299,7 @@ function TargetPickerModal({ open, onClose, onSelectWindow, onSelectMode }: {
 
   const handlePickMode = (method: string, expectedState: string) => {
     onSelectMode(method, expectedState)
-    addLog(`[Capture] mode=${expectedState} → ${method}`)
+    // addLog(`[Capture] mode=${expectedState} → ${method}`)
     onClose()
   }
 
@@ -577,10 +577,10 @@ function ScreenshotPanel({ screenRatio, expanded, onToggle, previewing, previewi
     const handler = (e: any) => {
       const active = previewingRef.current || snapshotRef.current
       if (!active) {
-        addLog(`[SB] event ignored — previewing=${previewingRef.current} snapshot=${snapshotRef.current}`)
+        // addLog(`[SB] event ignored — previewing=${previewingRef.current} snapshot=${snapshotRef.current}`)
         return
       }
-      if (firstFrame) { firstFrame = false; addLog('[Screenshot] first SharedBuffer frame received') }
+      if (firstFrame) { firstFrame = false /* addLog('[Screenshot] first SharedBuffer frame received') */ }
       try {
         const buf: ArrayBuffer = e.getBuffer()
         const metaRaw = e.additionalData
@@ -608,7 +608,7 @@ function ScreenshotPanel({ screenRatio, expanded, onToggle, previewing, previewi
           snapshotRef.current = false
           const latency = Date.now() - snapshotStartRef.current
           setSnapshotLatency(latency)
-          addLog(`[SB] snapshot consumed, latency=${latency}ms`)
+          // addLog(`[SB] snapshot consumed, latency=${latency}ms`)
         }
       } catch (ex: any) {
         addLog(`[SB] EXCEPTION: ${ex?.message || ex}`)
@@ -616,7 +616,7 @@ function ScreenshotPanel({ screenRatio, expanded, onToggle, previewing, previewi
     }
     handlerRef.current = handler
     wv.addEventListener('sharedbufferreceived', handler)
-    addLog('[Screenshot] SharedBuffer listener registered')
+    // addLog('[Screenshot] SharedBuffer listener registered')
     return () => { wv.removeEventListener('sharedbufferreceived', handler) }
   }, [])
 
@@ -1224,7 +1224,7 @@ export default function App() {
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT_WIDTH)
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [connectionExpanded, setConnectionExpanded] = useState(true)
-  const [screenshotExpanded, setScreenshotExpanded] = useState(true)
+  const [screenshotExpanded, setScreenshotExpanded] = useState(false) // start collapsed; auto-expand on snapshot/stream
   const [logExpanded, setLogExpanded] = useState(true)
   const connectionExpandedRef = useRef(connectionExpanded)
   connectionExpandedRef.current = connectionExpanded
@@ -1532,6 +1532,8 @@ export default function App() {
     try { await hostCall('capture_stream_stop') } catch (_) {}
     opStateRef.current = 'idle'
     addLog('[Capture] stream stopped')
+    // Auto-collapse ScreenshotPanel when stream stops
+    setScreenshotExpanded(false)
   }, [])
 
   const takeSnapshot = useCallback(async () => {
@@ -1550,20 +1552,22 @@ export default function App() {
 
     const hwnd = selWindow.hwnd ?? 0
     const method = snapMethod
-    addLog(`[Capture] 📷 snapshot start: hwnd=${hwnd} method=${method} winState=${winState}`)
+    // addLog(`[Capture] 📷 snapshot start: hwnd=${hwnd} method=${method} winState=${winState}`)
     if (cantCaptureMinimized(method, winState)) {
       addLog(`[Capture] blocked: window minimized, ${method} cannot capture`)
       opStateRef.current = 'idle'
       return
     }
-    addLog(`[Capture] ${METHOD_SHORT[method] || method} ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
+    // Auto-expand ScreenshotPanel to show the result
+    if (!screenshotExpanded) setScreenshotExpanded(true)
+    // addLog(`[Capture] ${METHOD_SHORT[method] || method} ${hwnd ? 'hwnd='+hwnd : 'desktop'}...`)
     const t0 = Date.now()
     snapshotStartRef.current = t0
     snapshotRef.current = true
     try {
       const info = await hostCall('capture_window', { hwnd, method }) as { ok?: boolean; method?: string; w?: number; h?: number }
       const elapsed = Date.now() - t0
-      addLog(`[Capture] hostCall returned: ok=${info?.ok} w=${info?.w} h=${info?.h} method=${info?.method} (${elapsed}ms)`)
+      // addLog(`[Capture] hostCall returned: ok=${info?.ok} w=${info?.w} h=${info?.h} method=${info?.method} (${elapsed}ms)`)
       // Check if cancelled by later operation (e.g. stream start)
       if (snapId !== snapCancelRef.current) {
         addLog('[Capture] snapshot cancelled by later operation')
@@ -1605,7 +1609,7 @@ export default function App() {
     previewingRef.current = true; setPreviewing(true)
     setCapMethod(streamMethod)
 
-    addLog(`[Preview] ${selWindow?.title ?? 'desktop'} [${streamMethod}]`)
+    // addLog(`[Preview] ${selWindow?.title ?? 'desktop'} [${streamMethod}]`)
     try {
       await hostCall('capture_stream_start', { hwnd, tcpPort: 9999, method: streamMethod, transport: renderMethod })
     } catch (e) {
