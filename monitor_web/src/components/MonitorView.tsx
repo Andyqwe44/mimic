@@ -1,7 +1,7 @@
 // ═══ Monitor View — main workspace with large preview + input forwarding ═══
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Camera, Play, Square, MousePointer2, Power } from 'lucide-react'
-import { ActionBtn } from './Toolkit'
+import { ActionBtn, Tooltip } from './Toolkit'
 import { STATE_LABEL } from '../lib/constants'
 import { addLog, hostCall } from '../lib/bridge'
 import type { WindowInfo } from '../lib/types'
@@ -202,7 +202,7 @@ export function MonitorView({
       lastSampleRef.current = Date.now()
       setDragging(true)
     },
-    [isDesktop, previewing, targetDims],
+    [isDesktop, previewing, mappingEnabled, targetDims],
   )
 
   const handleMouseMove = useCallback(
@@ -233,7 +233,7 @@ export function MonitorView({
         }).catch(() => {})
       }
     },
-    [dragging, previewing, isDesktop, targetDims, selWin.hwnd, inputMethod],
+    [dragging, previewing, isDesktop, mappingEnabled, targetDims, selWin.hwnd, inputMethod],
   )
 
   const handleMouseUp = useCallback(
@@ -334,7 +334,7 @@ export function MonitorView({
           addLog(`[Mouse] dblclick failed: ${err?.message || err}`)
         })
     },
-    [isDesktop, previewing, selWin.hwnd, inputMethod, targetDims],
+    [isDesktop, previewing, mappingEnabled, selWin.hwnd, inputMethod, targetDims],
   )
 
   const handleWheel = useCallback(
@@ -366,7 +366,7 @@ export function MonitorView({
           addLog(`[Mouse] wheel failed: ${err?.message || err}`)
         })
     },
-    [isDesktop, previewing, selWin.hwnd, inputMethod, targetDims],
+    [isDesktop, previewing, mappingEnabled, selWin.hwnd, inputMethod, targetDims],
   )
 
   // ── Keyboard handlers ──
@@ -406,7 +406,7 @@ export function MonitorView({
       const label = parts.join('+')
       setKeyToast({ text: label, id: toastId })
     },
-    [isDesktop, previewing, focused, selWin.hwnd, inputMethod],
+    [isDesktop, previewing, focused, mappingEnabled, selWin.hwnd, inputMethod],
   )
 
   const handleKeyUp = useCallback(
@@ -422,7 +422,7 @@ export function MonitorView({
         key: e.key, code: e.code, vk: e.keyCode, method: inputMethod,
       }).catch((err: any) => addLog(`[Key] keyup failed: ${err?.message || err}`))
     },
-    [isDesktop, previewing, focused, selWin.hwnd, inputMethod],
+    [isDesktop, previewing, focused, mappingEnabled, selWin.hwnd, inputMethod],
   )
 
   // ── Visual feedback elements ──
