@@ -1,5 +1,5 @@
 // ═══ Settings View ───
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Camera, Play, Cpu, Sun, RefreshCw, ChevronDown,
   Monitor, Pencil, FolderOpen, MousePointer2, Keyboard,
@@ -145,6 +145,98 @@ export function SettingsView({
   const [screenRes, setScreenRes] = useState('?×?')
   const [logDir, setLogDir] = useState('...')
   const [connExpanded, setConnExpanded] = useState(true)
+
+  // ── Key recording ──
+  const [recording, setRecording] = useState(false)
+  const [displayCombo, setDisplayCombo] = useState('')
+  const pressedRef = useRef(new Set<string>())
+  const lastComboRef = useRef('')       // most recent valid combo (ref — no re-render)
+  const savedComboRef = useRef(mappingHotkey) // value before recording started
+
+  function normalizeKey(key: string, code: string): string {
+    if (code.startsWith('F') && /^F\d+$/.test(code)) return code
+    const m: Record<string, string> = {
+      ' ': 'Space', 'Space': 'Space', 'Escape': 'Esc',
+      'ArrowUp': '↑', 'ArrowDown': '↓', 'ArrowLeft': '←', 'ArrowRight': '→',
+      'Backspace': 'Backspace', 'Delete': 'Del', 'Insert': 'Ins',
+      'Home': 'Home', 'End': 'End', 'PageUp': 'PgUp', 'PageDown': 'PgDn',
+      'Tab': 'Tab', 'CapsLock': 'CapsLock', 'Enter': 'Enter',
+      'PrintScreen': 'PrtSc', 'ScrollLock': 'ScrlLk', 'Pause': 'Pause',
+      'NumLock': 'NumLk', 'ContextMenu': 'Menu',
+    }
+    if (m[key]) return m[key]
+    if (key.length === 1) return key.toUpperCase()
+    return key
+  }
+
+  function buildCombo(e: KeyboardEvent): string {
+    const parts: string[] = []
+    if (e.ctrlKey) parts.push('Ctrl')
+    if (e.altKey) parts.push('Alt')
+    if (e.shiftKey) parts.push('Shift')
+    if (e.metaKey) parts.push('Win')
+    const key = e.key
+    if (key !== 'Control' && key !== 'Alt' && key !== 'Shift' && key !== 'Meta') {
+      parts.push(normalizeKey(key, e.code))
+    }
+    return parts.join('+') || '...'
+  }
+
+  const startRecording = useCallback(() => {
+    savedComboRef.current = mappingHotkey
+    lastComboRef.current = ''
+    pressedRef.current = new Set()
+    setDisplayCombo('')
+    setRecording(true)
+  }, [mappingHotkey])
+
+  // Stable — uses refs, no state deps (safe in useEffect)
+  const commitRecording = useCallback(() => {
+    setRecording(false)
+    const combo = lastComboRef.current
+    if (combo && combo !== '...') {
+      setMappingHotkey(combo)
+      savedComboRef.current = combo
+      addLog(`[Setting] mapping hotkey = ${combo}`)
+    } else {
+      // No valid keys pressed — revert
+      setDisplayCombo(savedComboRef.current)
+    }
+    pressedRef.current = new Set()
+  }, [setMappingHotkey])
+
+  const cancelRecording = useCallback(() => {
+    setRecording(false)
+    setDisplayCombo(savedComboRef.current)
+    pressedRef.current = new Set()
+  }, [])
+
+  // Keyboard listeners during recording
+  useEffect(() => {
+    if (!recording) return
+    const onDown = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      pressedRef.current.add(e.code)
+      const combo = buildCombo(e)
+      lastComboRef.current = combo
+      setDisplayCombo(combo)
+    }
+    const onUp = (e: KeyboardEvent) => {
+      pressedRef.current.delete(e.code)
+      requestAnimationFrame(() => {
+        if (pressedRef.current.size === 0) {
+          commitRecording()
+        }
+      })
+    }
+    window.addEventListener('keydown', onDown, true)
+    window.addEventListener('keyup', onUp, true)
+    return () => {
+      window.removeEventListener('keydown', onDown, true)
+      window.removeEventListener('keyup', onUp, true)
+    }
+  }, [recording, commitRecording])
 
   useEffect(() => {
     hostCall('screen_info')
@@ -657,18 +749,31 @@ export function SettingsView({
           </div>
           <div className="flex items-center gap-2">
             <label className="text-sm text-text-secondary w-24 shrink-0">Mapping key</label>
-            <select
-              value={mappingHotkey}
-              onChange={(e) => {
-                setMappingHotkey(e.target.value)
-                addLog(`[Setting] mapping hotkey = ${e.target.value}`)
-              }}
-              className="h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
-            >
-              {['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'].map((k) => (
-                <option key={k} value={k}>{k}</option>
-              ))}
-            </select>
+            {recording ? (
+              <>
+                <span className={`h-7 px-3 rounded-lg border border-accent bg-accent/10 text-accent text-sm font-mono flex items-center gap-1.5 ${displayCombo && displayCombo !== '...' ? '' : 'animate-pulse'}`}>
+                  {displayCombo || 'Press keys...'}
+                </span>
+                <button
+                  onClick={cancelRecording}
+                  className="px-2.5 h-7 rounded-md text-xs font-medium border border-border text-text-secondary hover:bg-bg-hover transition-colors"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="h-7 px-3 rounded-lg border border-border bg-bg-primary text-sm font-mono text-text-primary flex items-center min-w-[80px]">
+                  {mappingHotkey}
+                </span>
+                <button
+                  onClick={startRecording}
+                  className="px-2.5 h-7 rounded-md text-xs font-medium border border-border text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
+                >
+                  Change
+                </button>
+              </>
+            )}
           </div>
         </div>
       </SettingsCard>

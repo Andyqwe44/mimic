@@ -50,6 +50,29 @@ function getImageCoords(
   }
 }
 
+// ── Combo matching for hotkey ──
+// Parses "Ctrl+Shift+K" and checks against a KeyboardEvent
+function matchesCombo(e: KeyboardEvent, combo: string): boolean {
+  const parts = combo.split('+')
+  const mainKey = parts[parts.length - 1]
+  const mods = new Set(parts.slice(0, -1))
+
+  // Check modifier keys match exactly
+  if (e.ctrlKey !== mods.has('Ctrl')) return false
+  if (e.altKey !== mods.has('Alt')) return false
+  if (e.shiftKey !== mods.has('Shift')) return false
+  if (e.metaKey !== mods.has('Win')) return false
+
+  // Check main key
+  if (e.key === mainKey || e.code === mainKey) return true
+  // Normalize: F-keys, special chars
+  if (e.code === mainKey) return true
+  // Single char keys: 'K'.code vs 'KeyK'.code
+  if (mainKey.length === 1 && e.key.toUpperCase() === mainKey.toUpperCase()) return true
+
+  return false
+}
+
 export function MonitorView({
   selWin,
   winState,
@@ -126,15 +149,14 @@ export function MonitorView({
   // ── Global hotkey listener for mapping toggle ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === mappingHotkey || e.code === mappingHotkey) {
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-        e.preventDefault()
-        setMappingEnabled((prev: boolean) => {
-          const next = !prev
-          addLog(`[Input] mapping ${next ? 'ON' : 'OFF'} (${mappingHotkey})`)
-          return next
-        })
-      }
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (!matchesCombo(e, mappingHotkey)) return
+      e.preventDefault()
+      setMappingEnabled((prev: boolean) => {
+        const next = !prev
+        addLog(`[Input] mapping ${next ? 'ON' : 'OFF'} (${mappingHotkey})`)
+        return next
+      })
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
