@@ -3,9 +3,9 @@
  *
  * Replaces Rust/Tauri. One process: Win32 window + WebView2 + capture + MJPEG server.
  *
- * Dev:  monitor_app.exe --dev        → navigates to http://localhost:1420 (Vite HMR)
- * Dev+console: monitor_app.exe --dev --console → Vite HMR + debug console
- * Prod: monitor_app.exe              → navigates to http://127.0.0.1:8888 (built-in server)
+ * Dev:  build_dev\monitor_app.exe    → navigates to http://localhost:1420 (Vite HMR)
+ * Prod: build\monitor_app.exe        → navigates to http://127.0.0.1:8888 (built-in server)
+ * Mode is set at build time via /DDEV_MODE preprocessor define — no runtime --dev flag.
  */
 #include <windows.h>
 #include <objbase.h>
@@ -81,7 +81,11 @@ static ComPtr<ICoreWebView2> g_webview;
 static ComPtr<ICoreWebView2Environment12> g_env12;
 static ComPtr<ICoreWebView2_3>      g_webview3;
 static ComPtr<ICoreWebView2_17> g_webview17;
-static bool                  g_dev_mode = false;
+#ifdef DEV_MODE
+static constexpr bool g_dev_mode = true;
+#else
+static constexpr bool g_dev_mode = false;
+#endif
 
 // GIT (Global Interface Table) for cross-thread interface access.
 // CoMarshalInterThreadInterfaceInStream fails (0x80040155) because
@@ -108,11 +112,27 @@ static std::atomic<bool> g_bridge_has_frame{false};
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 HRESULT InitWebView2(HWND hwnd);
 
+static constexpr PCWSTR SINGLE_INSTANCE_MUTEX = L"Global\\GameAgentMonitor_8A3F2D";
+
 // ── WinMain ─────────────────────────────────────────────────
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
+    // ── Single-instance guard ──
+    // Named mutex prevents multiple instances of the same app.
+    // If another instance is already running, activate its window
+    // and exit silently — no annoying "App already running" popup.
+    HANDLE hMutex = CreateMutexW(NULL, TRUE, SINGLE_INSTANCE_MUTEX);
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (hMutex) CloseHandle(hMutex);
+        HWND hExisting = FindWindowW(L"GameAgentMonitor", TITLE);
+        if (hExisting) {
+            if (IsIconic(hExisting)) ShowWindow(hExisting, SW_RESTORE);
+            SetForegroundWindow(hExisting);
+        }
+        return 0;
+    }
+
     bool auto_stream = (std::string(lpCmdLine).find("--auto-stream") != std::string::npos);
-    g_dev_mode = (std::string(lpCmdLine).find("--dev") != std::string::npos);
     LOG("main", "GAM starting (dev=%d auto_stream=%d)", (int)g_dev_mode, (int)auto_stream);
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

@@ -170,7 +170,8 @@ tictactoe/
 │   │   ├── WebView2.h
 │   │   ├── WebView2EnvironmentOptions.h
 │   │   └── WebView2LoaderStatic.lib
-│   └── build.cmd                 MSVC → monitor_app.exe
+│   ├── build.cmd                 MSVC → build\monitor_app.exe (prod)
+│   └── build_dev.cmd             MSVC → build_dev\monitor_app.exe (dev)
 ├── monitor_web/                  # React frontend (KEEP — shared by C++ host)
 │   ├── src/
 │   │   └── App.tsx               MXU-style UI (hostCall bridge, no Tauri deps)
@@ -189,20 +190,37 @@ tictactoe/
 
 ## Build Commands
 
+Dev/prod mode set at build time via `/DDEV_MODE` preprocessor define. No runtime `--dev` flag.
+
 ```bash
 # 1. Build C++ static libs (once, or when C++ changes)
 cd logger   && build_logger_lib.cmd
 cd capture  && build_capture_lib.cmd
 
-# 2. Build C++ WebView2 host
-cd monitor_app && build.cmd          # → monitor_app.exe
+# 2a. Dev build (Vite HMR, debug symbols, no optimization)
+cd monitor_web && npm run dev        # Vite on :1420 (keep running)
+cd monitor_app && build_dev.cmd      # → build_dev\monitor_app.exe
+# Launch: build_dev\monitor_app.exe  → http://localhost:1420
 
-# 3. Dev mode (Vite HMR — default)
-cd monitor_web && npm run dev        # Vite on :1420 (already running usually)
-cd monitor_app && build\monitor_app.exe --dev   # WebView2 → localhost:1420
+# 2b. Prod build (optimized, no debug)
+cd monitor_web && npm run build      # Vite → dist/
+cd monitor_app && build.cmd          # → build\monitor_app.exe
+# Launch: build\monitor_app.exe      → http://localhost:8888
+```
 
-`--dev` flag: navigates to Vite dev server (hot reload).
-Default launch: **`--dev` mode (Vite HMR)**.
+| | Dev (`build_dev.cmd`) | Prod (`build.cmd`) |
+|---|---|---|
+| Optimize | `/Od` | `/O2 /Gy /Gw /GS-` |
+| Debug info | `/Zi /DEBUG:FULL` | None |
+| Linker | None | `/OPT:REF /OPT:ICF` |
+| CRT | `/MT` | `/MT` |
+| Macro | `DEV_MODE` | `NDEBUG` |
+| Binary | ~2.4 MB | ~451 KB |
+
+### Single-instance guard
+
+Named mutex (`Global\GameAgentMonitor_8A3F2D`) in `WinMain`. If another instance
+is running, activates its window (restore + foreground) and exits silently.
 
 ### Developer Mode
 

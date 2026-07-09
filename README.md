@@ -9,9 +9,8 @@ Desktop monitor for visual game AI — **pixels in, actions out**.
 │  React UI (TypeScript + Tailwind)  ←→  C++ backend           │
 │  WebView2 browser control            WebMessage bridge        │
 │  Dashboard / Monitor / Log           SharedBuffer zero-copy   │
-│  Dev:  WebView2 → localhost:1420    Stream bridge             │
-│  Prod: WebView2 → gam.local         TCP protocol :9999       │
-│  Prod: WebView2 → gam.local                                 │
+│  Dev:  build_dev\monitor_app.exe → localhost:1420  SharedBuffer zero-copy         │
+│  Prod: build\monitor_app.exe → localhost:8888     Stream bridge                   │
 └──────────┬───────────────────────────────────────────────────┘
            │
     ┌──────┼────────┐
@@ -42,30 +41,22 @@ Desktop monitor for visual game AI — **pixels in, actions out**.
 cd logger   && build_logger_lib.cmd
 cd capture  && build_capture_lib.cmd
 
-# 2. Build C++ host
-cd monitor_app && build.cmd
-
-# 3. Start Vite dev server (terminal 1)
-cd monitor_web && npm install && npm run dev
-
-# 4. Launch GUI (terminal 2) — Vite HMR
-cd monitor_app && build\monitor_app.exe --dev
+# 2. Dev build (Vite HMR, debug symbols)
+cd monitor_web && npm install && npm run dev   # terminal 1: Vite :1420
+cd monitor_app && build_dev.cmd                # terminal 2: -> build_dev\monitor_app.exe
+# Navigates to http://localhost:1420 (hot reload)
 ```
-
-`--dev`: navigate to Vite dev server (hot reload).
-
-### Developer Mode
-Enable via **Settings → General → Dev mode**. Saves captured frames as PNG:
-- **Save single-frame captures** — each 📷 snapshot to disk
-- **Save live preview frames** — each ▶ preview frame to disk
-- Pick output directory via folder picker, open in Explorer
 
 ### Production
 
 ```bash
-cd monitor_web && npm run build          # → dist/
-cd monitor_app  && build.cmd             # → monitor_app.exe
+# 3. Prod build (optimized)
+cd monitor_web && npm run build          # Vite -> dist/
+cd monitor_app && build.cmd              # -> build\monitor_app.exe
+# Navigates to http://localhost:8888
 ```
+
+Mode set at build time via `/DDEV_MODE` preprocessor define. No runtime `--dev` flag.
 
 Distribute `monitor_app.exe` + `monitor_web/dist/` together. No HTTP server — WebView2 uses `SetVirtualHostNameToFolderMapping` to load from disk.
 
@@ -75,7 +66,9 @@ Distribute `monitor_app.exe` + `monitor_web/dist/` together. No HTTP server — 
 tictactoe/
 ├── logger/               C++ logging engine (capture_log_write_msg)
 ├── capture/              C++ screen capture (per-method .lib)
-├── monitor_app/          C++ WebView2 host (main window + commands + MJPEG)
+├── monitor_app/          C++ WebView2 host (main window + commands + single-instance)
+│   ├── build.cmd         Production build (optimized)
+│   ├── build_dev.cmd     Dev build (debug symbols, no opt)
 │   └── dep/              WebView2 SDK
 ├── monitor_web/          React frontend (Vite + TypeScript + Tailwind)
 ├── protocol/             Wire format (C++/Python)
