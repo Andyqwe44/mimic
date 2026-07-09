@@ -445,7 +445,7 @@ const RENDER_METHODS = [
 ]
 
 // ═══ Connection Panel (MXU-style collapsible card) ═══
-function ConnectionPanel({ onSelect, onDisconnect, snapMethod, setSnapMethod, streamMethod, setStreamMethod, selWin, winState, expectedCaptureState, setExpectedCaptureState, expanded, onToggle }: { onSelect: (w: WindowInfo) => void; onDisconnect?: () => void; snapMethod: string; setSnapMethod?: (m: string) => void; streamMethod: string; setStreamMethod?: (m: string) => void; selWin?: WindowInfo; winState: string; expectedCaptureState?: string; setExpectedCaptureState?: (s: string) => void; expanded: boolean; onToggle: () => void }) {
+function ConnectionPanel({ onSelect, onDisconnect, setSnapMethod, streamMethod, setStreamMethod, selWin, winState, expectedCaptureState, setExpectedCaptureState, expanded, onToggle }: { onSelect: (w: WindowInfo) => void; onDisconnect?: () => void; snapMethod: string; setSnapMethod?: (m: string) => void; streamMethod: string; setStreamMethod?: (m: string) => void; selWin?: WindowInfo; winState: string; expectedCaptureState?: string; setExpectedCaptureState?: (s: string) => void; expanded: boolean; onToggle: () => void }) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [selTitle, setSelTitle] = useState(' Entire Desktop')
   const [ip, setIp] = useState('127.0.0.1')
@@ -548,7 +548,7 @@ function ConnectionPanel({ onSelect, onDisconnect, snapMethod, setSnapMethod, st
 // ═══ Screenshot Panel ───
 // Single Canvas for both snapshot and real-time preview.
 // Frames arrive via SharedBuffer (zero-copy) → sharedbufferreceived event → putImageData.
-function ScreenshotPanel({ selWin, screenRatio, snapMethod, streamMethod, renderMethod, winState, expanded, onToggle, previewing, previewingRef, snapshotRef, snapshotStartRef, capMethod, onTakeSnapshot, onTogglePreview }: {
+function ScreenshotPanel({ screenRatio, expanded, onToggle, previewing, previewingRef, snapshotRef, snapshotStartRef, capMethod, onTakeSnapshot, onTogglePreview }: {
   selWin?: WindowInfo; screenRatio: number; snapMethod: string; streamMethod: string; renderMethod: string; winState: string; expanded: boolean; onToggle: () => void;
   previewing: boolean; previewingRef: React.MutableRefObject<boolean>; snapshotRef: React.MutableRefObject<boolean>; snapshotStartRef: React.MutableRefObject<number>;
   capMethod: string;
@@ -1058,7 +1058,7 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
                 <span className="text-xs text-text-muted">📷 Snapshot</span>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
                   <span className="text-[10px] text-text-muted">Auto</span>
-                  <button onClick={e => { e.stopPropagation(); setAutoSnap(!autoSnap); addLog(`[Setting] auto snap = ${!autoSnap}`) }}
+                  <button onClick={e => { e.stopPropagation(); setAutoSnap?.(!autoSnap); addLog(`[Setting] auto snap = ${!autoSnap}`) }}
                     className={`relative w-8 h-5 rounded-full transition-colors ${autoSnap ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
                     <span className={`absolute top-[3px] w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoSnap ? 'left-4' : 'left-0.5'}`} />
                   </button>
@@ -1079,7 +1079,7 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
                 <span className="text-xs text-text-muted">▶ Stream</span>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
                   <span className="text-[10px] text-text-muted">Auto</span>
-                  <button onClick={e => { e.stopPropagation(); setAutoStream(!autoStream); addLog(`[Setting] auto stream = ${!autoStream}`) }}
+                  <button onClick={e => { e.stopPropagation(); setAutoStream?.(!autoStream); addLog(`[Setting] auto stream = ${!autoStream}`) }}
                     className={`relative w-8 h-5 rounded-full transition-colors ${autoStream ? 'bg-amber-500' : 'bg-bg-tertiary'}`}>
                     <span className={`absolute top-[3px] w-3.5 h-3.5 rounded-full bg-white transition-transform ${autoStream ? 'left-4' : 'left-0.5'}`} />
                   </button>
@@ -1188,7 +1188,7 @@ function SettingsView({ snapMethod, setSnapMethod, streamMethod, setStreamMethod
           <div className="flex items-center gap-2">
             <label className="text-sm text-text-secondary w-24 shrink-0">Dump dir</label>
             <Tooltip text="帧保存路径" className="flex-1 min-w-0"><input value={frameDumpDir || '(not set)'} readOnly className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-muted outline-none cursor-default font-mono text-xs truncate" /></Tooltip>
-            <Tooltip text="选择保存目录"><button onClick={async () => { try { const res = await hostCall('pick_dir'); if (res?.dir) { setFrameDumpDir(res.dir); const cap = saveCaptureFrames || true; const str = saveStreamFrames || true; if (!saveCaptureFrames) setSaveCaptureFrames(true); if (!saveStreamFrames) setSaveStreamFrames(true); hostCall('set_frame_dump', { capture: true, stream: true, dir: res.dir }).catch(() => {}); addLog(`[Dev] dump dir = ${res.dir}`) } } catch(_) {} }} className="shrink-0 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"><Pencil className="w-4 h-4" /></button></Tooltip>
+            <Tooltip text="选择保存目录"><button onClick={async () => { try { const res = await hostCall('pick_dir'); if (res?.dir) { setFrameDumpDir(res.dir); if (!saveCaptureFrames) setSaveCaptureFrames(true); if (!saveStreamFrames) setSaveStreamFrames(true); hostCall('set_frame_dump', { capture: true, stream: true, dir: res.dir }).catch(() => {}); addLog(`[Dev] dump dir = ${res.dir}`) } } catch(_) {} }} className="shrink-0 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"><Pencil className="w-4 h-4" /></button></Tooltip>
             <Tooltip text="在资源管理器中打开保存目录"><button onClick={() => { if (frameDumpDir) hostCall('open_dir', { dir: frameDumpDir }).catch(() => {}) }} className="shrink-0 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"><FolderOpen className="w-4 h-4" /></button></Tooltip>
           </div>
         </div>

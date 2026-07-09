@@ -4,7 +4,7 @@
  * Replaces Rust/Tauri. One process: Win32 window + WebView2 + capture + MJPEG server.
  *
  * Dev:  build_dev\monitor_app.exe    → navigates to http://localhost:1420 (Vite HMR)
- * Prod: build\monitor_app.exe        → navigates to http://127.0.0.1:8888 (built-in server)
+ * Prod: build\monitor_app.exe        → navigates to https://gam.local/index.html (WebView2 virtual host → dist/, no HTTP server)
  * Mode is set at build time via /DDEV_MODE preprocessor define — no runtime --dev flag.
  */
 #include <windows.h>

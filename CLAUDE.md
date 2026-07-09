@@ -108,8 +108,8 @@ v0.3.0 — pure C++ WebView2 host, zero Rust.
 │       MXU-style UI               │  WebView2 COM 原生                 │
 │       Dashboard/Monitor/Log       │  WebMessage bridge (ex-Tauri IPC) │
 │                                   │  SharedBuffer 直推 (零 FFI)       │
-│  Dev:  WebView2 → localhost:5173 │  SharedBuffer 零拷贝            │
-│  Prod: WebView2 → localhost:8888 │  BGRA→RGBA 直推                 │
+│  Dev:  WebView2 → localhost:1420 │  SharedBuffer 零拷贝            │
+│  Prod: WebView2 → gam.local      │  BGRA→RGBA 直推                 │
 └──────────────────┬───────────────────────────────────────────────────┘
                    │
      ┌─────────────┼──────────────┐
@@ -205,7 +205,7 @@ cd monitor_app && build_dev.cmd      # → build_dev\monitor_app.exe
 # 2b. Prod build (optimized, no debug)
 cd monitor_web && npm run build      # Vite → dist/
 cd monitor_app && build.cmd          # → build\monitor_app.exe
-# Launch: build\monitor_app.exe      → http://localhost:8888
+# Launch: build\monitor_app.exe      → https://gam.local/index.html (WebView2 virtual host → dist/, no HTTP port)
 ```
 
 | | Dev (`build_dev.cmd`) | Prod (`build.cmd`) |
@@ -263,7 +263,7 @@ Frames saved as `snap_YYYYMMDD_HHMMSS_ms.png` or `stream_YYYYMMDD_HHMMSS_ms.png`
 
 # 4. Prod mode
 cd monitor_web && npm run build      # Vite → dist/
-cd monitor_app && build\monitor_app.exe         # WebView2 → localhost:8888
+cd monitor_app && build\monitor_app.exe         # WebView2 → https://gam.local (virtual host → dist/)
 ```
 
 ## Internal Architecture (C++ host)

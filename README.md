@@ -10,7 +10,7 @@ Desktop monitor for visual game AI — **pixels in, actions out**.
 │  WebView2 browser control            WebMessage bridge        │
 │  Dashboard / Monitor / Log           SharedBuffer zero-copy   │
 │  Dev:  build_dev\monitor_app.exe → localhost:1420  SharedBuffer zero-copy         │
-│  Prod: build\monitor_app.exe → localhost:8888     Stream bridge                   │
+│  Prod: build\monitor_app.exe → gam.local          Stream bridge                   │
 └──────────┬───────────────────────────────────────────────────┘
            │
     ┌──────┼────────┐
@@ -53,7 +53,7 @@ cd monitor_app && build_dev.cmd                # terminal 2: -> build_dev\monito
 # 3. Prod build (optimized)
 cd monitor_web && npm run build          # Vite -> dist/
 cd monitor_app && build.cmd              # -> build\monitor_app.exe
-# Navigates to http://localhost:8888
+# Navigates to https://gam.local/index.html (WebView2 virtual host -> dist/, no HTTP port)
 ```
 
 Mode set at build time via `/DDEV_MODE` preprocessor define. No runtime `--dev` flag.
