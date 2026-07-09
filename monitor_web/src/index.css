@@ -22,20 +22,20 @@
   --color-error: #ef4444;
 }
 
-/* Dark theme */
+/* Dark theme — VSCode-inspired deep blue-gray */
 .dark {
-  --color-bg-primary: #09090b;
-  --color-bg-secondary: #18181b;
-  --color-bg-tertiary: #27272a;
-  --color-bg-hover: #3f3f46;
-  --color-bg-active: #52525b;
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-tertiary: #71717a;
-  --color-text-muted: #52525b;
-  --color-border: #27272a;
-  --color-border-strong: #3f3f46;
-  --color-accent-light: #1e3a5f;
+  --color-bg-primary: #1e1e1e;
+  --color-bg-secondary: #252526;
+  --color-bg-tertiary: #2d2d2d;
+  --color-bg-hover: #383838;
+  --color-bg-active: #454545;
+  --color-text-primary: #cccccc;
+  --color-text-secondary: #9d9d9d;
+  --color-text-tertiary: #7a7a7a;
+  --color-text-muted: #5a5a5a;
+  --color-border: #2d2d2d;
+  --color-border-strong: #383838;
+  --color-accent-light: #264f78;
 }
 
 @theme {

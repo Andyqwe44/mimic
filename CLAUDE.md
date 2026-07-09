@@ -542,6 +542,12 @@ of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
 ## Recent Fixes (2026-07-09)
 
+### Dark theme — VSCode-inspired deep blue-gray palette
+Replaced harsh pure-black palette (`#09090b`/`#18181b`/`#27272a`) with VSCode Dark+
+inspired colors (`#1e1e1e`/`#252526`/`#2d2d2d`). Reduced text contrast from pure white
+(`#fafafa`) to VSCode default gray (`#cccccc`). Accent tint: `#1e3a5f` → `#264f78`
+(VSCode selection blue). All colors in `index.css` `.dark` block, zero code changes.
+
 ### LogPanel lazy load — skip history file list in compact mode
 Compact LogPanel (right sidebar) no longer calls `loadHistory` on mount. Only
 the full Log tab loads history file names, and content is loaded on expand click.
