@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Camera, Play, Square, MousePointer2 } from 'lucide-react'
 import { Tooltip } from './Toolkit'
-import { METHOD_SHORT, STATE_LABEL, STATE_COLOR } from '../lib/constants'
+import { STATE_LABEL } from '../lib/constants'
 import { addLog, hostCall } from '../lib/bridge'
 import type { WindowInfo } from '../lib/types'
 
@@ -53,11 +53,11 @@ function getImageCoords(
 export function MonitorView({
   selWin,
   winState,
-  capMethod,
-  snapMethod,
-  streamMethod,
+  capMethod: _capMethod,
+  snapMethod: _snapMethod,
+  streamMethod: _streamMethod,
   previewing,
-  snapshotLatency,
+  snapshotLatency: _snapshotLatency,
   onTakeSnapshot,
   onTogglePreview,
   children,
@@ -79,7 +79,6 @@ export function MonitorView({
 }) {
   const isDesktop = selWin.hwnd === 0
   const stateLabel = STATE_LABEL[winState] || winState
-  const stateColor = STATE_COLOR[winState] || 'text-text-muted'
 
   // ── Interaction state ──
   const [focused, setFocused] = useState(false)
@@ -99,8 +98,8 @@ export function MonitorView({
   const [keyToast, setKeyToast] = useState<KeyToast | null>(null)
   const idCounterRef = useRef(0)
   const nextId = () => { idCounterRef.current += 1; return idCounterRef.current }
-  const lastClickTimeRef = useRef(0)
-  const pendingClickRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dblclickSuppressRef = useRef(false)   // skip mouseup click when dblclick already sent
+  const lastMoveSendRef = useRef(0)          // throttle mouse-move forwarding
 
   // Cleanup ripples
   useEffect(() => {
@@ -118,15 +117,7 @@ export function MonitorView({
     return () => clearTimeout(timer)
   }, [keyToast])
 
-  // Cleanup pending deferred click on unmount
-  useEffect(() => {
-    return () => {
-      if (pendingClickRef.current) {
-        clearTimeout(pendingClickRef.current)
-        pendingClickRef.current = null
-      }
-    }
-  }, [])
+  // No cleanup needed — immediate clicks have no pending state
 
   // ── Auto-release keys on blur ──
   const releaseAllKeys = useCallback(() => {
@@ -193,26 +184,48 @@ export function MonitorView({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!dragging || !previewing) return
+      if (isDesktop || !previewing) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const now = Date.now()
-      if (now - lastSampleRef.current < 50) return // 50ms throttle
 
-      const rect = e.currentTarget.getBoundingClientRect()
-      const { rx, ry, inImage } = getImageCoords(e.clientX, e.clientY, rect, dims.w, dims.h)
-      if (!inImage) return // skip points outside actual image area
-      dragPathRef.current.push({ x: rx, y: ry })
-      dragCurrentRef.current = { rx, ry }
-      lastSampleRef.current = now
+      if (dragging) {
+        // Drag path sampling at 50ms
+        if (now - lastSampleRef.current < 50) return
+        const rect = e.currentTarget.getBoundingClientRect()
+        const { rx, ry, inImage } = getImageCoords(e.clientX, e.clientY, rect, dims.w, dims.h)
+        if (!inImage) return
+        dragPathRef.current.push({ x: rx, y: ry })
+        dragCurrentRef.current = { rx, ry }
+        lastSampleRef.current = now
+      } else {
+        // Continuous cursor forwarding for remote-control feel (60fps)
+        if (now - lastMoveSendRef.current < 16) return
+        lastMoveSendRef.current = now
+        const rect = e.currentTarget.getBoundingClientRect()
+        const { rx, ry, inImage } = getImageCoords(e.clientX, e.clientY, rect, dims.w, dims.h)
+        if (!inImage) return
+        hostCall('send_input', {
+          hwnd: selWin.hwnd, type: 'move', x_norm: rx, y_norm: ry, method: inputMethod,
+        }).catch(() => {})
+      }
     },
-    [dragging, previewing, targetDims],
+    [dragging, previewing, isDesktop, targetDims, selWin.hwnd, inputMethod],
   )
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (!dragging) return
       setDragging(false)
+
+      // Suppress if dblclick already handled this pair
+      if (dblclickSuppressRef.current) {
+        dblclickSuppressRef.current = false
+        dragPathRef.current = []
+        dragStartRef.current = null
+        dragCurrentRef.current = null
+        return
+      }
 
       const dims = targetDims
       const rect = e.currentTarget.getBoundingClientRect()
@@ -225,39 +238,27 @@ export function MonitorView({
       const path = dragPathRef.current
       const button = dragButtonRef.current
 
-      // Determine click vs drag: if only start point + end point (no moves), it's a click
+      // Determine click vs drag
       const movedPoints = path.length > 1
 
       if (!movedPoints) {
-        // Pure click — defer send briefly to suppress if dblclick follows
+        // Immediate click — no defer for remote-control feel
         setLastClick({ x: Math.round(rx * 100), y: Math.round(ry * 100) })
-        const clickTime = Date.now()
-        lastClickTimeRef.current = clickTime
         const rippleId = nextId()
         setRipples((prev) => [...prev, { id: rippleId, x: rx * 100, y: ry * 100 }])
 
-        const sendClick = () => {
-          hostCall('send_input', {
-            hwnd: selWin.hwnd, type: 'click', x_norm: rx, y_norm: ry,
-            button, method: inputMethod,
+        hostCall('send_input', {
+          hwnd: selWin.hwnd, type: 'click', x_norm: rx, y_norm: ry,
+          button, method: inputMethod,
+        })
+          .then(() => {
+            addLog(
+              `[Mouse] click → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${inputMethod}]`,
+            )
           })
-            .then(() => {
-              addLog(
-                `[Mouse] click → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${inputMethod}]`,
-              )
-            })
-            .catch((err: any) => {
-              addLog(`[Mouse] click failed: ${err?.message || err}`)
-            })
-        }
-
-        // Wait to see if a double-click follows; if so, skip this click
-        if (pendingClickRef.current) clearTimeout(pendingClickRef.current)
-        pendingClickRef.current = setTimeout(() => {
-          pendingClickRef.current = null
-          if (lastClickTimeRef.current !== clickTime) return // dblclick happened
-          sendClick()
-        }, 300) // typical Windows double-click time is 500ms; 300ms is safe
+          .catch((err: any) => {
+            addLog(`[Mouse] click failed: ${err?.message || err}`)
+          })
       } else {
         // Drag: add final position
         path.push({ x: rx, y: ry })
@@ -292,9 +293,8 @@ export function MonitorView({
       if (!inImage) return
 
       const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
-      // Suppress both deferred single-click sends from handleMouseUp
-      lastClickTimeRef.current = 0
-      if (pendingClickRef.current) { clearTimeout(pendingClickRef.current); pendingClickRef.current = null }
+      // Suppress the second mouseup click — dblclick handles the full pair
+      dblclickSuppressRef.current = true
       const rippleId = nextId()
       setRipples((prev) => [...prev, { id: rippleId, x: rx * 100, y: ry * 100 }, { id: rippleId + 1, x: rx * 100, y: ry * 100 }])
 
@@ -423,56 +423,24 @@ export function MonitorView({
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Toolbar */}
-      <div className="flex items-center h-11 px-4 bg-bg-secondary border-b border-border shrink-0 gap-4">
-        {/* Target */}
+      <div className="flex items-center h-11 px-4 bg-bg-secondary border-b border-border shrink-0 gap-3">
+        {/* Left: target + state (Connection style) */}
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-medium text-text-primary truncate max-w-[240px]">
+          <span className="text-sm font-medium text-text-primary truncate w-[144px]">
             {selWin.title}
           </span>
-          <span className={`text-[11px] font-medium shrink-0 ${stateColor}`}>
+          <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">
             {stateLabel}
           </span>
         </div>
-        <span className="text-border/40 select-none">│</span>
-        {/* Methods */}
-        <div className="flex items-center gap-2 text-[11px] shrink-0">
-          <span className="inline-flex items-center gap-1 text-text-muted">
-            <Camera className="w-3 h-3" /> Snapshot
-          </span>
-          <span className="font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded">
-            {METHOD_SHORT[snapMethod] || snapMethod.toUpperCase()}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] shrink-0">
-          <span className="inline-flex items-center gap-1 text-text-muted">
-            <Play className="w-3 h-3" /> Stream
-          </span>
-          <span className="font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded">
-            {METHOD_SHORT[streamMethod] || streamMethod.toUpperCase()}
-          </span>
-        </div>
-        {capMethod && (
-          <span className="text-[11px] text-text-muted shrink-0">
-            Last: {METHOD_SHORT[capMethod] || capMethod}
-            {snapshotLatency !== null ? ` (${snapshotLatency}ms)` : ''}
-          </span>
-        )}
+        {/* Middle: spacer */}
         <span className="flex-1" />
-        {/* Actions */}
-        <Tooltip text="单帧截图">
-          <button
-            onClick={onTakeSnapshot}
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-xs font-medium bg-accent text-white hover:bg-accent-hover transition-colors"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            Snapshot
-          </button>
-        </Tooltip>
+        {/* Right: Preview/Stop → Snapshot (right-aligned, rightmost=Stop) */}
         {previewing ? (
           <Tooltip text="停止实时预览">
             <button
               onClick={onTogglePreview}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-xs font-medium bg-error/20 text-error hover:bg-error/30 transition-colors"
+              className="inline-flex items-center justify-center gap-1.5 rounded-md w-[76px] h-7 text-xs font-medium bg-error/20 text-error hover:bg-error/30 transition-colors"
             >
               <Square className="w-3.5 h-3.5" />
               Stop
@@ -482,13 +450,22 @@ export function MonitorView({
           <Tooltip text="开始实时预览">
             <button
               onClick={onTogglePreview}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-xs font-medium border border-border text-text-secondary hover:bg-bg-hover transition-colors"
+              className="inline-flex items-center justify-center gap-1.5 rounded-md w-[76px] h-7 text-xs font-medium border border-border text-text-secondary hover:bg-bg-hover transition-colors"
             >
               <Play className="w-3.5 h-3.5" />
               Preview
             </button>
           </Tooltip>
         )}
+        <Tooltip text="单帧截图">
+          <button
+            onClick={onTakeSnapshot}
+            className="inline-flex items-center justify-center gap-1.5 rounded-md w-[88px] h-7 text-xs font-medium bg-accent text-white hover:bg-accent-hover transition-colors"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            Snapshot
+          </button>
+        </Tooltip>
       </div>
 
       {/* Preview canvas area */}
@@ -500,7 +477,7 @@ export function MonitorView({
             !isDesktop && previewing
               ? focused
                 ? 'ring-accent shadow-[0_0_0_2px_rgba(38,79,120,0.3)] cursor-crosshair'
-                : 'ring-border cursor-crosshair hover:ring-text-muted'
+                : 'ring-accent/40 cursor-crosshair hover:ring-accent/70'
               : 'ring-border'
           }`}
           onDoubleClick={handleDoubleClick}
@@ -555,18 +532,13 @@ export function MonitorView({
             </div>
           )}
 
-          {/* Mouse forwarding hint */}
+          {/* Remote-control hint */}
           {mouseOn && !isDesktop && previewing && (
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-secondary flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
-              <MousePointer2 className="w-3.5 h-3.5 text-accent" />
+              <MousePointer2 className={`w-3.5 h-3.5 ${focused ? 'text-accent animate-pulse' : 'text-text-muted'}`} />
               {focused
-                ? '键盘+鼠标转发中 | Esc 或点击外部释放焦点'
-                : `点击捕捉焦点 → ${inputMethod}`}
-              {lastClick && !focused && (
-                <span className="text-text-muted ml-2">
-                  [{lastClick.x}%, {lastClick.y}%]
-                </span>
-              )}
+                ? `远程控制中 · ${inputMethod} · Esc 释放`
+                : `悬停移动光标 · 点击控制 · ${inputMethod}`}
             </div>
           )}
 

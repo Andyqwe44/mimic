@@ -595,6 +595,36 @@ of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
 ## Recent Fixes (2026-07-09)
 
+### MonitorView remote-control mode — continuous input forwarding (major)
+Monitor tab preview now works like remote desktop (RDP/VNC). Mouse movement
+continuously forwarded at 60fps, clicks are immediate, keyboard engaged on canvas
+focus.
+
+| Interaction | Old | New |
+|-------------|-----|-----|
+| Mouse move | Only during drag (50ms sampling) | Continuous 60fps forwarding when mouse on canvas |
+| Click | Deferred 300ms (dblclick suppression) | Immediate (dblclick suppresses second mouseup) |
+| Hint | "点击捕捉焦点 → sendinput" | "悬停移动光标 · 点击控制" / "远程控制中 · Esc 释放" |
+| Focus ring | Gray when unfocused | accent/40 when unfocused, hover accent/70 |
+
+**Dblclick flow**: first mouseup sends `click` immediately, `onDoubleClick` sets
+`dblclickSuppressRef=true` and sends `dblclick`, second mouseup reads the ref and
+skips click. No defer, no duplicate clicks.
+
+**Monitor toolbar** simplified: left = target title (fixed 144px, CSS `truncate` for
+ellipsis) + state badge (Connection-style: `text-accent bg-accent/10`), middle =
+`flex-1` spacer, right = Snapshot + Preview/Stop buttons (fixed widths: `w-[88px]`
++ `w-[76px]` to prevent layout shift on toggle).
+
+**Removed from toolbar**: snapshot/stream method badges, separator, "Last: XXX" label.
+Unused props prefixed with underscore: `_capMethod`, `_snapMethod`, `_streamMethod`,
+`_snapshotLatency`.
+
+### App icon — ChatGPT-generated source
+`monitor_app/assets/icon/icon_source.png` (1024×1024 PNG from DALL·E).
+Regenerated `app.ico` via PIL: `icon_source.png → app.ico` (6 sizes 16-256px).
+Exe icon updates on next prod build.
+
 ### Component decomposition — 1798-line App.tsx → 11 modular files (major)
 Split monolithic App.tsx into reusable components under `src/components/` and
 shared lib under `src/lib/`:

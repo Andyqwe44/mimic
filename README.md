@@ -127,9 +127,23 @@ type_tag 1 (BGRA): [w:4][h:4][ch:4][reserved:4][pixels: w*h*ch]
 
 ## Input Forwarding (send_input)
 
-Monitor preview canvas captures user mouse/keyboard events → coordinates normalized
-and forwarded via `hostCall('send_input', {hwnd, type, ...})` →
+Monitor preview canvas operates like **remote desktop** (RDP/VNC): mouse movements
+continuously forwarded at 60fps, clicks sent immediately, keyboard engaged on canvas focus.
+
+Canvas mouse/keyboard events → coordinates normalized → `hostCall('send_input', {hwnd, type, ...})` →
 C++ `cmd_send_input` executes the input against the target window.
+
+### Interaction Model
+
+| Action | Behavior |
+|--------|----------|
+| Mouse hover over preview | Cursor position forwarded to target (60fps `move` events) |
+| Click | Immediate `click` (no defer); target responds instantly |
+| Double-click | First click fires immediately, `dblclick` handled separately (second click suppressed) |
+| Drag | Path sampled at 50ms, sent as `drag` with all points |
+| Wheel | Scroll delta normalized to WHEEL_DELTA (±120/notch), sign-corrected |
+| Keyboard | Canvas focus required (click to engage); Esc/blur auto-releases held keys |
+| Right-click | Browser context menu suppressed, forwarded as `click` with `button: "right"` |
 
 ### Input Types
 
