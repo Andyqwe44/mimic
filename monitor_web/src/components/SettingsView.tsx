@@ -100,6 +100,7 @@ export function SettingsView({
   saveStreamFrames, setSaveStreamFrames,
   frameDumpDir, setFrameDumpDir,
   inputMethod, setInputMethod,
+  mappingHotkey, setMappingHotkey,
 }: {
   snapMethod: string; setSnapMethod: (m: string) => void
   streamMethod: string; setStreamMethod: (m: string) => void
@@ -117,6 +118,7 @@ export function SettingsView({
   saveStreamFrames: boolean; setSaveStreamFrames: (v: boolean) => void
   frameDumpDir: string; setFrameDumpDir: (d: string) => void
   inputMethod: string; setInputMethod: (m: string) => void
+  mappingHotkey: string; setMappingHotkey: (k: string) => void
 }) {
   const themePairs = [
     ['#3B82F6', '#F97316'], // Ocean — blue + orange
@@ -652,6 +654,21 @@ export function SettingsView({
                 className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${devMode ? 'translate-x-5' : ''}`}
               />
             </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-text-secondary w-24 shrink-0">Mapping key</label>
+            <select
+              value={mappingHotkey}
+              onChange={(e) => {
+                setMappingHotkey(e.target.value)
+                addLog(`[Setting] mapping hotkey = ${e.target.value}`)
+              }}
+              className="h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
+            >
+              {['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'].map((k) => (
+                <option key={k} value={k}>{k}</option>
+              ))}
+            </select>
           </div>
         </div>
       </SettingsCard>

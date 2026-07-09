@@ -1,6 +1,6 @@
 // ═══ Monitor View — main workspace with large preview + input forwarding ═══
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Camera, Play, Square, MousePointer2 } from 'lucide-react'
+import { Camera, Play, Square, MousePointer2, Power } from 'lucide-react'
 import { ActionBtn } from './Toolkit'
 import { STATE_LABEL } from '../lib/constants'
 import { addLog, hostCall } from '../lib/bridge'
@@ -62,6 +62,9 @@ export function MonitorView({
   onTogglePreview,
   children,
   inputMethod,
+  mappingEnabled,
+  setMappingEnabled,
+  mappingHotkey,
   targetDims,
 }: {
   selWin: WindowInfo
@@ -75,6 +78,9 @@ export function MonitorView({
   onTogglePreview: () => void
   children: React.ReactNode
   inputMethod: string
+  mappingEnabled: boolean
+  setMappingEnabled: (v: boolean) => void
+  mappingHotkey: string
   targetDims: { w: number; h: number } | null
 }) {
   const isDesktop = selWin.hwnd === 0
@@ -117,6 +123,23 @@ export function MonitorView({
     return () => clearTimeout(timer)
   }, [keyToast])
 
+  // ── Global hotkey listener for mapping toggle ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === mappingHotkey || e.code === mappingHotkey) {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+        e.preventDefault()
+        setMappingEnabled((prev: boolean) => {
+          const next = !prev
+          addLog(`[Input] mapping ${next ? 'ON' : 'OFF'} (${mappingHotkey})`)
+          return next
+        })
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [mappingHotkey, setMappingEnabled])
+
   // No cleanup needed — immediate clicks have no pending state
 
   // ── Auto-release keys on blur ──
@@ -158,7 +181,7 @@ export function MonitorView({
   // ── Mouse handlers ──
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing) return
+      if (isDesktop || !previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const rect = e.currentTarget.getBoundingClientRect()
@@ -184,7 +207,7 @@ export function MonitorView({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing) return
+      if (isDesktop || !previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const now = Date.now()
@@ -285,7 +308,7 @@ export function MonitorView({
 
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing) return
+      if (isDesktop || !previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const rect = e.currentTarget.getBoundingClientRect()
@@ -316,7 +339,7 @@ export function MonitorView({
 
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing) return
+      if (isDesktop || !previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       e.preventDefault()
@@ -349,7 +372,7 @@ export function MonitorView({
   // ── Keyboard handlers ──
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing || !focused) return
+      if (isDesktop || !previewing || !focused || !mappingEnabled) return
       e.preventDefault()
 
       const key = e.key
@@ -388,7 +411,7 @@ export function MonitorView({
 
   const handleKeyUp = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing || !focused) return
+      if (isDesktop || !previewing || !focused || !mappingEnabled) return
       e.preventDefault()
 
       // Remove from tracked keys
@@ -435,6 +458,23 @@ export function MonitorView({
         </div>
         {/* Middle: spacer */}
         <span className="flex-1" />
+        {/* Input mapping toggle */}
+        <Tooltip text={`输入映射 (${mappingHotkey})`}>
+          <button
+            onClick={() => {
+              setMappingEnabled(!mappingEnabled)
+              addLog(`[Input] mapping ${!mappingEnabled ? 'ON' : 'OFF'}`)
+            }}
+            className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium transition-all duration-150 ${
+              mappingEnabled
+                ? 'bg-accent/10 text-accent border border-accent/30'
+                : 'border border-border text-text-secondary hover:bg-bg-hover'
+            }`}
+          >
+            <Power className={`w-3 h-3 ${mappingEnabled ? 'text-accent' : 'text-text-muted'}`} />
+            <span>映射</span>
+          </button>
+        </Tooltip>
         {/* Right: Snapshot → Preview/Stop (right-aligned) */}
         <ActionBtn
           icon={<Camera className="w-3.5 h-3.5" />}
@@ -466,9 +506,9 @@ export function MonitorView({
       <div className="flex-1 overflow-hidden p-4">
         <div
           ref={containerRef}
-          tabIndex={isDesktop || !previewing ? undefined : 0}
+          tabIndex={isDesktop || !previewing || !mappingEnabled ? undefined : 0}
           className={`w-full h-full rounded-xl bg-bg-secondary ring-1 ring-inset overflow-hidden flex items-center justify-center relative outline-none transition-shadow ${
-            !isDesktop && previewing
+            !isDesktop && previewing && mappingEnabled
               ? focused
                 ? 'ring-accent shadow-[0_0_0_2px_rgba(38,79,120,0.3)] cursor-crosshair'
                 : 'ring-accent/40 cursor-crosshair hover:ring-accent/70'
@@ -527,12 +567,18 @@ export function MonitorView({
           )}
 
           {/* Remote-control hint */}
-          {mouseOn && !isDesktop && previewing && (
+          {mouseOn && !isDesktop && previewing && mappingEnabled && (
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-secondary flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
               <MousePointer2 className={`w-3.5 h-3.5 ${focused ? 'text-accent animate-pulse' : 'text-text-muted'}`} />
               {focused
                 ? `远程控制中 · ${inputMethod} · Esc 释放`
                 : `悬停移动光标 · 点击控制 · ${inputMethod}`}
+            </div>
+          )}
+          {mouseOn && !isDesktop && previewing && !mappingEnabled && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-muted flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
+              <Power className="w-3.5 h-3.5" />
+              预览中 · 按 {mappingHotkey} 或点击「映射」开启控制
             </div>
           )}
 

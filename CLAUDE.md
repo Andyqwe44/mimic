@@ -609,6 +609,11 @@ of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 - High-contrast c1/c2 redesign: each pair now complementary or strongly contrasting hues (blue+orange, indigo+yellow, emerald+rose, amber+cyan, pink+indigo, teal+orange, blue+violet)
 - Dev pair changed from red/yellow to red `#EF4444` + hacker green `#22C55E` (danger + terminal aesthetic)
 - CSS `--color-accent-dev` default updated from `#0EA5E9` to `#F97316` (new Ocean c2)
+- Monitor toolbar input mapping toggle: Power button left of Snapshot, F10 default hotkey, guards all mouse/keyboard handlers
+- Settings → General → Mapping key dropdown (F1–F12), configurable hotkey for toggle
+- Canvas cursor/focus ring/hint text conditional on `mappingEnabled` — preview without accidental input
+- Global window keydown listener in MonitorView for hotkey toggle (skips input/textarea focus)
+- CSS `--color-accent-dev` default updated from `#0EA5E9` to `#F97316` (new Ocean c2)
 
 ### ActionBtn golden-ratio sizing + className audit + UI height unification (major)
 - Button sizing: golden-ratio modular scale (×√φ≈1.272), 5 tiers: xs(64)/sm(80)/md(104)/lg(132)/xl(168), all h-7(28px)

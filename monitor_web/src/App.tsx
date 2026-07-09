@@ -436,6 +436,8 @@ export default function App() {
   const [expectedCaptureState, setExpectedCaptureState] = useState('desktop')
   const [keepFiles, setKeepFiles] = useState(5)
   const [inputMethod, setInputMethod] = useState('sendinput')
+  const [mappingEnabled, setMappingEnabled] = useState(false)
+  const [mappingHotkey, setMappingHotkey] = useState('F10')
   const [devMode, setDevMode] = useState(false)
   const [saveCaptureFrames, setSaveCaptureFrames] = useState(false)
   const [saveStreamFrames, setSaveStreamFrames] = useState(false)
@@ -695,6 +697,7 @@ export default function App() {
               setSaveStreamFrames={setSaveStreamFrames}
               frameDumpDir={frameDumpDir} setFrameDumpDir={setFrameDumpDir}
               inputMethod={inputMethod} setInputMethod={setInputMethod}
+              mappingHotkey={mappingHotkey} setMappingHotkey={setMappingHotkey}
             />
           )}
           {tab === 'Monitor' && (
@@ -707,6 +710,8 @@ export default function App() {
               onTakeSnapshot={takeSnapshot}
               onTogglePreview={togglePreview}
               inputMethod={inputMethod}
+              mappingEnabled={mappingEnabled} setMappingEnabled={setMappingEnabled}
+              mappingHotkey={mappingHotkey}
               targetDims={targetDims}
             >
               <ScreenshotPanel
