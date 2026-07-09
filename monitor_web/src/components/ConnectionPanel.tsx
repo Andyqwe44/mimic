@@ -137,7 +137,7 @@ export function ConnectionPanel({
                     value={selTitle}
                     readOnly
                     placeholder="Window Title"
-                    className="w-36 h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs outline-none cursor-default text-text-muted truncate"
+                    className="w-36 h-7 rounded-lg border border-border bg-bg-primary px-2 text-xs outline-none cursor-default text-text-muted truncate"
                   />
                 </Tooltip>
                 {onDisconnect && (
@@ -147,7 +147,7 @@ export function ConnectionPanel({
                         onDisconnect()
                         setSelTitle(' Entire Desktop')
                       }}
-                      className="h-8 w-8 flex items-center justify-center rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 transition-colors shrink-0"
+                      className="h-7 w-7 flex items-center justify-center rounded-md bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 transition-colors shrink-0"
                     >
                       <Unlink className="w-3.5 h-3.5" />
                     </button>
@@ -178,7 +178,7 @@ export function ConnectionPanel({
                     } else setIp(v)
                   }}
                   placeholder="IP Address"
-                  className="w-[184px] h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted"
+                  className="w-[184px] h-7 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted"
                 />
               </Tooltip>
               <Tooltip text="Port端口号">
@@ -193,7 +193,7 @@ export function ConnectionPanel({
                     } else setPort(v)
                   }}
                   placeholder="Port"
-                  className="w-20 h-8 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted"
+                  className="w-20 h-7 rounded-lg border border-border bg-bg-primary px-2 text-xs text-text-primary outline-none focus:border-accent transition-colors placeholder:text-text-muted"
                 />
               </Tooltip>
             </div>

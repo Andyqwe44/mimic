@@ -435,7 +435,7 @@ export function SettingsView({
             <input
               defaultValue="GenericAgent v1"
               onBlur={(e) => addLog(`[Setting] base model = ${e.target.value}`)}
-              className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
+              className="w-full h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
             />
           </Tooltip>
         </div>
@@ -445,7 +445,7 @@ export function SettingsView({
             <input
               defaultValue="tictactoe-finetune"
               onBlur={(e) => addLog(`[Setting] adapter = ${e.target.value}`)}
-              className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
+              className="w-full h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
             />
           </Tooltip>
         </div>
@@ -503,7 +503,7 @@ export function SettingsView({
               <input
                 value={logDir}
                 readOnly
-                className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-muted outline-none cursor-default font-mono text-xs truncate"
+                className="w-full h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-muted outline-none cursor-default font-mono text-xs truncate"
               />
             </Tooltip>
             <Tooltip text="修改日志目录">
@@ -537,7 +537,7 @@ export function SettingsView({
               <select
                 value={keepFiles}
                 onChange={(e) => setKeepFiles(Number(e.target.value))}
-                className="h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
+                className="h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm outline-none focus:border-accent"
               >
                 {[3, 5, 7, 10].map((n) => (
                   <option key={n} value={n}>
@@ -625,7 +625,7 @@ export function SettingsView({
                 <input
                   value={frameDumpDir || '(not set)'}
                   readOnly
-                  className="w-full h-8 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-muted outline-none cursor-default font-mono text-xs truncate"
+                  className="w-full h-7 rounded-lg border border-border bg-bg-primary px-3 text-sm text-text-muted outline-none cursor-default font-mono text-xs truncate"
                 />
               </Tooltip>
               <Tooltip text="选择保存目录">
@@ -682,7 +682,6 @@ export function SettingsView({
               label="Check Update"
               title="检查新版本"
               variant="outline"
-              size="md"
               onClick={() => addLog('[Action] check update')}
             />
           </div>
@@ -704,18 +703,18 @@ export function SettingsView({
                 C++ WebView2 · React · Tailwind · DXGI · WGC
               </span>
             </div>
-            <Tooltip text="给项目点Star支持开发">
-              <button
-                onClick={() => {
-                  try {
-                    window.open('https://github.com/Andyqwe44/tictactoe', '_blank')
-                  } catch {}
-                }}
-                className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-7 text-xs font-medium bg-accent text-white hover:bg-accent-hover transition-colors shrink-0 ml-2"
-              >
-                <span>★</span>Star
-              </button>
-            </Tooltip>
+            <ActionBtn
+              icon={<span>★</span>}
+              label="Star on GitHub"
+              title="给项目点Star支持开发"
+              variant="primary"
+              onClick={() => {
+                try {
+                  window.open('https://github.com/Andyqwe44/tictactoe', '_blank')
+                } catch {}
+              }}
+              className="shrink-0 ml-2"
+            />
           </div>
         </div>
       </SettingsCard>

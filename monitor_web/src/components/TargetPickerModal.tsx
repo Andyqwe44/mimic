@@ -176,7 +176,7 @@ export function TargetPickerModal({
               </Tooltip>
             </div>
             <div className="px-4 py-2">
-              <div className="flex items-center gap-2 h-8 rounded-lg border border-border bg-bg-primary px-3">
+              <div className="flex items-center gap-2 h-7 rounded-lg border border-border bg-bg-primary px-3">
                 <Search className="w-3.5 h-3.5 text-text-muted shrink-0" />
                 <input
                   value={search}

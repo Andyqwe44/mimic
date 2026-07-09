@@ -158,7 +158,7 @@ export function LogPanel({
                       return (
                         <div
                           key={`cur-${i}`}
-                          className={`whitespace-pre-wrap break-all ${last ? 'font-semibold text-text-primary' : 'text-text-muted ' + zebra}`}
+                          className={`whitespace-pre-wrap break-words ${last ? 'font-semibold text-text-primary' : 'text-text-muted ' + zebra}`}
                           style={{ paddingLeft: '16ch', textIndent: '-16ch' }}
                         >
                           {l}
@@ -326,7 +326,7 @@ export function LogPanel({
                           return (
                             <div
                               key={i}
-                              className={`whitespace-pre-wrap break-all ${last ? 'font-semibold text-text-primary' : 'text-text-muted ' + zebra}`}
+                              className={`whitespace-pre-wrap break-words ${last ? 'font-semibold text-text-primary' : 'text-text-muted ' + zebra}`}
                               style={{ paddingLeft: '16ch', textIndent: '-16ch' }}
                             >
                               {l}

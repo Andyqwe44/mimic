@@ -595,16 +595,14 @@ of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
 ## Recent Fixes (2026-07-09)
 
-### ActionBtn size standardization + className override audit (major)
-Button component refactored with explicit `size` prop (`sm`=w-20 h-7, `md`=w-[100px] h-7`)
-replacing auto-detect from label length. New `outline-accent` variant (white bg, accent border + text).
-ConnectionPanel Select button had rogue `className="h-8"` silently overriding default `h-7` — removed.
-Monitor toolbar buttons swapped: Snapshot (primary, left) → Preview/Stop (outline-accent/danger, right).
-**monitor_web/CLAUDE.md** created: "禁止 className 静默覆盖组件内部样式" — Tailwind
-global atomic CSS means class name conflicts resolve by CSS declaration order (unpredictable
-across builds), not HTML attribute order. All `className`-accepting components must expose
-semantic props (`size`, `variant`, `spacing`) for customization; `className` only for layout
-positioning (flex-1, shrink-0, etc.).
+### ActionBtn golden-ratio sizing + className audit + UI height unification (major)
+- Button sizing: golden-ratio modular scale (×√φ≈1.272), 5 tiers: xs(64)/sm(80)/md(104)/lg(132)/xl(168), all h-7(28px)
+- `size` prop optional — auto-detects from `label.length`; explicit override still supported
+- Star button refactored from raw `<button>` to ActionBtn, label "Star"→"Star on GitHub"
+- All inputs/selects unified to h-7 (28px): ConnectionPanel (title, disconnect, IP, port), SettingsView (model, adapter, log dir, keep files, dump dir), TargetPickerModal (search)
+- className audit: zero silent override issues found across all 11 TSX files
+- `break-all`→`break-words` in LogPanel for readable log line wrapping
+- `monitor_web/CLAUDE.md` updated with full ActionBtn size table
 
 ### MonitorView remote-control mode — continuous input forwarding (major)
 Monitor tab preview now works like remote desktop (RDP/VNC). Mouse movement

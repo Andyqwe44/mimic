@@ -76,15 +76,35 @@ export function Tooltip({
   )
 }
 
-// ── ActionBtn: two standard sizes ──
-//   sm (default): w-20 h-7 (80×28) — Select, Snapshot, Preview, Stop
-//   md:           w-[100px] h-7     — ~25% wider
+// ── ActionBtn: golden-ratio modular scale (×√φ ≈ 1.272) ──
+//   xs: w-16 (64px) — ≤3 chars
+//   sm: w-20 (80px) — 4–6 chars (default auto)
+//   md: w-[104px]    — 7–9 chars
+//   lg: w-[132px]    — 10–14 chars
+//   xl: w-[168px]    — 15+ chars
+//   Height fixed at h-7 (28px). size auto-detected from label.length when omitted.
+const SIZE_CLASS: Record<string, string> = {
+  xs: 'w-16',
+  sm: 'w-20',
+  md: 'w-[104px]',
+  lg: 'w-[132px]',
+  xl: 'w-[168px]',
+}
+function autoSize(label: string): string {
+  const n = label.length
+  if (n <= 3) return 'xs'
+  if (n <= 6) return 'sm'
+  if (n <= 9) return 'md'
+  if (n <= 14) return 'lg'
+  return 'xl'
+}
+
 export function ActionBtn({
   icon,
   label,
   title,
   variant,
-  size = 'sm',
+  size,
   onClick,
   className,
 }: {
@@ -92,17 +112,16 @@ export function ActionBtn({
   label: string
   title: string
   variant: 'primary' | 'danger' | 'outline' | 'outline-accent'
-  size?: 'sm' | 'md'
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
   onClick?: () => void
   className?: string
 }) {
+  const w = SIZE_CLASS[size ?? autoSize(label)]
   return (
     <Tooltip text={title}>
       <button
         onClick={onClick}
-        className={`inline-flex items-center justify-center gap-1.5 rounded-md px-2.5 h-7 text-xs font-medium transition-all duration-150 ${
-          size === 'md' ? 'w-[100px]' : 'w-20'
-        } ${className ?? ''} ${
+        className={`inline-flex items-center justify-center gap-1.5 rounded-md px-2.5 h-7 text-xs font-medium transition-all duration-150 ${w} ${className ?? ''} ${
           variant === 'primary'
             ? 'bg-accent text-white hover:bg-accent-hover'
             : variant === 'danger'
