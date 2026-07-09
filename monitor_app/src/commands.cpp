@@ -774,6 +774,110 @@ void dump_frame_if_enabled(const uint8_t* bgra, int w, int h, bool is_stream) {
 }
 
 
+// ── Input mapping ──────────────────────────────────────────
+
+static std::string cmd_send_input(uint64_t hwnd, const std::string& type,
+    double x_norm, double y_norm, const std::string& button, const std::string& method) {
+
+    if (hwnd == 0) {
+        return "{\"ok\":false,\"error\":\"cannot send input to desktop\"}";
+    }
+    HWND hWnd = (HWND)(uintptr_t)hwnd;
+    if (!IsWindow(hWnd)) {
+        return "{\"ok\":false,\"error\":\"invalid window handle\"}";
+    }
+
+    // Get target window client rect
+    RECT cr;
+    if (!GetClientRect(hWnd, &cr)) {
+        return "{\"ok\":false,\"error\":\"failed to get client rect\"}";
+    }
+    int cw = cr.right - cr.left;
+    int ch = cr.bottom - cr.top;
+
+    // Map normalized (0-1) → client pixel coords
+    int clientX = (int)(x_norm * cw);
+    int clientY = (int)(y_norm * ch);
+
+    // Map client → screen coords
+    POINT pt = { cr.left, cr.top };
+    ClientToScreen(hWnd, &pt);
+    int screenX = pt.x + clientX;
+    int screenY = pt.y + clientY;
+
+    if (method == "driver") {
+        return "{\"ok\":false,\"error\":\"driver-level input not implemented (requires kernel driver)\"}";
+    }
+
+    if (method == "postmessage") {
+        // ── Window-level: post messages directly to window queue ──
+        if (type == "click") {
+            UINT downMsg = (button == "right") ? WM_RBUTTONDOWN :
+                          (button == "middle") ? WM_MBUTTONDOWN : WM_LBUTTONDOWN;
+            UINT upMsg   = (button == "right") ? WM_RBUTTONUP :
+                          (button == "middle") ? WM_MBUTTONUP : WM_LBUTTONUP;
+            WPARAM wDown = (button == "right") ? MK_RBUTTON :
+                          (button == "middle") ? MK_MBUTTON : MK_LBUTTON;
+
+            LPARAM lp = MAKELPARAM(clientX, clientY);
+            PostMessageW(hWnd, downMsg, wDown, lp);
+            Sleep(10);
+            PostMessageW(hWnd, upMsg, 0, lp);
+        } else if (type == "move") {
+            PostMessageW(hWnd, WM_MOUSEMOVE, 0, MAKELPARAM(clientX, clientY));
+        } else if (type == "key") {
+            // button field carries key name for future key support
+            return "{\"ok\":false,\"error\":\"key input not yet implemented\"}";
+        }
+    } else if (method == "sendinput") {
+        // ── Application-level: synthesized system input ──
+        // Convert screen coords to SendInput absolute (0-65535 mapped to virtual screen)
+        int vsX = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vsY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vsW = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vsH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        DWORD absX = (DWORD)(((double)(screenX - vsX) / (double)vsW) * 65535.0);
+        DWORD absY = (DWORD)(((double)(screenY - vsY) / (double)vsH) * 65535.0);
+
+        if (type == "click") {
+            DWORD downFlag = (button == "right") ? MOUSEEVENTF_RIGHTDOWN :
+                            (button == "middle") ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_LEFTDOWN;
+            DWORD upFlag   = (button == "right") ? MOUSEEVENTF_RIGHTUP :
+                            (button == "middle") ? MOUSEEVENTF_MIDDLEUP : MOUSEEVENTF_LEFTUP;
+
+            INPUT inputs[2] = {};
+            inputs[0].type = INPUT_MOUSE;
+            inputs[0].mi.dx = absX;
+            inputs[0].mi.dy = absY;
+            inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | downFlag;
+
+            inputs[1].type = INPUT_MOUSE;
+            inputs[1].mi.dx = absX;
+            inputs[1].mi.dy = absY;
+            inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | upFlag;
+
+            SendInput(2, inputs, sizeof(INPUT));
+        } else if (type == "move") {
+            INPUT input = {};
+            input.type = INPUT_MOUSE;
+            input.mi.dx = absX;
+            input.mi.dy = absY;
+            input.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+            SendInput(1, &input, sizeof(INPUT));
+        } else if (type == "key") {
+            return "{\"ok\":false,\"error\":\"key input not yet implemented\"}";
+        }
+    } else {
+        return "{\"ok\":false,\"error\":\"unknown input method: " + method + "\"}";
+    }
+
+    LOG("cmd", "send_input: %s at norm(%.3f,%.3f) → client(%d,%d) screen(%d,%d) method=%s",
+        type.c_str(), x_norm, y_norm, clientX, clientY, screenX, screenY, method.c_str());
+
+    return "{\"ok\":true}";
+}
+
 // ── Main dispatch ─────────────────────────────────────────
 std::string dispatch_command(const std::string& json) {
     std::string cmd = json_get_str(json, "cmd");
@@ -811,6 +915,15 @@ std::string dispatch_command(const std::string& json) {
     else if (cmd == "pick_dir") result = cmd_pick_dir();
     else if (cmd == "open_dir") result = cmd_open_dir(json_get_str(args, "dir"));
 
+    else if (cmd == "send_input") {
+        result = cmd_send_input(
+            json_get_uint64(args, "hwnd"),
+            json_get_str(args, "type"),
+            json_get_double(args, "x_norm"),
+            json_get_double(args, "y_norm"),
+            json_get_str(args, "button"),
+            json_get_str(args, "method"));
+    }
     else if (cmd == "get_version") {
         result = "\"" APP_VERSION "\"";
     }

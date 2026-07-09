@@ -542,6 +542,57 @@ of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
 ## Recent Fixes (2026-07-09)
 
+### Component decomposition — 1798-line App.tsx → 11 modular files (major)
+Split monolithic App.tsx into reusable components under `src/components/` and
+shared lib under `src/lib/`:
+
+| File | Exports |
+|------|---------|
+| `lib/bridge.ts` | `hostCall`, `LogManager`, `logMgr`, `addLog`, `applyTheme` |
+| `lib/types.ts` | `WindowInfo`, `HistoryFile`, `LogEntry` |
+| `lib/constants.ts` | `CAPTURE_METHODS`, `RENDER_METHODS`, `INPUT_METHODS`, `STATE_LABEL`, etc. |
+| `components/Toolkit.tsx` | `Tooltip`, `ActionBtn`, `ThemeBtn` |
+| `components/TopBar.tsx` | Tab bar + Start/Stop + ThemeBtn |
+| `components/BottomBar.tsx` | Status strip (target, method, agent TCP, version) |
+| `components/TargetPickerModal.tsx` | Window list + capture mode picker |
+| `components/ConnectionPanel.tsx` | Target connection (blue accent) |
+| `components/ScreenshotPanel.tsx` | SharedBuffer canvas (violet accent) + `bare` mode |
+| `components/LogPanel.tsx` | Log viewer (amber accent) — compact + full modes |
+| `components/SettingsView.tsx` | Settings page with SettingsCard + StatusBar |
+| `components/MonitorView.tsx` | Main workspace: large preview + mouse input mapping |
+
+Zero TS errors. Vite HMR unchanged. App.tsx now ~530 lines (pure orchestration).
+
+### Input mapping — C++ send_input + frontend mouse forwarding (major)
+**C++ `cmd_send_input`** (`commands.cpp`): three-tier input injection:
+| Method | Implementation | Notes |
+|--------|---------------|-------|
+| `sendinput` | `SendInput` API, MOUSEEVENTF_ABSOLUTE (0-65535) | Recommended default |
+| `postmessage` | `PostMessageW(WM_LBUTTONDOWN/UP)` directly to window | May bypass some protections |
+| `driver` | — | Returns error, not implemented |
+
+Coordinate flow: norm(0-1) → GetClientRect → client pixels → ClientToScreen(screen) → SendInput absolute / PostMessage LPARAM.
+New `json_get_double` in `json_helper.h` for floating-point args.
+**Frontend**: Settings → Capture → Input Method selector (🖱). MonitorView click handler calls
+`hostCall('send_input', {hwnd, type, x_norm, y_norm, button, method})`.
+Crosshair cursor + overlay hint when previewing non-desktop target.
+
+### Monitor tab redesign + BottomBar status strip
+Monitor tab now shows: toolbar (target + method badges + Snapshot/Preview buttons) +
+large preview area (ScreenshotPanel bare mode) + mouse click-to-forward overlay.
+BottomBar redesigned from `Idle | FPS:0 | Lat:0ms` to real status strip:
+`🖥 window │ 📷 WGC ▶ WGC 60fps ● │ 1920×1080 │ TCP :9999 ● Agent在线 │ v0.3.0`
+FPS/dims flow via `onFps`/`onDims` callbacks from ScreenshotPanel → App → BottomBar.
+
+### Panel color differentiation + scrollbar thinning
+Right-sidebar panels now have colored icon backgrounds:
+Connection (blue-400/15), Screenshot (violet-400/15), Log (amber-400/15).
+Scrollbar: 6px → 4px, added Firefox `scrollbar-width: thin`.
+
+### Connection header: state/recommend badges moved to title
+状态/推荐 labels removed; 桌面 + WGC badges moved next to Connection title on the left.
+Old markup deleted (JSX `{/* */}` comment caused OXc parse error).
+
 ### Dark theme — VSCode-inspired deep blue-gray palette
 Replaced harsh pure-black palette (`#09090b`/`#18181b`/`#27272a`) with VSCode Dark+
 inspired colors (`#1e1e1e`/`#252526`/`#2d2d2d`). Reduced text contrast from pure white

@@ -42,6 +42,14 @@ inline int json_get_int(const std::string& json, const std::string& key) {
     return (int)strtol(json.c_str() + p, nullptr, 10);
 }
 
+inline double json_get_double(const std::string& json, const std::string& key) {
+    std::string s = "\"" + key + "\":";
+    size_t p = json.find(s);
+    if (p == std::string::npos) return 0.0;
+    p += s.length();
+    return strtod(json.c_str() + p, nullptr);
+}
+
 inline std::string json_get_obj(const std::string& json, const std::string& key) {
     std::string s = "\"" + key + "\":{";
     size_t p = json.find(s);
