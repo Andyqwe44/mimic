@@ -53,7 +53,16 @@ export function LogPanel({
     logMgr.loadHistory(keepFiles ?? 5).then(setHistoryFiles)
   }, [keepFiles, compact])
 
-  const formatLine = (e: { ts: string; msg: string }) => `[${e.ts}] ${e.msg}`
+  // ── Format single log line for display ──
+  // Normal: [HH:MM:SS.ms] message
+  // Collapsed (count > 1): [firstTs → lastTs] message ×N
+  const formatLine = (e: { ts: string; msg: string; count?: number; firstTs?: string }) => {
+    if (e.count && e.count > 1) {
+      const range = e.firstTs && e.firstTs !== e.ts ? `${e.firstTs} → ${e.ts}` : e.ts
+      return `[${range}] ${e.msg} ×${e.count}`
+    }
+    return `[${e.ts}] ${e.msg}`
+  }
   const currentLines = entries.map(formatLine)
   const displayLines = compact ? currentLines.slice(-100) : currentLines.slice(-500)
 

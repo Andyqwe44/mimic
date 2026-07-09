@@ -14,5 +14,12 @@ export interface HistoryFile {
   lines: string[]        // empty until user expands the tile
 }
 
-// Single log entry — timestamp (HH:MM:SS.ms) + message
-export type LogEntry = { ts: string; msg: string }
+// Single log entry — timestamp (HH:MM:SS.ms) + message.
+// When count > 1, this entry represents collapsed consecutive duplicates:
+// firstTs = timestamp of first occurrence, ts = timestamp of last occurrence.
+export type LogEntry = {
+  ts: string
+  msg: string
+  count?: number    // >1 when collapsed — how many consecutive identical entries
+  firstTs?: string  // timestamp of the first entry in the collapsed range
+}

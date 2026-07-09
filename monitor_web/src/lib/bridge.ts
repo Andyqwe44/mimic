@@ -64,18 +64,36 @@ class LogManager {
   private initialSyncDone = false
 
   // ── TS-side add (UI events, user actions) ──
+  // Collapses consecutive identical messages: updates previous entry's count
+  // instead of pushing a duplicate. Shows time range + ×N in display.
   add(msg: string) {
-    this.entries.push({ ts: timeStr(), msg: `[ui] ${msg}` })
+    const fullMsg = `[ui] ${msg}`
+    const prev = this.entries[this.entries.length - 1]
+    if (prev && prev.msg === fullMsg) {
+      // Same as previous → collapse: increment count, extend time range
+      prev.count = (prev.count || 1) + 1
+      if (!prev.firstTs) prev.firstTs = prev.ts
+      prev.ts = timeStr()
+    } else {
+      this.entries.push({ ts: timeStr(), msg: fullMsg })
+    }
     this.listeners.forEach((f) => f())
     hostCall('log_ui_event', { event: msg, detail: '' }).catch(() => {})
   }
 
   // ── C++-side add (remote log push via 'message' event) ──
-  // Dedup by (ts, msg) — prevents double-insert when TS also wrote the entry
-  addRemote(ts: string, tag: string, msg: string) {
-    const dup = this.entries.find((e) => e.ts === ts && e.msg === `[${tag}] ${msg}`)
+  // Dedup by (ts, msg) — prevents double-insert when TS also wrote the entry.
+  // count > 1 → C++ already collapsed consecutive duplicates. TS stores as-is.
+  addRemote(ts: string, tag: string, msg: string, count?: number, firstTs?: string) {
+    const fullMsg = `[${tag}] ${msg}`
+    const dup = this.entries.find((e) => e.ts === ts && e.msg === fullMsg)
     if (dup) return
-    this.entries.push({ ts, msg: `[${tag}] ${msg}` })
+    this.entries.push({
+      ts,
+      msg: fullMsg,
+      count: (count && count > 1) ? count : undefined,
+      firstTs: (count && count > 1 && firstTs) ? firstTs : undefined,
+    })
     if (this.entries.length > 500) this.entries = this.entries.slice(-500)
     this.listeners.forEach((f) => f())
   }
@@ -102,6 +120,20 @@ class LogManager {
       if (!raw) return
       const lines = raw.split('\n').filter((l: string) => l.trim())
       for (const line of lines) {
+        // Collapsed: [firstTs → lastTs] [tag] msg ×N
+        const cm = line.match(
+          /^\[(\d{2}:\d{2}:\d{2}\.\d{3}) → (\d{2}:\d{2}:\d{2}\.\d{3})\]\s\[(\w+)\]\s(.+) ×(\d+)$/
+        )
+        if (cm) {
+          this.entries.push({
+            ts: cm[2],
+            msg: `[${cm[3]}] ${cm[4]}`,
+            count: parseInt(cm[5], 10),
+            firstTs: cm[1],
+          })
+          continue
+        }
+        // Normal: [ts] [tag] msg
         const m = line.match(/^\[(\d{2}:\d{2}:\d{2}\.\d{3})\]\s\[(\w+)\]\s(.+)$/)
         if (m) {
           this.entries.push({ ts: m[1], msg: `[${m[2]}] ${m[3]}` })
@@ -147,9 +179,10 @@ if (typeof (window as any).chrome?.webview !== 'undefined') {
   ;(window as any).chrome.webview.addEventListener('message', (e: any) => {
     try {
       const msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
-      // Log push: C++ capture_log_write_msg → notify callback → PostWebMessage
+      // Log push: C++ capture_log_write_msg → notify callback → PostWebMessage.
+      // count > 1 → C++ already collapsed consecutive duplicates (file + ring).
       if (msg.type === 'log') {
-        logMgr.addRemote(msg.ts, msg.tag, msg.msg)
+        logMgr.addRemote(msg.ts, msg.tag, msg.msg, msg.count || 1, msg.firstTs || '')
         return
       }
       // Command response: {id, result} envelope → resolve matching pending call

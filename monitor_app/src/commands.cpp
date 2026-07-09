@@ -118,10 +118,18 @@ static std::string json_escape(const std::string& s) {
 }
 
 // ── Logger → TS push callback ──────────────────────────────
-static void on_log_notify(const char* ts, const char* tag, const char* msg) {
+// count > 1 → collapsed consecutive duplicates (TS shows ×N + time range)
+// count = 1 → normal single entry
+static void on_log_notify(const char* ts, const char* tag, const char* msg,
+                           int count, const char* firstTs) {
     std::string json = "{\"type\":\"log\",\"ts\":\"" + json_escape(ts)
                      + "\",\"tag\":\"" + json_escape(tag)
-                     + "\",\"msg\":\"" + json_escape(msg) + "\"}";
+                     + "\",\"msg\":\"" + json_escape(msg) + "\"";
+    if (count > 1) {
+        json += ",\"count\":" + std::to_string(count)
+             +  ",\"firstTs\":\"" + json_escape(firstTs) + "\"";
+    }
+    json += "}";
     PostJsonToWebView(json);
 }
 

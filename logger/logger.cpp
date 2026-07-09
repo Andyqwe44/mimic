@@ -14,13 +14,16 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <io.h>
 #define NOMINMAX
 #include <windows.h>
 
 // ── Ring buffer entry ──────────────────────────────────
 struct LogEntry {
-    std::string ts;   // "HH:MM:SS.mmm"
-    std::string msg;  // full log line
+    std::string ts;       // last occurrence timestamp (HH:MM:SS.mmm)
+    std::string msg;      // full log line: "[tag] body"
+    int count = 0;        // 0 = single entry; >0 = collapsed consecutive duplicates
+    std::string firstTs;  // first occurrence timestamp (valid when count > 0)
 };
 
 // ── Global logger state ─────────────────────────────────
@@ -35,6 +38,17 @@ static int                g_ring_cap = 5000;
 static int                g_ring_idx = 0;  // write position (circular)
 static bool               g_ring_full = false;
 static bool               g_initialized = false;
+static int                g_last_ring_pos = -1;  // index of last ring entry (for in-place update)
+
+// ── Consecutive-duplicate collapse tracking ──────────────
+// Ring: check-then-update (no duplicate added, efficient)
+// File:  write-then-collapse (write raw first for crash safety,
+//        then seek back + overwrite with ×N + truncate)
+static std::string        g_last_tag;
+static std::string        g_last_msg_body;  // raw msg body (without [tag], for comparison)
+static std::string        g_last_first_ts;  // timestamp of first occurrence in current run
+static int                g_last_count = 0; // consecutive count (0 = no active run)
+static long               g_last_file_pos = 0;  // file position where current run starts
 
 // ── Local-time timestamp with milliseconds ──────────────
 static std::string _timestamp() {
@@ -46,21 +60,70 @@ static std::string _timestamp() {
     return buf;
 }
 
-// ── Internal: write to file (must hold g_mutex) ─────────
-static void _write_file(const std::string& ts, const std::string& msg) {
+// ── Internal: write an entry to file (must hold g_mutex) ──
+// Does NOT update g_last_file_pos — caller must set it before calling
+// (for new runs: ftell before write; for collapse: unchanged from run start).
+static void _file_write_entry(const char* ts, const char* tag, const char* msg) {
     if (!g_file) return;
-    fprintf(g_file, "[%s] %s\n", ts.c_str(), msg.c_str());
+    fprintf(g_file, "[%s] [%s] %s\n", ts, tag, msg);
+    fflush(g_file);
+}
+
+// ── Internal: collapse file — overwrite current run with ×N ──
+// Seeks back to g_last_file_pos, writes collapsed line, truncates leftover bytes.
+// Called after a new entry was just appended (crash-safe: if we crash before
+// this completes, the file has two individual entries — honest, just not collapsed).
+// Must hold g_mutex.
+static void _file_collapse(const char* firstTs, const char* lastTs,
+                            const char* tag, const char* msg, int count) {
+    if (!g_file || count <= 1) return;
+    fseek(g_file, g_last_file_pos, SEEK_SET);
+    fprintf(g_file, "[%s → %s] [%s] %s ×%d\n",
+            firstTs, lastTs, tag, msg, count);
+    long new_end = ftell(g_file);
+    int fd = _fileno(g_file);
+    _chsize_s(fd, new_end);  // truncate any leftover bytes from previous (longer) content
+    fflush(g_file);
 }
 
 // ── Internal: write to ring buffer (must hold g_mutex) ──
-static void _write_ring(const std::string& ts, const std::string& msg) {
-    if (g_ring_cap <= 0) return;
+// Returns the index where the entry was written (for later in-place collapse).
+static int _write_ring(const std::string& ts, const std::string& msg) {
+    if (g_ring_cap <= 0) return -1;
+    int pos;
     if ((int)g_ring.size() < g_ring_cap) {
-        g_ring.push_back({ts, msg});
+        g_ring.push_back({ts, msg, 0, ""});
+        pos = (int)g_ring.size() - 1;
     } else {
-        g_ring[g_ring_idx] = {ts, msg};
+        g_ring[g_ring_idx] = {ts, msg, 0, ""};
+        pos = g_ring_idx;
         g_ring_idx = (g_ring_idx + 1) % g_ring_cap;
         g_ring_full = true;
+    }
+    g_last_ring_pos = pos;
+    return pos;
+}
+
+// ── Internal: update last ring entry in-place (collapse) ──
+// Must hold g_mutex. Only called when count >= 2 and g_last_ring_pos is valid.
+static void _update_last_ring(const std::string& ts, int count, const std::string& firstTs) {
+    if (g_last_ring_pos < 0) return;
+    if (g_ring_full) {
+        // Circular buffer: entry at g_last_ring_pos may have been overwritten
+        // by a newer non-collapsed entry. Guard: only update if it's still the same run.
+        auto& e = g_ring[g_last_ring_pos];
+        if (e.count == count - 1 || e.count == 0) {
+            e.ts = ts;
+            e.count = count;
+            if (count == 2) e.firstTs = firstTs;
+        }
+    } else {
+        if (g_last_ring_pos < (int)g_ring.size()) {
+            auto& e = g_ring[g_last_ring_pos];
+            e.ts = ts;
+            e.count = count;
+            if (count == 2) e.firstTs = firstTs;
+        }
     }
 }
 
@@ -157,7 +220,10 @@ void capture_log_init(const char* app_name,
         g_current_file = base ? (base + 1) : fname;
     }
 
-    g_file = fopen(fname, "a");
+    // Open in binary read+write mode (not append).
+    // Binary mode → ftell/fseek return accurate byte offsets (needed for collapse).
+    // Read+write → we can seek back + overwrite + truncate for ×N collapse.
+    g_file = fopen(fname, "w+b");
     if (g_file) {
         fprintf(g_file, "=== %s v%s ===\n", app_name, app_version);
         char ts_buf[32];
@@ -191,32 +257,70 @@ void capture_log_shutdown(void) {
     if (g_file) {
         auto ts = _timestamp();
         fprintf(g_file, "[%s] Application shutdown\n", ts.c_str());
+        fflush(g_file);
         fclose(g_file);
         g_file = nullptr;
     }
     g_initialized = false;
+    g_last_count = 0;
 }
 
 // ── Notify callback (C++ → TS push) ──────────────────────
 static capture_log_notify_cb g_notify_cb = nullptr;
 
 // ── THE ONE write function ───────────────────────────────
+// Write-then-collapse strategy for crash safety:
+// 1. Always append the raw entry to file FIRST (durable on disk).
+// 2. If same as previous: seek back + overwrite with [first→last] msg ×N + truncate.
+// 3. If crash before step 2: file has individual entries — redundant but truthful.
+//    If crash after step 2: file has clean collapsed entry — optimal.
+// Ring buffer uses check-then-update (no temporary duplicate needed — it's in-memory).
 void capture_log_write_msg(const char* tag, const char* msg) {
     auto ts = _timestamp();
-    char formatted[4096];
-    snprintf(formatted, sizeof(formatted), "[%s] %s", tag, msg);
 
     capture_log_notify_cb cb_copy = nullptr;
+    int notify_count = 1;
+    std::string notify_first_ts;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
-        _write_file(ts, formatted);
-        _write_ring(ts, formatted);
-        fflush(g_file);
+
+        bool same = (g_last_count > 0 && g_last_tag == tag && g_last_msg_body == msg);
+
+        // ── Step 1: write raw entry to file (crash-safe) ──
+        // Record file position BEFORE writing only when starting a new run.
+        // For collapse: g_last_file_pos stays at run's first entry position.
+        if (!same) {
+            g_last_file_pos = ftell(g_file);
+        }
+        _file_write_entry(ts.c_str(), tag, msg);
+
+        if (same) {
+            // ── Step 2: collapse — overwrite from run start ──
+            g_last_count++;
+            _file_collapse(g_last_first_ts.c_str(), ts.c_str(),
+                           tag, msg, g_last_count);
+            // Ring: update last entry in-place (no duplicate added)
+            _update_last_ring(ts, g_last_count, g_last_first_ts);
+        } else {
+            // ── Different message: start new run ──
+            g_last_tag = tag;
+            g_last_msg_body = msg;
+            g_last_first_ts = ts;
+            g_last_count = 1;
+            // Ring: push new entry
+            char formatted[4096];
+            snprintf(formatted, sizeof(formatted), "[%s] %s", tag, msg);
+            _write_ring(ts, formatted);
+        }
+
+        notify_count = g_last_count;
+        if (g_last_count > 1) notify_first_ts = g_last_first_ts;
         cb_copy = g_notify_cb;
     }
-    // Notify TS outside lock to avoid re-entrancy deadlock
+    // Notify TS outside lock to avoid re-entrancy deadlock.
     if (cb_copy) {
-        cb_copy(ts.c_str(), tag, msg);
+        cb_copy(ts.c_str(), tag, msg, notify_count,
+                notify_count > 1 ? notify_first_ts.c_str() : "");
     }
 }
 
@@ -225,15 +329,37 @@ void capture_log_set_notify(capture_log_notify_cb cb) {
 }
 
 // ── UI-side log (TS → C++, no echo back) ─────────────────
+// Same write-then-collapse strategy as capture_log_write_msg.
+// No notify — TS already knows about its own log entries.
 void capture_log_write_ui(const char* msg) {
     auto ts = _timestamp();
-    char formatted[4096];
-    snprintf(formatted, sizeof(formatted), "[ui] %s", msg);
     {
         std::lock_guard<std::mutex> lk(g_mutex);
-        _write_file(ts, formatted);
-        _write_ring(ts, formatted);
-        fflush(g_file);
+
+        bool same = (g_last_count > 0 && g_last_tag == "ui" && g_last_msg_body == msg);
+
+        // Step 1: write raw entry to file (crash-safe)
+        // Record file position BEFORE writing only for new run.
+        if (!same) {
+            g_last_file_pos = ftell(g_file);
+        }
+        _file_write_entry(ts.c_str(), "ui", msg);
+
+        if (same) {
+            // Step 2: collapse — overwrite from run start
+            g_last_count++;
+            _file_collapse(g_last_first_ts.c_str(), ts.c_str(),
+                           "ui", msg, g_last_count);
+            _update_last_ring(ts, g_last_count, g_last_first_ts);
+        } else {
+            g_last_tag = "ui";
+            g_last_msg_body = msg;
+            g_last_first_ts = ts;
+            g_last_count = 1;
+            char formatted[4096];
+            snprintf(formatted, sizeof(formatted), "[ui] %s", msg);
+            _write_ring(ts, formatted);
+        }
     }
     // No notify — TS already knows about its own log entries
 }
@@ -253,11 +379,25 @@ char* capture_log_read_memory(void) {
 
     for (int i = 0; i < count; i++) {
         const auto& e = g_ring[(start + i) % g_ring_cap];
-        out += "[";
-        out += e.ts;
-        out += "] ";
-        out += e.msg;
-        out += "\n";
+        if (e.count > 0) {
+            // Collapsed entry: [firstTs → lastTs] msg ×N
+            out += "[";
+            out += e.firstTs;
+            out += " → ";
+            out += e.ts;
+            out += "] ";
+            out += e.msg;
+            out += " ×";
+            out += std::to_string(e.count);
+            out += "\n";
+        } else {
+            // Normal entry: [ts] msg
+            out += "[";
+            out += e.ts;
+            out += "] ";
+            out += e.msg;
+            out += "\n";
+        }
     }
 
     char* result = (char*)malloc(out.size() + 1);

@@ -593,6 +593,67 @@ Local type declarations in `monitor_web/src/webview2.d.ts` cover:
 Never use `any` for WebView2 event handlers — the `.d.ts` enables compile-time checking
 of method names (e.g. `e.additionalData` not `e.getAdditionalData()`).
 
+## Recent Fixes (2026-07-10)
+
+### Log collapse — consecutive duplicate aggregation (major)
+Continuous identical (tag, msg) log entries are collapsed into a single entry
+with time range `[firstTs → lastTs]` and count `×N`. Eliminates per-frame
+streaming log spam (1000 frames = 1 line instead of 1000 lines), saves disk
+space and ring buffer capacity.
+
+**Dual-layer independent collapse:**
+
+| Layer | Strategy | Rationale |
+|-------|----------|-----------|
+| C++ ring buffer | check-then-update (in-place, no duplicate added) | Memory, no crash risk |
+| C++ log file | write-then-collapse (write raw → seek → overwrite ×N → truncate) | Disk, crash-safe |
+| TS `addRemote` | C++ notify sends count/firstTs, TS stores as-is | No duplicate work |
+| TS `add` (UI) | check-then-update: prev.count++ | TS-side independent |
+
+**Crash safety (write-then-collapse):**
+1. Step 1 — append raw entry to file: `[T1001] [tag] msg\n` (no `×`, not collapsed)
+2. Step 2 — `fseek(P0)` → overwrite from run start: `[T1→T1001] [tag] msg ×1001\n` → `_chsize_s` truncate
+
+| Crash moment | File content | Data correct? |
+|-------------|-------------|--------------|
+| After step 1, before step 2 | `×1000` + one raw `[T1001]` | ✅ Total = 1001 |
+| After step 2 | `×1001` single line | ✅ Optimal |
+| Never happens | `×1000` + `×1001` | N/A — step 1 writes raw, not collapsed |
+
+**Ring buffer in-place update:** `_update_last_ring()` modifies the last ring entry's
+`ts`, `count`, `firstTs` without pushing a new entry. `capture_log_read_memory`
+outputs collapsed format for `initSync` TS→C++ startup sync.
+
+**Notify callback extended** — `capture_log_notify_cb(ts, tag, msg, count, firstTs)`:
+- `count = 1` → normal single entry
+- `count > 1` → collapsed, TS shows `×N` + time range
+- `firstTs` only valid when `count > 1`
+
+**TS `initSync`** parses both formats from C++ ring buffer:
+- Normal: `/^\[(\d{2}:\d{2}:\d{2}\.\d{3})\]\s\[(\w+)\]\s(.+)$/`
+- Collapsed: `/^\[(\d{2}:\d{2}:\d{2}\.\d{3}) → (\d{2}:\d{2}:\d{2}\.\d{3})\]\s\[(\w+)\]\s(.+) ×(\d+)$/`
+
+**LogEntry type extended** with optional `count?: number` and `firstTs?: string`.
+**LogPanel formatLine** renders normal: `[ts] msg`, collapsed: `[firstTs → ts] msg ×N`.
+
+**File mode changed** from `"a"` (append-only) to `"w+b"` (binary read+write) —
+required for `fseek` + overwrite + `_chsize_s` truncate (append mode forces all
+writes to EOF regardless of fseek).
+
+**Iron Law 5 compliance (no deception):**
+- C++ always writes truth to file: raw first, then collapsed (crash-safe honesty)
+- C++ notify sends count/firstTs — TS knows exactly if entry is collapsed
+- TS independently collapses UI-side entries — no silent mismatch
+- File reader sees either raw entries (honest count) or collapsed entry (explicit ×N)
+
+**Files changed:**
+- `logger/logger.h` — notify callback +count +firstTs
+- `logger/logger.cpp` — LogEntry count/firstTs, file mode `"w+b"`, write-then-collapse, ring in-place update, `read_live_log` collapsed format
+- `monitor_app/src/commands.cpp` — `on_log_notify` JSON with count/firstTs
+- `monitor_web/src/lib/types.ts` — LogEntry optional count/firstTs
+- `monitor_web/src/lib/bridge.ts` — `addRemote` accepts pre-collapsed data, `add` collapses TS-side, `initSync` parses collapsed lines
+- `monitor_web/src/components/LogPanel.tsx` — `formatLine` renders `×N` + time range
+
 ## Recent Fixes (2026-07-09)
 
 ### Two-color theme system + Dev Mode override + lightning-bolt swatches (major)
