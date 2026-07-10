@@ -7,7 +7,7 @@ if not exist "build_dev" mkdir "build_dev"
 set ROOT=%~dp0..
 set CFLAGS=/EHsc /std:c++17 /I src /I dep /I "%ROOT%\capture\include" ^
   /DDEV_MODE /Od /Zi /MT
-set LFLAGS=d3d11.lib dxgi.lib windowsapp.lib user32.lib gdi32.lib ole32.lib oleaut32.lib ws2_32.lib windowscodecs.lib dwmapi.lib shell32.lib
+set LFLAGS=d3d11.lib dxgi.lib windowsapp.lib user32.lib gdi32.lib ole32.lib oleaut32.lib ws2_32.lib windowscodecs.lib dwmapi.lib shell32.lib winhttp.lib
 set LINKFLAGS=/DEBUG:FULL
 
 echo === Building monitor_app.exe (DEV MODE) ===

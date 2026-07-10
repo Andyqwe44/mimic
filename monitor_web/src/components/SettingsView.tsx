@@ -115,6 +115,8 @@ export function SettingsView({
   selfTargetMode, setSelfTargetMode,
   onRunSelfTest,
   selfTestRunning,
+  onCheckUpdate,
+  hasUpdate,
 }: {
   snapMethod: string; setSnapMethod: (m: string) => void
   streamMethod: string; setStreamMethod: (m: string) => void
@@ -137,6 +139,8 @@ export function SettingsView({
   selfTargetMode: 'warn' | 'exclude'; setSelfTargetMode: (m: 'warn' | 'exclude') => void
   onRunSelfTest?: (perCell: number) => void
   selfTestRunning?: boolean
+  onCheckUpdate?: () => void
+  hasUpdate?: boolean
 }) {
   const themePairs = [
     ['#3B82F6', '#F97316'], // Ocean — blue + orange
@@ -1117,26 +1121,28 @@ export function SettingsView({
               <div className="text-xs text-text-muted">Version {appVersion}</div>
             </div>
             <ActionBtn
-              icon={<RefreshCw className="w-3.5 h-3.5" />}
-              label="Check Update"
-              title="检查新版本"
-              variant="outline"
-              onClick={() => addLog('[Action] check update')}
+              icon={hasUpdate
+                ? <RefreshCw className="w-3.5 h-3.5 text-accent" />
+                : <RefreshCw className="w-3.5 h-3.5" />}
+              label={hasUpdate ? 'Update Available' : 'Check Update'}
+              title={hasUpdate ? '新版本可用，点击安装' : '检查新版本'}
+              variant={hasUpdate ? 'primary' : 'outline'}
+              onClick={onCheckUpdate || (() => addLog('[Action] check update'))}
             />
           </div>
           <div className="border-t border-border pt-2 flex items-center justify-between">
             <div className="text-xs text-text-muted min-w-0">
-              <Tooltip text="在浏览器中打开项目 GitHub 页面">
+              <Tooltip text="在浏览器中打开项目 Gitee 页面">
               <button
                 onClick={() => {
                   try {
-                    window.open('https://github.com/Andyqwe44/tictactoe', '_blank')
+                    window.open('https://gitee.com/Andyqwe44/tictactoe', '_blank')
                   } catch {}
-                  addLog('[Project] open GitHub')
+                  addLog('[Project] open Gitee')
                 }}
                 className="text-accent hover:underline cursor-pointer truncate"
               >
-                github.com/Andyqwe44/tictactoe
+                gitee.com/Andyqwe44/tictactoe
               </button>
               </Tooltip>
               <span className="mx-2 text-border hidden sm:inline">|</span>

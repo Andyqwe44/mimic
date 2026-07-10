@@ -11,6 +11,7 @@ import { LogPanel } from './components/LogPanel'
 import { SettingsView } from './components/SettingsView'
 import { MonitorView, type MonitorApi } from './components/MonitorView'
 import { SelfTestModal } from './components/SelfTestModal'
+import { UpdateModal, type UpdateInfo } from './components/UpdateModal'
 import { hostCall, logMgr, addLog, applyTheme } from './lib/bridge'
 import { runSelfTest, sleep, type SelfTestState } from './lib/selftest'
 import { cantCaptureMinimized } from './lib/constants'
@@ -25,6 +26,8 @@ export default function App() {
   const [tab, setTab] = useState<'Monitor' | 'Log' | 'Settings'>('Settings')
   const [running, setRunning] = useState(false)
   const [appVersion, setAppVersion] = useState('v0.3.0')
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [updateDownloading, setUpdateDownloading] = useState(false)
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT_WIDTH)
   const [rightCollapsed, setRightCollapsed] = useState(false)
 
@@ -169,6 +172,43 @@ export default function App() {
       })
       .catch(() => {})
   }, [])
+
+  // ── Update check / download handlers ──
+  const checkForUpdate = useCallback(async () => {
+    addLog('[update] checking...')
+    try {
+      const info = await hostCall('check_update')
+      if (info?.has_update) {
+        setUpdateInfo({
+          current: info.current,
+          latest: info.latest,
+          name: info.name || '',
+          body: info.body || '',
+          url: info.url || '',
+        })
+        addLog(`[update] v${info.latest} available`)
+      } else {
+        addLog(info?.ok === false
+          ? `[update] check failed: ${info?.error || 'unknown'}`
+          : `[update] already latest (v${info?.current || '?'})`)
+      }
+    } catch (e: any) {
+      addLog(`[update] check error: ${e?.message || e}`)
+    }
+  }, [])
+
+  const downloadUpdate = useCallback(async () => {
+    if (!updateInfo?.url) return
+    setUpdateDownloading(true)
+    addLog('[update] downloading...')
+    try {
+      await hostCall('download_update', { url: updateInfo.url })
+      // C++ launches swap.bat and exits — we may not reach here
+    } catch (e: any) {
+      addLog(`[update] download error: ${e?.message || e}`)
+      setUpdateDownloading(false)
+    }
+  }, [updateInfo])
 
   useEffect(() => {
     logMgr.initSync()
@@ -840,6 +880,8 @@ export default function App() {
               selfTargetMode={selfTargetMode} setSelfTargetMode={setSelfTargetMode}
               onRunSelfTest={runSelfTestFlow}
               selfTestRunning={selfTest.phase === 'running'}
+              onCheckUpdate={checkForUpdate}
+              hasUpdate={!!updateInfo}
             />
           )}
           {/* Monitor tab */}
@@ -890,6 +932,8 @@ export default function App() {
             targetDims={targetDims}
             appVersion={appVersion}
             agentConnected={agentConnected}
+            hasUpdate={!!updateInfo}
+            onCheckUpdate={checkForUpdate}
           />
         </div>
         {/* ── Resize divider ── */}
@@ -978,6 +1022,16 @@ export default function App() {
         onClose={() => setSelfTest({ phase: 'idle' })}
         onAbort={() => { selfTestAbort.current = true }}
       />
+
+      {/* ── Update available modal ── */}
+      {updateInfo && (
+        <UpdateModal
+          info={updateInfo}
+          downloading={updateDownloading}
+          onDownload={downloadUpdate}
+          onClose={() => { setUpdateInfo(null); setUpdateDownloading(false) }}
+        />
+      )}
     </div>
   )
 }

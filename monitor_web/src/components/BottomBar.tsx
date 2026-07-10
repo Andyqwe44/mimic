@@ -1,5 +1,5 @@
 // ═══ BottomBar — status strip: target, methods, FPS, dims, TCP, version ═══
-import { Monitor, Camera, Play } from 'lucide-react'
+import { Monitor, Camera, Play, ArrowUp } from 'lucide-react'
 import { METHOD_SHORT } from '../lib/constants'
 
 export function BottomBar({
@@ -11,6 +11,8 @@ export function BottomBar({
   targetDims,
   appVersion,
   agentConnected,
+  hasUpdate,
+  onCheckUpdate,
 }: {
   selWin: string
   snapMethod: string
@@ -20,6 +22,8 @@ export function BottomBar({
   targetDims: {w: number; h: number} | null
   appVersion: string
   agentConnected: boolean
+  hasUpdate?: boolean
+  onCheckUpdate?: () => void
 }) {
   return (
     <div className="flex items-center h-9 bg-bg-secondary border-t border-border px-4 shrink-0 gap-3 text-xs text-text-secondary">
@@ -67,6 +71,16 @@ export function BottomBar({
       </span>
       <span className="flex-1" />
       {/* App version */}
+      {hasUpdate && (
+        <button
+          onClick={onCheckUpdate}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-accent/15 text-accent hover:bg-accent/25 transition-colors cursor-pointer"
+          title="Update available — click to install"
+        >
+          <ArrowUp className="w-3 h-3" />
+          Update
+        </button>
+      )}
       <span className="text-text-muted font-mono text-[11px]">{appVersion}</span>
     </div>
   )

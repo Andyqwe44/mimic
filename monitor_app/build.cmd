@@ -7,7 +7,7 @@ if not exist "build" mkdir "build"
 set ROOT=%~dp0..
 set CFLAGS=/EHsc /std:c++17 /I src /I dep /I "%ROOT%\capture\include" ^
   /DNDEBUG /O2 /GS- /Gy /Gw /MT
-set LFLAGS=d3d11.lib dxgi.lib windowsapp.lib user32.lib gdi32.lib ole32.lib oleaut32.lib ws2_32.lib windowscodecs.lib dwmapi.lib shell32.lib shlwapi.lib
+set LFLAGS=d3d11.lib dxgi.lib windowsapp.lib user32.lib gdi32.lib ole32.lib oleaut32.lib ws2_32.lib windowscodecs.lib dwmapi.lib shell32.lib shlwapi.lib winhttp.lib
 set LINKFLAGS=/OPT:REF /OPT:ICF
 
 echo === Embedding frontend assets (dist -^> embedded_assets.h) ===

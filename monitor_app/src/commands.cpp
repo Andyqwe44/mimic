@@ -21,6 +21,7 @@
 #include <tlhelp32.h>
 #include <dwmapi.h>
 #include <wincodec.h>
+#include <winhttp.h>
 #include <wrl/client.h>
 #include <string>
 #include <vector>
@@ -31,6 +32,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
+
+#pragma comment(lib, "winhttp.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -963,6 +966,206 @@ static std::string cmd_send_input(const std::string& args) {
     return "{\"ok\":false,\"error\":\"unknown input method: " + a.method + "\"}";
 }
 
+// ── Auto-update (WinHTTP) ──────────────────────────────────
+
+// Minimal JSON value extractor — handles nested keys by searching
+// from a given offset. Returns empty if not found.
+static std::string json_val(const std::string& json, const std::string& key, size_t from = 0) {
+    std::string s = "\"" + key + "\"";
+    size_t p = json.find(s, from);
+    if (p == std::string::npos) return "";
+    p += s.length();
+    while (p < json.size() && (json[p] == ':' || json[p] == ' ')) p++;
+    if (p >= json.size()) return "";
+    if (json[p] == '"') {
+        p++;
+        size_t e = p;
+        while (e < json.size() && !(json[e] == '"' && json[e-1] != '\\')) e++;
+        return json.substr(p, e - p);
+    }
+    // Number/bool/null — read until , } ]
+    size_t e = p;
+    while (e < json.size() && json[e] != ',' && json[e] != '}' && json[e] != ']') e++;
+    return json.substr(p, e - p);
+}
+
+// WinHTTP GET — returns response body (empty string on failure).
+// Logs tag for diagnostics.
+static std::string winhttp_get(const wchar_t* url, const char* tag) {
+    // Crack URL into components
+    URL_COMPONENTS uc = {};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}, path[1024] = {};
+    uc.lpszHostName = host;  uc.dwHostNameLength = 256;
+    uc.lpszUrlPath = path;   uc.dwUrlPathLength = 1024;
+    if (!WinHttpCrackUrl(url, 0, 0, &uc)) {
+        LOG(tag, "WinHttpCrackUrl failed url=%S", url);
+        return "";
+    }
+    bool https = (uc.nScheme == INTERNET_SCHEME_HTTPS);
+    WORD port = uc.nPort ? uc.nPort : (https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT);
+
+    HINTERNET hSess = WinHttpOpen(L"GAM/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSess) { LOG(tag, "WinHttpOpen failed"); return ""; }
+
+    HINTERNET hConn = WinHttpConnect(hSess, host, port, 0);
+    if (!hConn) { WinHttpCloseHandle(hSess); LOG(tag, "WinHttpConnect failed"); return ""; }
+
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", path, nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
+    if (!hReq) {
+        WinHttpCloseHandle(hConn); WinHttpCloseHandle(hSess);
+        LOG(tag, "WinHttpOpenRequest failed");
+        return "";
+    }
+
+    BOOL ok = WinHttpSendRequest(hReq, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+        WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    if (!ok) {
+        WinHttpCloseHandle(hReq); WinHttpCloseHandle(hConn); WinHttpCloseHandle(hSess);
+        LOG(tag, "WinHttpSendRequest failed");
+        return "";
+    }
+
+    ok = WinHttpReceiveResponse(hReq, nullptr);
+    if (!ok) {
+        WinHttpCloseHandle(hReq); WinHttpCloseHandle(hConn); WinHttpCloseHandle(hSess);
+        LOG(tag, "WinHttpReceiveResponse failed");
+        return "";
+    }
+
+    // Check HTTP status
+    DWORD status = 0, statusSize = sizeof(status);
+    WinHttpQueryHeaders(hReq, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    LOG(tag, "HTTP %lu", (unsigned long)status);
+
+    std::string body;
+    DWORD bytesRead = 0;
+    char buf[4096];
+    while (WinHttpReadData(hReq, buf, sizeof(buf), &bytesRead) && bytesRead > 0)
+        body.append(buf, bytesRead);
+
+    WinHttpCloseHandle(hReq);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return body;
+}
+
+// Also support std::string URL wrapper
+static std::string winhttp_get_str(const std::string& urlStr, const char* tag) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, urlStr.c_str(), (int)urlStr.size(), nullptr, 0);
+    std::wstring wurl(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, urlStr.c_str(), (int)urlStr.size(), &wurl[0], len);
+    return winhttp_get(wurl.c_str(), tag);
+}
+
+// check_update — query Gitee for latest release
+static std::string cmd_check_update() {
+    LOG("cmd", "check_update: querying Gitee API...");
+    std::string body = winhttp_get(
+        L"https://gitee.com/api/v5/repos/Andyqwe44/tictactoe/releases/latest",
+        "update");
+    if (body.empty()) {
+        LOG("cmd", "check_update: HTTP request failed");
+        return R"({"ok":false,"error":"network request failed"})";
+    }
+
+    std::string tag    = json_val(body, "tag_name");
+    std::string name   = json_val(body, "name");
+    std::string changelog = json_val(body, "body");
+
+    // Extract browser_download_url from first asset
+    size_t assetsPos = body.find("\"assets\"");
+    std::string dlUrl = assetsPos != std::string::npos
+        ? json_val(body, "browser_download_url", assetsPos) : "";
+
+    // Strip leading 'v' for comparison
+    std::string latest = tag;
+    if (!latest.empty() && (latest[0] == 'v' || latest[0] == 'V'))
+        latest = latest.substr(1);
+    std::string current = APP_VERSION;
+
+    bool hasUpdate = !latest.empty() && latest != current;
+
+    LOG("cmd", "check_update: current=%s latest=%s hasUpdate=%d",
+        current.c_str(), latest.c_str(), (int)hasUpdate);
+
+    return "{\"ok\":true"
+        ",\"current\":\"" + json_escape(current) + "\""
+        ",\"latest\":\"" + json_escape(latest) + "\""
+        ",\"name\":\"" + json_escape(name.empty() ? tag : name) + "\""
+        ",\"body\":\"" + json_escape(changelog) + "\""
+        ",\"url\":\"" + json_escape(dlUrl) + "\""
+        ",\"has_update\":" + (hasUpdate ? "true" : "false") + "}";
+}
+
+// download_update — download new EXE, write swap script, launch updater
+static std::string cmd_download_update(const std::string& url) {
+    LOG("cmd", "download_update: %s", url.c_str());
+
+    // Get directory of current EXE
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    char* lastSlash = strrchr(exePath, '\\');
+    if (!lastSlash) return R"({"ok":false,"error":"cannot resolve exe path"})";
+    *lastSlash = '\0';
+    std::string exeDir = exePath;
+
+    // Download to new file
+    std::string newPath = exeDir + "\\monitor_app_new.exe";
+    std::string body = winhttp_get_str(url, "update");
+    if (body.empty()) return R"({"ok":false,"error":"download failed"})";
+
+    // Write new EXE
+    FILE* f = fopen(newPath.c_str(), "wb");
+    if (!f) { LOG("cmd", "download_update: fopen failed"); return R"({"ok":false,"error":"write failed"})"; }
+    size_t written = fwrite(body.data(), 1, body.size(), f);
+    fclose(f);
+    LOG("cmd", "download_update: wrote %zu bytes to %s", written, newPath.c_str());
+    if (written != body.size()) {
+        DeleteFileA(newPath.c_str());
+        return R"({"ok":false,"error":"write incomplete"})";
+    }
+
+    // Write swap batch script
+    std::string batPath = exeDir + "\\update_swap.bat";
+    std::string bat =
+        "@echo off\r\n"
+        "set \"DIR=%~dp0\"\r\n"
+        "set \"NEW=%DIR%monitor_app_new.exe\"\r\n"
+        "set \"TARGET=%DIR%monitor_app.exe\"\r\n"
+        ":wait\r\n"
+        "timeout /t 1 /nobreak >nul\r\n"
+        "del /f \"%TARGET%\" 2>nul\r\n"
+        "if exist \"%TARGET%\" goto wait\r\n"
+        "move /y \"%NEW%\" \"%TARGET%\"\r\n"
+        "start \"\" \"%TARGET%\"\r\n"
+        "del \"%~f0\"\r\n";
+
+    f = fopen(batPath.c_str(), "wb");  // binary to avoid LF→CRLF transform
+    if (!f) { LOG("cmd", "download_update: bat fopen failed"); return R"({"ok":false,"error":"bat write failed"})"; }
+    fwrite(bat.data(), 1, bat.size(), f);
+    fclose(f);
+
+    // Launch swap script detached
+    SHELLEXECUTEINFOA sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.lpFile = batPath.c_str();
+    sei.nShow = SW_HIDE;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    if (!ShellExecuteExA(&sei) || (INT_PTR)sei.hInstApp <= 32) {
+        DWORD err = GetLastError();
+        LOG("cmd", "download_update: ShellExecuteEx failed err=%lu", (unsigned long)err);
+        return R"({"ok":false,"error":"launch swap failed"})";
+    }
+    // Don't wait — the batch will wait for US to exit
+
+    LOG("cmd", "download_update: swap launched, ready to exit");
+    return R"({"ok":true})";
+}
+
 // ── Main dispatch ─────────────────────────────────────────
 std::string dispatch_command(const std::string& json) {
     std::string cmd = json_get_str(json, "cmd");
@@ -1159,6 +1362,12 @@ std::string dispatch_command(const std::string& json) {
     }
     else if (cmd == "switch_desktop") {
         result = vd_switch_desktop(json_get_int(args, "index"));
+    }
+    else if (cmd == "check_update") {
+        result = cmd_check_update();
+    }
+    else if (cmd == "download_update") {
+        result = cmd_download_update(json_get_str(args, "url"));
     }
 
     if (id <= 0) return result; // fire-and-forget (no id field)
