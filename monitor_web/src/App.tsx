@@ -25,7 +25,7 @@ export default function App() {
   // ═══ UI state ═══
   const [tab, setTab] = useState<'Monitor' | 'Log' | 'Settings'>('Settings')
   const [running, setRunning] = useState(false)
-  const [appVersion, setAppVersion] = useState('v0.3.0')
+  const [appVersion, setAppVersion] = useState('v0.3.2')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT_WIDTH)
@@ -242,30 +242,11 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
-  // Auto-save settings on change (debounced)
+  // Auto-save settings on change (debounced) — declared early, effect wired after all states below
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveSetting = useCallback((key: string, value: any) => {
     hostCall('set_setting', { key, value: typeof value === 'boolean' ? `"${value}"` : value }).catch(() => {})
   }, [])
-  useEffect(() => {
-    if (saveTimeout.current) clearTimeout(saveTimeout.current)
-    saveTimeout.current = setTimeout(() => {
-      saveSetting('theme', theme)
-      saveSetting('mouseMode', mouseMode)
-      saveSetting('keyMode', keyMode)
-      saveSetting('mappingHotkey', mappingHotkey)
-      saveSetting('devMode', devMode)
-      saveSetting('selfTargetMode', selfTargetMode)
-      saveSetting('keepFiles', keepFiles)
-      saveSetting('autoSnap', autoSnap)
-      saveSetting('autoStream', autoStream)
-      saveSetting('snapMethod', snapMethod)
-      saveSetting('streamMethod', streamMethod)
-      saveSetting('renderMethod', renderMethod)
-    }, 1000)
-    return () => { if (saveTimeout.current) clearTimeout(saveTimeout.current) }
-  }, [theme, mouseMode, keyMode, mappingHotkey, devMode, selfTargetMode,
-      keepFiles, autoSnap, autoStream, snapMethod, streamMethod, renderMethod])
 
   // ── Initial layout check — auto-collapse if panels overflow container ──
   useEffect(() => {
@@ -582,6 +563,27 @@ export default function App() {
   const [selfRect, setSelfRect] = useState<Rect | null>(null)
   const [screenRect, setScreenRect] = useState<Rect | null>(null)
   const [selfTargetMode, setSelfTargetMode] = useState<'warn' | 'exclude'>('warn')
+
+  // ── Auto-save settings on change (debounced 1s, placed after all state declarations) ──
+  useEffect(() => {
+    if (saveTimeout.current) clearTimeout(saveTimeout.current)
+    saveTimeout.current = setTimeout(() => {
+      saveSetting('theme', theme)
+      saveSetting('mouseMode', mouseMode)
+      saveSetting('keyMode', keyMode)
+      saveSetting('mappingHotkey', mappingHotkey)
+      saveSetting('devMode', devMode)
+      saveSetting('selfTargetMode', selfTargetMode)
+      saveSetting('keepFiles', keepFiles)
+      saveSetting('autoSnap', autoSnap)
+      saveSetting('autoStream', autoStream)
+      saveSetting('snapMethod', snapMethod)
+      saveSetting('streamMethod', streamMethod)
+      saveSetting('renderMethod', renderMethod)
+    }, 1000)
+    return () => { if (saveTimeout.current) clearTimeout(saveTimeout.current) }
+  }, [theme, mouseMode, keyMode, mappingHotkey, devMode, selfTargetMode,
+      keepFiles, autoSnap, autoStream, snapMethod, streamMethod, renderMethod])
 
   // ── Load screen info for aspect ratio + self-target detection ──
   useEffect(() => {

@@ -82,7 +82,9 @@ export function UpdateModal({
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border shrink-0">
           <ActionBtn
             label="Later"
-            variant="ghost"
+            title="Later"
+            icon={<X className="w-3.5 h-3.5" />}
+            variant="outline"
             onClick={() => {
               addLog('[update] dismissed')
               onClose()
@@ -90,6 +92,7 @@ export function UpdateModal({
           />
           <ActionBtn
             label={downloading ? 'Installing...' : 'Download & Install'}
+            title="Download & Install"
             icon={<Download className="w-3.5 h-3.5" />}
             variant="primary"
             onClick={() => {

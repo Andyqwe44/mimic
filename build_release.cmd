@@ -7,7 +7,7 @@ echo ========================================
 echo.
 
 rem --- Read version ---
-set VERSION=0.3.0
+set VERSION=0.3.2
 if exist "monitor_app\src\version.h" (
   for /f "tokens=3" %%a in ('findstr /c:"#define APP_VERSION" monitor_app\src\version.h') do set VERSION=%%a
   set VERSION=%VERSION:"=%
