@@ -1,6 +1,6 @@
 {
   "app": "0.3.4",
-  "released": "2026-07-10T16:13:07.484Z",
+  "released": "2026-07-10T16:19:32.194Z",
   "files": {
     "bin/capture_common.dll": {
       "v": "0.3.4",
@@ -64,7 +64,7 @@
     },
     "bin/monitor_app.exe": {
       "v": "0.3.4",
-      "sha256": "ce4cb8e5b821f427e7dc62cfe16b33fe51fe46c3c37f5f5bb47e50db7c95ceff",
+      "sha256": "015cb51212421ea81fa07ea5bf71b06396268bd9b2519b49d91b8e33e67b7b71",
       "size": 419840
     },
     "bin/updater.exe": {
@@ -101,6 +101,11 @@
       "v": "0.3.4",
       "sha256": "1734dd03eb36bab85ff7e2e384ad317d9b2e4ec80db07ffef01f54f3c6eed2a6",
       "size": 461
+    },
+    "version.json": {
+      "v": "0.3.4",
+      "sha256": "65d53c233e8a2fb8f551643b6dff3b2dcc4f519769a8e2cbeccb533b7359e798",
+      "size": 3339
     }
   }
 }
