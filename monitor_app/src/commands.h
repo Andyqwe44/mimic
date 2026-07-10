@@ -33,6 +33,9 @@ IGlobalInterfaceTable* shared_buffer_get_git();
 /// Main WndProc calls shared_buffer_push_frame on STA thread.
 void stream_bridge_push_frame(const uint8_t* bgra, int w, int h);
 
+/// Accessor for main window HWND (used by get_self_rect command).
+void* get_main_hwnd();
+
 /// Initialize backend subsystems (logger, COM, WGC apartment).
 void backend_init();
 

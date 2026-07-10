@@ -14,6 +14,9 @@ export interface HistoryFile {
   lines: string[]        // empty until user expands the tile
 }
 
+// Rectangle in screen coordinates
+export interface Rect { x: number; y: number; w: number; h: number }
+
 // Single log entry — timestamp (HH:MM:SS.ms) + message.
 // When count > 1, this entry represents collapsed consecutive duplicates:
 // firstTs = timestamp of first occurrence, ts = timestamp of last occurrence.

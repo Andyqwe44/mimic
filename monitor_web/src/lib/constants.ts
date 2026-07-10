@@ -49,12 +49,31 @@ export const CAPTURE_MODES = [
   { v: 'minimized',  label: '最小化 (Minimized)',  desc: '窗口已最小化 → 只能用 DesktopGDI 截桌面', method: 'dxgi' },
 ]
 
-export const INPUT_METHODS = [
-  { v: 'sendinput',  name: 'SendInput',  eng: '应用层', rec: '推荐', desc: 'SendInput API 合成系统输入，与真实硬件走相同路径。支持单击/双击/拖拽/滚轮/键盘/组合键/Unicode文本。兼容性最好，受UIPI限制。' },
-  { v: 'winapi',     name: 'WinAPI',     eng: 'OS层',   rec: '进阶', desc: 'AttachThreadInput 挂接线程 + SetForegroundWindow 激活窗口 + SendMessage 同步投递。正确更新目标线程输入状态，绕过部分UIPI限制。' },
-  { v: 'postmessage', name: 'PostMessage', eng: '窗口消息层', rec: '备选', desc: '直接向目标窗口队列投递 WM_* 消息，异步非阻塞。部分应用依赖实时输入状态可能无响应。' },
-  { v: 'driver',      name: 'Driver',     eng: '驱动层', rec: '未实现', desc: 'Interception/虚拟HID内核级注入。系统视为真实硬件，完全绕过UIPI。需安装驱动，后期迭代。' },
+export const MOUSE_MODES = [
+  { v: 'background' as const, name: 'Background', eng: 'PostMessage', rec: '推荐',
+    desc: '全后台，完全不抢鼠标。虚拟指示器 + PostMessage 转发点击，窗口可能乱飞但不影响使用，建议目标窗口最小化' },
+  { v: 'semi' as const, name: 'Semi', eng: 'SendMsg-Cursor', rec: '进阶',
+    desc: '半后台，点击时短暂抢鼠标。虚拟指示器常驻，鼠标移动不抢占，点击瞬间通过 SendInput 定位+点击' },
+  { v: 'seize' as const, name: 'Seize', eng: 'SendInput', rec: '前台',
+    desc: '前台模式，完全抢占鼠标。虚拟指示器 + 实时光标同步，SendInput 合成系统输入，与真实硬件走相同路径' },
 ]
+
+export const KEYBOARD_MODES = [
+  { v: 'postmsg' as const, name: 'PostMsg', eng: 'PostMessage', rec: '推荐',
+    desc: '异步非阻塞，高效稳定。直接向目标窗口队列投递 WM_KEYDOWN/WM_KEYUP 消息' },
+  { v: 'sendmsg' as const, name: 'SendMsg', eng: 'WinAPI', rec: '稳定',
+    desc: 'AttachThreadInput + SendMessage 同步投递。正确更新目标线程输入状态，兼容性好' },
+  { v: 'seize' as const, name: 'Seize', eng: 'SendInput', rec: '前台',
+    desc: 'SendInput API 合成系统键盘输入。需要目标窗口在前台，受 UIPI 限制' },
+]
+
+export const MOUSE_METHOD: Record<string, string> = {
+  seize: 'sendinput', semi: 'sendinput', background: 'postmessage',
+}
+
+export const KEY_METHOD: Record<string, string> = {
+  seize: 'sendinput', postmsg: 'postmessage', sendmsg: 'winapi',
+}
 
 // ── Key code → display name (shared: SettingsView recording + MonitorView matching) ──
 export function codeToName(code: string): string {

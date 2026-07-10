@@ -8,8 +8,8 @@ import { Tooltip, ActionBtn } from './Toolkit'
 import { ConnectionPanel } from './ConnectionPanel'
 import { hostCall, addLog } from '../lib/bridge'
 import {
-  COLLAPSIBLE_HEADER, SELECTABLE_BTN, CAPTURE_METHODS, RENDER_METHODS, INPUT_METHODS,
-  codeToName,
+  COLLAPSIBLE_HEADER, SELECTABLE_BTN, CAPTURE_METHODS, RENDER_METHODS,
+  MOUSE_MODES, KEYBOARD_MODES, codeToName,
 } from '../lib/constants'
 import type { WindowInfo } from '../lib/types'
 
@@ -100,8 +100,10 @@ export function SettingsView({
   saveCaptureFrames, setSaveCaptureFrames,
   saveStreamFrames, setSaveStreamFrames,
   frameDumpDir, setFrameDumpDir,
-  inputMethod, setInputMethod,
+  mouseMode, setMouseMode,
+  keyMode, setKeyMode,
   mappingHotkey, setMappingHotkey,
+  selfTargetMode, setSelfTargetMode,
 }: {
   snapMethod: string; setSnapMethod: (m: string) => void
   streamMethod: string; setStreamMethod: (m: string) => void
@@ -118,8 +120,10 @@ export function SettingsView({
   saveCaptureFrames: boolean; setSaveCaptureFrames: (v: boolean) => void
   saveStreamFrames: boolean; setSaveStreamFrames: (v: boolean) => void
   frameDumpDir: string; setFrameDumpDir: (d: string) => void
-  inputMethod: string; setInputMethod: (m: string) => void
+  mouseMode: 'seize' | 'semi' | 'background'; setMouseMode: (m: 'seize' | 'semi' | 'background') => void
+  keyMode: 'seize' | 'postmsg' | 'sendmsg'; setKeyMode: (m: 'seize' | 'postmsg' | 'sendmsg') => void
   mappingHotkey: string; setMappingHotkey: (k: string) => void
+  selfTargetMode: 'warn' | 'exclude'; setSelfTargetMode: (m: 'warn' | 'exclude') => void
 }) {
   const themePairs = [
     ['#3B82F6', '#F97316'], // Ocean — blue + orange
@@ -515,50 +519,39 @@ export function SettingsView({
               })}
             </div>
           </div>
-          {/* ── Input Method (mouse + keyboard forwarding) ── */}
+          {/* ── Mouse Mode ── */}
           <div className="border-t border-border pt-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs text-text-muted inline-flex items-center gap-1">
-                <MousePointer2 className="w-3.5 h-3.5" /> Input Method
+                <MousePointer2 className="w-3.5 h-3.5" /> Mouse Mode
               </span>
-              <span className="text-[10px] text-text-muted">Monitor 预览区支持：单击/双击/拖拽/滚轮/键盘/组合键</span>
+              <span className="text-[10px] text-text-muted">虚拟指示器常驻 — 不影响本地鼠标使用</span>
             </div>
             <div className="flex flex-col gap-2">
-              {INPUT_METHODS.map((m) => {
-                const isActive = inputMethod === m.v
-                const implemented = m.v !== 'driver'
-                const ringClass =
-                  isActive && implemented
-                    ? 'border-accent bg-accent/10 cursor-pointer'
-                    : implemented
-                      ? 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
-                      : 'border-border bg-bg-primary opacity-50 cursor-not-allowed'
+              {MOUSE_MODES.map((m) => {
+                const isActive = mouseMode === m.v
                 return (
                   <Tooltip key={m.v} text={m.desc}>
-                    <label className={`${SELECTABLE_BTN} ${ringClass}`}>
+                    <label className={`${SELECTABLE_BTN} ${
+                      isActive
+                        ? 'border-accent bg-accent/10 cursor-pointer'
+                        : 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
+                    }`}>
                       <input
-                        type="radio" name="inputMethod" value={m.v}
-                        checked={isActive} disabled={!implemented}
-                        onChange={(e) => {
-                          if (implemented) {
-                            setInputMethod(e.target.value)
-                            addLog(`[Setting] input method = ${e.target.value}`)
-                          }
-                        }}
+                        type="radio" name="mouseMode" value={m.v}
+                        checked={isActive}
+                        onChange={() => { setMouseMode(m.v); addLog(`[Setting] mouse mode = ${m.v}`) }}
                         className="sr-only"
                       />
                       <span className="text-xs font-medium text-text-primary">
                         {m.name} <span className="text-text-muted">({m.eng})</span>
                       </span>
-                      <span className="ml-auto flex items-center gap-1">
-                        {m.rec.split('/').map((t: string) => (
-                          <span
-                            key={t}
-                            className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${implemented ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'}`}
-                          >
-                            {t}
-                          </span>
-                        ))}
+                      <span className="ml-auto">
+                        <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${
+                          isActive ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'
+                        }`}>
+                          {m.rec}
+                        </span>
                       </span>
                     </label>
                   </Tooltip>
@@ -566,18 +559,110 @@ export function SettingsView({
               })}
             </div>
           </div>
-          {/* ── Keyboard forwarding ── */}
+          {/* ── Keyboard Mode ── */}
           <div className="border-t border-border pt-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs text-text-muted inline-flex items-center gap-1">
-                <Keyboard className="w-3.5 h-3.5" /> Keyboard
+                <Keyboard className="w-3.5 h-3.5" /> Keyboard Mode
               </span>
               <span className="text-[10px] text-text-muted">点击预览画面获取焦点后，键盘输入转发到目标窗口</span>
             </div>
+            <div className="flex flex-col gap-2">
+              {KEYBOARD_MODES.map((m) => {
+                const isActive = keyMode === m.v
+                return (
+                  <Tooltip key={m.v} text={m.desc}>
+                    <label className={`${SELECTABLE_BTN} ${
+                      isActive
+                        ? 'border-accent bg-accent/10 cursor-pointer'
+                        : 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
+                    }`}>
+                      <input
+                        type="radio" name="keyMode" value={m.v}
+                        checked={isActive}
+                        onChange={() => { setKeyMode(m.v); addLog(`[Setting] key mode = ${m.v}`) }}
+                        className="sr-only"
+                      />
+                      <span className="text-xs font-medium text-text-primary">
+                        {m.name} <span className="text-text-muted">({m.eng})</span>
+                      </span>
+                      <span className="ml-auto">
+                        <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${
+                          isActive ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'
+                        }`}>
+                          {m.rec}
+                        </span>
+                      </span>
+                    </label>
+                  </Tooltip>
+                )
+              })}
+            </div>
             <div className="text-[11px] text-text-muted space-y-1">
               <div>• 普通按键 — <code className="text-accent bg-accent/10 px-1 rounded">keydown</code> / <code className="text-accent bg-accent/10 px-1 rounded">keyup</code></div>
-              <div>• 组合键 — 自动识别为 <code className="text-accent bg-accent/10 px-1 rounded">combo</code>（Ctrl+C 等）</div>
+              <div>• 组合键 — 自动识别（Ctrl+C 等，Ctrl 先按下再按 C）</div>
               <div>• <code className="text-accent bg-accent/10 px-1 rounded">Esc</code> 或外部点击 → 释放焦点，自动松开所有已按下按键</div>
+            </div>
+          </div>
+          {/* ── Self-target avoidance mode ── */}
+          <div className="border-t border-border pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-text-muted inline-flex items-center gap-1">
+                <MousePointer2 className="w-3.5 h-3.5" /> 自指规避
+              </span>
+              <span className="text-[10px] text-text-muted">
+                桌面捕获时，映射坐标可能落在 GAM 自身窗口
+              </span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {[
+                {
+                  v: 'warn' as const,
+                  name: '红色警告',
+                  eng: 'Visual Warning',
+                  desc: '光标移至 GAM 窗口区域时变红并弹出警告 — 简单安全',
+                },
+                {
+                  v: 'exclude' as const,
+                  name: '排除窗口',
+                  eng: 'Exclude from Capture',
+                  desc: '桌面捕获画面中隐藏 GAM 窗口 — 需要 Windows 10 2004+',
+                },
+              ].map((m) => {
+                const isActive = selfTargetMode === m.v
+                return (
+                  <Tooltip key={m.v} text={m.desc}>
+                    <label
+                      className={`${SELECTABLE_BTN} ${
+                        isActive
+                          ? 'border-accent bg-accent/10 cursor-pointer'
+                          : 'border-border bg-bg-primary hover:bg-bg-hover cursor-pointer'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="selfTargetMode"
+                        value={m.v}
+                        checked={isActive}
+                        onChange={() => setSelfTargetMode(m.v)}
+                        className="sr-only"
+                      />
+                      <span className="text-xs font-medium text-text-primary">
+                        {m.name} <span className="text-text-muted">({m.eng})</span>
+                      </span>
+                      <span className="ml-auto">
+                        <span
+                          className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${
+                            isActive ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'
+                          }`}
+                        >
+                          {m.v === 'warn' ? '默认' : 'Win10+'}
+                        </span>
+                      </span>
+                    </label>
+                  </Tooltip>
+                )
+              })}
             </div>
           </div>
         </div>

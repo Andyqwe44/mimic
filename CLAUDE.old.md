@@ -1,5 +1,51 @@
 # CLAUDE.md — TicTacToe → General Visual Game AI
 
+## Recent Changes (2026-07-10)
+
+### Virtual cursor overlay + self-target detection (major)
+MonitorView canvas now shows OBS-style virtual cursor indicator (10px dot + 20px ring)
+that follows mouse position via `getImageCoords()` at ~30fps. The indicator is pure CSS
+overlay (`pointer-events-none`), never touches the system cursor.
+
+Self-target detection: when mapped screen coordinates fall within GAM's own window rect,
+the cursor overlay turns red (error color + glow) and a warning toast appears.
+Detection uses `get_self_rect` C++ command (polled every 2s) + `screen_info` virtual
+screen coords for absolute position mapping.
+
+Settings → Capture → 自指规避: two-option radio:
+- 红色警告 (Visual Warning, default): red cursor + ⚠ toast when over GAM
+- 排除窗口 (Exclude from Capture): calls `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE=0x11)`, GAM disappears from desktop capture. Falls back to warn on failure (pre-Win10 2004).
+
+New C++ commands: `get_self_rect` (returns GAM window screen rect), `set_exclude_self` (toggles WDA_EXCLUDEFROMCAPTURE). `screen_info` extended with x/y virtual screen origin. `get_main_hwnd()` accessor added to main.cpp/commands.h.
+
+### 3-mode input system: mouse Seize/Semi/Background + keyboard Seize/PostMsg/SendMsg
+Replaced single `inputMethod` with separate mouse and keyboard mode selectors.
+
+Mouse modes (Settings → Capture → Mouse Mode):
+| Mode | Move forwarding | Click method | Description |
+|------|----------------|-------------|-------------|
+| Background (default) | ❌ virtual only | PostMessage | 全后台不抢鼠标 |
+| Semi | ❌ virtual only | SendInput | 点击时短暂抢鼠标 |
+| Seize | ✅ 60fps | SendInput | 前台完全抢鼠标 |
+
+Keyboard modes (Settings → Capture → Keyboard Mode):
+| Mode | Method | Description |
+|------|--------|-------------|
+| PostMsg (default) | PostMessage | 异步高效 |
+| SendMsg | WinAPI | 同步稳定 |
+| Seize | SendInput | 前台独占 |
+
+Architecture: `MOUSE_METHOD` and `KEY_METHOD` lookup tables in constants.ts map mode → C++ method string. MonitorView derives `mM`/`kM` from props. `sendMove` boolean controls move forwarding. All `inputMethod` refs replaced with `mM`/`kM` throughout handlers. Dependencies updated in useCallback arrays.
+
+`handleMouseMove`: cursor overlay updates at 30fps always; move forwarding only in Seize mode (early return `if (!sendMove)`). Semi/Background never send `type: 'move'` — virtual indicator only.
+
+Toolbar hints show abbreviated mode: `鼠标Bg · 键盘PostMsg`.
+
+SettingsView: Input Method section replaced by Mouse Mode + Keyboard Mode sections with radio buttons. Each option shows name (English) + recommendation tag.
+
+### C++ build fix: void* → HWND explicit cast
+MSVC C++ treats `void*` → `HWND` as illegal implicit conversion (C2440). Fixed `cmd_get_self_rect` and `cmd_set_exclude_self` with `(HWND)` casts on `get_main_hwnd()` return value.
+
 ## ⛔ 思想钢印 — 三条铁律，每次写代码前过一遍
 
 ### 铁律 1: 中文思考回答

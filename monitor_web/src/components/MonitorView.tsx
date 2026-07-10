@@ -4,9 +4,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Camera, Play, Square, MousePointer2, Power } from 'lucide-react'
 import { ActionBtn, Tooltip } from './Toolkit'
-import { STATE_LABEL, codeToName } from '../lib/constants'
+import { STATE_LABEL, codeToName, MOUSE_METHOD, KEY_METHOD } from '../lib/constants'
 import { addLog, hostCall } from '../lib/bridge'
-import type { WindowInfo } from '../lib/types'
+import type { WindowInfo, Rect } from '../lib/types'
 
 // ── Types ──
 interface Ripple { id: number; x: number; y: number }
@@ -70,11 +70,16 @@ export function MonitorView({
   onTakeSnapshot,
   onTogglePreview,
   children,
-  inputMethod,
+  inputMethod: _inputMethod,
+  mouseMode,
+  keyMode,
   mappingEnabled,
   setMappingEnabled,
   mappingHotkey,
   targetDims,
+  selfRect,
+  screenRect,
+  selfTargetMode,
 }: {
   selWin: WindowInfo
   winState: string
@@ -86,14 +91,24 @@ export function MonitorView({
   onTakeSnapshot: () => void
   onTogglePreview: () => void
   children: React.ReactNode
-  inputMethod: string
+  inputMethod?: string
+  mouseMode?: 'seize' | 'semi' | 'background'
+  keyMode?: 'seize' | 'postmsg' | 'sendmsg'
   mappingEnabled: boolean
   setMappingEnabled: (v: boolean) => void
   mappingHotkey: string
   targetDims: { w: number; h: number } | null
+  selfRect?: Rect | null
+  screenRect?: Rect | null
+  selfTargetMode?: 'warn' | 'exclude'
 }) {
   const isDesktop = selWin.hwnd === 0
   const stateLabel = STATE_LABEL[winState] || winState
+
+  // ── Derived input methods from mode ──
+  const mM = MOUSE_METHOD[mouseMode ?? 'background']   // click/drag/wheel method
+  const kM = KEY_METHOD[keyMode ?? 'postmsg']            // keyboard method
+  const sendMove = (mouseMode ?? 'background') === 'seize'   // only seize sends move
 
   // ═══ Interaction state ═══
   const [focused, setFocused] = useState(false)    // canvas has keyboard focus
@@ -114,6 +129,32 @@ export function MonitorView({
   const nextId = () => { idCounterRef.current += 1; return idCounterRef.current }
   const dblclickSuppressRef = useRef(false)   // skip mouseup click when dblclick already sent
   const lastMoveSendRef = useRef(0)          // throttle mouse-move forwarding at 60fps
+  const lastCursorRef = useRef(0)            // throttle cursor overlay update at 30fps
+
+  // ── Cursor overlay state (follows mouse on canvas) ──
+  const [cursorPos, setCursorPos] = useState<{ rx: number; ry: number } | null>(null)
+
+  // ── Self-target detection: is the mapped screen position inside GAM window? ──
+  // Only meaningful for desktop capture (hwnd=0) where GAM is visible in the frame.
+  // For window capture, input goes to the target window only — no self-target risk.
+  const isSelfTarget = (() => {
+    if (!cursorPos || !selfRect || !selfRect.w || !selfRect.h) return false
+    // Map normalized coords to absolute screen position using capture area rect.
+    // Desktop: screenRect = virtual screen. Window: screenRect = target window rect.
+    const area = screenRect && screenRect.w > 0 ? screenRect : null
+    if (!area) return false
+    const absX = area.x + cursorPos.rx * area.w
+    const absY = area.y + cursorPos.ry * area.h
+    return (
+      absX >= selfRect.x &&
+      absX <= selfRect.x + selfRect.w &&
+      absY >= selfRect.y &&
+      absY <= selfRect.y + selfRect.h
+    )
+  })()
+
+  // ── Clear cursor overlay when mapping or preview toggles off ──
+  useEffect(() => { if (!mappingEnabled || !previewing) setCursorPos(null) }, [mappingEnabled, previewing])
 
   // ── Cleanup expired ripples ──
   useEffect(() => {
@@ -171,12 +212,12 @@ export function MonitorView({
     for (const k of keys) {
       hostCall('send_input', {
         hwnd: selWin.hwnd, type: 'keyup',
-        key: k.key, code: k.code, vk: k.keyCode, method: inputMethod,
+        key: k.key, code: k.code, vk: k.keyCode, method: kM,
       }).catch(() => {})
     }
     addLog(`[Input] auto-released ${keys.length} key(s) on blur`)
     keys.length = 0
-  }, [selWin.hwnd, inputMethod])
+  }, [selWin.hwnd, mM, kM])
 
   const handleBlur = useCallback(() => {
     setFocused(false)
@@ -190,7 +231,7 @@ export function MonitorView({
         hostCall('send_input', {
           hwnd: selWin.hwnd, type: 'click',
           x_norm: path[path.length - 1].x, y_norm: path[path.length - 1].y,
-          button, method: inputMethod,
+          button, method: mM,
         }).catch(() => {})
         addLog(`[Input] drag cancelled on blur — auto-released mouse button at last position`)
       }
@@ -198,7 +239,7 @@ export function MonitorView({
       dragStartRef.current = null
       dragCurrentRef.current = null
     }
-  }, [releaseAllKeys, dragging, selWin.hwnd, inputMethod])
+  }, [releaseAllKeys, dragging, selWin.hwnd, mM, kM])
 
   // ── Mouse down → start drag (or click if released without moving) ──
   const handleMouseDown = useCallback(
@@ -244,19 +285,34 @@ export function MonitorView({
         dragPathRef.current.push({ x: rx, y: ry })
         dragCurrentRef.current = { rx, ry }
         lastSampleRef.current = now
+        // Update cursor overlay during drag too
+        if (now - lastCursorRef.current > 33) {
+          lastCursorRef.current = now
+          setCursorPos({ rx, ry })
+        }
       } else {
-        // Continuous cursor forwarding for remote-control feel (60fps)
+        // Update cursor overlay at ~30fps
+        if (now - lastCursorRef.current > 33) {
+          lastCursorRef.current = now
+          const rect = e.currentTarget.getBoundingClientRect()
+          const { rx, ry, inImage } = getImageCoords(e.clientX, e.clientY, rect, dims.w, dims.h)
+          setCursorPos(inImage ? { rx, ry } : null)
+        }
+        // Mouse move forwarding: ONLY in seize mode (grabs system cursor).
+        // Semi + Background: virtual indicator only, no cursor movement.
+        if (!sendMove) return
+        // Continuous cursor forwarding at 60fps
         if (now - lastMoveSendRef.current < 16) return
         lastMoveSendRef.current = now
         const rect = e.currentTarget.getBoundingClientRect()
         const { rx, ry, inImage } = getImageCoords(e.clientX, e.clientY, rect, dims.w, dims.h)
         if (!inImage) return
         hostCall('send_input', {
-          hwnd: selWin.hwnd, type: 'move', x_norm: rx, y_norm: ry, method: inputMethod,
+          hwnd: selWin.hwnd, type: 'move', x_norm: rx, y_norm: ry, method: mM,
         }).catch(() => {})
       }
     },
-    [dragging, previewing, isDesktop, mappingEnabled, targetDims, selWin.hwnd, inputMethod],
+    [dragging, previewing, isDesktop, mappingEnabled, targetDims, selWin.hwnd, mM, kM],
   )
 
   // ── Mouse up → send click or drag (immediate, no defer) ──
@@ -295,7 +351,7 @@ export function MonitorView({
 
         hostCall('send_input', {
           hwnd: selWin.hwnd, type: 'click', x_norm: rx, y_norm: ry,
-          button, method: inputMethod,
+          button, method: mM,
         })
           .then(() => {
             addLog(
@@ -310,7 +366,7 @@ export function MonitorView({
         path.push({ x: rx, y: ry })
         hostCall('send_input', {
           hwnd: selWin.hwnd, type: 'drag', button,
-          path, method: inputMethod,
+          path, method: mM,
         })
           .then(() => {
             addLog(
@@ -326,7 +382,7 @@ export function MonitorView({
       dragStartRef.current = null
       dragCurrentRef.current = null
     },
-    [dragging, selWin.hwnd, inputMethod, targetDims],
+    [dragging, selWin.hwnd, mM, kM, targetDims],
   )
 
   // ── Double click — suppresses second mouseup click, sends dblclick immediately ──
@@ -347,7 +403,7 @@ export function MonitorView({
 
       hostCall('send_input', {
         hwnd: selWin.hwnd, type: 'dblclick', x_norm: rx, y_norm: ry,
-        button, method: inputMethod,
+        button, method: mM,
       })
         .then(() => {
           addLog(
@@ -358,7 +414,7 @@ export function MonitorView({
           addLog(`[Mouse] dblclick failed: ${err?.message || err}`)
         })
     },
-    [isDesktop, previewing, mappingEnabled, selWin.hwnd, inputMethod, targetDims],
+    [isDesktop, previewing, mappingEnabled, selWin.hwnd, mM, kM, targetDims],
   )
 
   // ── Mouse wheel → normalized delta (deltaMode-aware) ──
@@ -380,7 +436,7 @@ export function MonitorView({
 
       hostCall('send_input', {
         hwnd: selWin.hwnd, type: 'wheel', x_norm: rx, y_norm: ry,
-        delta, method: inputMethod,
+        delta, method: mM,
       })
         .then(() => {
           addLog(
@@ -391,7 +447,7 @@ export function MonitorView({
           addLog(`[Mouse] wheel failed: ${err?.message || err}`)
         })
     },
-    [isDesktop, previewing, mappingEnabled, selWin.hwnd, inputMethod, targetDims],
+    [isDesktop, previewing, mappingEnabled, selWin.hwnd, mM, kM, targetDims],
   )
 
   // ── Keyboard handlers — all keys use individual keydown/keyup ──
@@ -419,7 +475,7 @@ export function MonitorView({
       // recognizes combos (Ctrl+C) because Ctrl is already held down from
       // a previous keydown. No separate "combo" type needed for user input.
       hostCall('send_input', {
-        hwnd: selWin.hwnd, type: 'keydown', key, code, vk, method: inputMethod,
+        hwnd: selWin.hwnd, type: 'keydown', key, code, vk, method: kM,
       }).catch((err: any) => addLog(`[Key] keydown failed: ${err?.message || err}`))
 
       // Visual feedback — accumulate modifiers prefix
@@ -433,7 +489,7 @@ export function MonitorView({
       const label = parts.join('+')
       setKeyToast({ text: label, id: toastId })
     },
-    [isDesktop, previewing, focused, mappingEnabled, selWin.hwnd, inputMethod],
+    [isDesktop, previewing, focused, mappingEnabled, selWin.hwnd, mM, kM],
   )
 
   const handleKeyUp = useCallback(
@@ -446,10 +502,10 @@ export function MonitorView({
 
       hostCall('send_input', {
         hwnd: selWin.hwnd, type: 'keyup',
-        key: e.key, code: e.code, vk: e.keyCode, method: inputMethod,
+        key: e.key, code: e.code, vk: e.keyCode, method: kM,
       }).catch((err: any) => addLog(`[Key] keyup failed: ${err?.message || err}`))
     },
-    [isDesktop, previewing, focused, mappingEnabled, selWin.hwnd, inputMethod],
+    [isDesktop, previewing, focused, mappingEnabled, selWin.hwnd, mM, kM],
   )
 
   // ── Drag selection overlay (lazy-evaluated to avoid stale closure) ──
@@ -549,6 +605,7 @@ export function MonitorView({
           onMouseEnter={() => setMouseOn(true)}
           onMouseLeave={() => {
             setMouseOn(false)
+            setCursorPos(null)  // hide cursor overlay when mouse leaves canvas
             // Cancel drag on mouse leave — release button in target
             if (dragging) {
               setDragging(false)
@@ -558,7 +615,7 @@ export function MonitorView({
                 hostCall('send_input', {
                   hwnd: selWin.hwnd, type: 'click',
                   x_norm: path[path.length - 1].x, y_norm: path[path.length - 1].y,
-                  button, method: inputMethod,
+                  button, method: mM,
                 }).catch(() => {})
                 addLog(`[Input] drag cancelled on mouse leave — auto-released mouse button`)
               }
@@ -576,6 +633,29 @@ export function MonitorView({
 
           {/* Drag selection overlay */}
           {dragOverlay}
+
+          {/* ── Cursor overlay: OBS-style dot + ring showing mapped position ── */}
+          {cursorPos && mouseOn && mappingEnabled && (
+            <div
+              className="absolute pointer-events-none z-10"
+              style={{ left: `${cursorPos.rx * 100}%`, top: `${cursorPos.ry * 100}%` }}
+            >
+              {/* Outer ring: 20px, red only when warn mode + self-target */}
+              <div
+                className={`absolute -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 transition-colors duration-150 ${
+                  isSelfTarget && selfTargetMode === 'warn'
+                    ? 'border-error/70 shadow-[0_0_8px_rgba(239,68,68,0.4)]'
+                    : 'border-accent/70 shadow-[0_0_8px_rgba(59,130,246,0.3)]'
+                }`}
+              />
+              {/* Inner dot: 10px filled */}
+              <div
+                className={`absolute -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full transition-colors duration-150 ${
+                  isSelfTarget && selfTargetMode === 'warn' ? 'bg-error/60' : 'bg-accent/60'
+                }`}
+              />
+            </div>
+          )}
 
           {/* Click ripples */}
           {ripples.map((r) => (
@@ -598,8 +678,19 @@ export function MonitorView({
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-secondary flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
               <MousePointer2 className={`w-3.5 h-3.5 ${focused ? 'text-accent animate-pulse' : 'text-text-muted'}`} />
               {focused
-                ? `远程控制中 · ${inputMethod} · Esc 释放`
-                : `悬停移动光标 · 点击控制 · ${inputMethod}`}
+                ? `远程控制中 · 鼠标${mouseMode === 'seize' ? 'Seize' : mouseMode === 'semi' ? 'Semi' : 'Bg'} · 键盘${keyMode === 'seize' ? 'Seize' : keyMode === 'sendmsg' ? 'SendMsg' : 'PostMsg'} · Esc 释放`
+                : `悬停移动光标 · 点击控制 · 鼠标${mouseMode === 'seize' ? 'Seize' : mouseMode === 'semi' ? 'Semi' : 'Bg'}`}
+            </div>
+          )}
+          {mouseOn && isDesktop && previewing && mappingEnabled && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-muted flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
+              <MousePointer2 className="w-3.5 h-3.5 text-text-muted" />
+              桌面预览 · 输入映射已禁用（请选择窗口）
+            </div>
+          )}
+          {mouseOn && isDesktop && previewing && mappingEnabled && isSelfTarget && selfTargetMode === 'warn' && (
+            <div className="absolute top-12 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-error/15 text-xs text-error flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
+              ⚠ 映射目标为 GAM 自身窗口 — 可在 Settings 中切换为「排除窗口」模式
             </div>
           )}
           {mouseOn && !isDesktop && previewing && !mappingEnabled && (

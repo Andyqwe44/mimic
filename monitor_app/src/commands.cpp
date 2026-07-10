@@ -875,10 +875,43 @@ std::string dispatch_command(const std::string& json) {
             if (!alreadyCOM) CoUninitialize();
         }
     }
+    else if (cmd == "get_self_rect") {
+        HWND self = (HWND)get_main_hwnd();
+        RECT r = {};
+        if (self && GetWindowRect(self, &r)) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), R"({"x":%ld,"y":%ld,"w":%ld,"h":%ld})",
+                     r.left, r.top, r.right - r.left, r.bottom - r.top);
+            result = buf;
+        } else {
+            result = R"({"x":0,"y":0,"w":0,"h":0})";
+        }
+    }
+    else if (cmd == "set_exclude_self") {
+        bool exclude = json_get_int(args, "exclude") != 0;
+        HWND self = (HWND)get_main_hwnd();
+        if (self) {
+            // WDA_EXCLUDEFROMCAPTURE = 0x11 (Windows 10 2004+)
+            DWORD affinity = exclude ? 0x11 : 0;  // 0 = WDA_NONE
+            if (SetWindowDisplayAffinity(self, affinity)) {
+                LOG("cmd", "set_exclude_self: %d OK", (int)exclude);
+                result = R"({"ok":true})";
+            } else {
+                DWORD err = GetLastError();
+                LOG("cmd", "set_exclude_self: FAILED err=%lu", (unsigned long)err);
+                result = "{\"ok\":false,\"error\":\"SetWindowDisplayAffinity failed (requires Windows 10 2004+)\"}";
+            }
+        } else {
+            result = R"({"ok":false,"error":"no main window"})";
+        }
+    }
     else if (cmd == "screen_info") {
-        int sw = GetSystemMetrics(SM_CXSCREEN);
-        int sh = GetSystemMetrics(SM_CYSCREEN);
-        result = "{\"w\":" + std::to_string(sw) + ",\"h\":" + std::to_string(sh) + "}";
+        int sx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int sy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int sw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int sh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        result = "{\"x\":" + std::to_string(sx) + ",\"y\":" + std::to_string(sy) +
+                 ",\"w\":" + std::to_string(sw) + ",\"h\":" + std::to_string(sh) + "}";
     }
     else if (cmd == "window_state") {
         auto* hw = (HWND)(uintptr_t)json_get_uint64(args, "hwnd");

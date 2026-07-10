@@ -456,3 +456,6 @@ void PostJsonToWebView(const std::string& json)
         g_webview->PostWebMessageAsJson(w.c_str());
     }
 }
+
+// Accessor for commands.cpp — returns the main window HWND for self-rect queries.
+void* get_main_hwnd() { return g_hwnd; }

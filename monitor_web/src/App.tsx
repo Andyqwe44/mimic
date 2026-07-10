@@ -12,7 +12,7 @@ import { SettingsView } from './components/SettingsView'
 import { MonitorView } from './components/MonitorView'
 import { hostCall, logMgr, addLog, applyTheme } from './lib/bridge'
 import { cantCaptureMinimized } from './lib/constants'
-import type { WindowInfo } from './lib/types'
+import type { WindowInfo, Rect } from './lib/types'
 
 // ── Layout constants ──
 const MIN_LEFT_WIDTH = 360
@@ -453,7 +453,8 @@ export default function App() {
 
   // ── General settings ──
   const [keepFiles, setKeepFiles] = useState(5)
-  const [inputMethod, setInputMethod] = useState('sendinput')
+  const [mouseMode, setMouseMode] = useState<'seize' | 'semi' | 'background'>('background')
+  const [keyMode, setKeyMode] = useState<'seize' | 'postmsg' | 'sendmsg'>('postmsg')
   const [mappingEnabled, setMappingEnabled] = useState(false)
   const [mappingHotkey, setMappingHotkey] = useState('F10')
 
@@ -482,15 +483,48 @@ export default function App() {
   const [targetDims, setTargetDims] = useState<{w:number,h:number} | null>(null)
   const [agentConnected] = useState(false) // placeholder — future TCP agent detection
 
-  // ── Load screen info for aspect ratio ──
+  // ── Self-target detection: GAM window rect + virtual screen rect ──
+  const [selfRect, setSelfRect] = useState<Rect | null>(null)
+  const [screenRect, setScreenRect] = useState<Rect | null>(null)
+  const [selfTargetMode, setSelfTargetMode] = useState<'warn' | 'exclude'>('warn')
+
+  // ── Load screen info for aspect ratio + self-target detection ──
   useEffect(() => {
     ;(async () => {
       try {
         const si = await hostCall('screen_info')
         setScreenRatio(si.w / si.h)
+        setScreenRect({ x: si.x || 0, y: si.y || 0, w: si.w, h: si.h })
       } catch (_) {}
     })()
+    // Poll GAM self-rect every 2s (window may be moved/resized)
+    const pollSelf = async () => {
+      try {
+        const r = await hostCall('get_self_rect')
+        if (r && r.w > 0 && r.h > 0) setSelfRect(r)
+      } catch (_) {}
+    }
+    pollSelf()
+    const iv = setInterval(pollSelf, 2000)
+    return () => clearInterval(iv)
   }, [])
+
+  // ── Sync self-target mode → C++ set_exclude_self ──
+  const syncingMode = useRef(false)
+  useEffect(() => {
+    if (syncingMode.current) return
+    syncingMode.current = true
+    const exclude = selfTargetMode === 'exclude'
+    hostCall('set_exclude_self', { exclude })
+      .then((res: any) => {
+        if (!res?.ok && exclude) {
+          addLog(`[SelfTarget] exclude unsupported on this system — using warn mode`)
+          setSelfTargetMode('warn')
+        }
+      })
+      .catch(() => { if (exclude) setSelfTargetMode('warn') })
+      .finally(() => { syncingMode.current = false })
+  }, [selfTargetMode])
 
   // ── Poll window state every 500ms (foreground/background/minimized) ──
   useEffect(() => {
@@ -733,8 +767,10 @@ export default function App() {
               saveStreamFrames={saveStreamFrames}
               setSaveStreamFrames={setSaveStreamFrames}
               frameDumpDir={frameDumpDir} setFrameDumpDir={setFrameDumpDir}
-              inputMethod={inputMethod} setInputMethod={setInputMethod}
+              mouseMode={mouseMode} setMouseMode={setMouseMode}
+              keyMode={keyMode} setKeyMode={setKeyMode}
               mappingHotkey={mappingHotkey} setMappingHotkey={setMappingHotkey}
+              selfTargetMode={selfTargetMode} setSelfTargetMode={setSelfTargetMode}
             />
           )}
           {/* Monitor tab */}
@@ -747,10 +783,14 @@ export default function App() {
               snapshotLatency={snapshotLatency}
               onTakeSnapshot={takeSnapshot}
               onTogglePreview={togglePreview}
-              inputMethod={inputMethod}
+              mouseMode={mouseMode}
+              keyMode={keyMode}
               mappingEnabled={mappingEnabled} setMappingEnabled={setMappingEnabled}
               mappingHotkey={mappingHotkey}
               targetDims={targetDims}
+              selfRect={selfRect}
+              screenRect={screenRect}
+              selfTargetMode={selfTargetMode}
             >
               <ScreenshotPanel
                 selWin={selWindow} screenRatio={screenRatio}

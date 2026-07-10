@@ -208,14 +208,21 @@ Streaming (`capture_stream_start`):
 | `dxgi` | Returns error — not implemented |
 | unknown | Returns error |
 
-### Input methods
+### Input methods (3-mode mouse + keyboard)
 
-| Method | Implementation | Notes |
-|--------|---------------|-------|
-| `sendinput` | `SendInput` API, MOUSEEVENTF_ABSOLUTE | Default |
-| `postmessage` | `PostMessageW` directly to window | May bypass protections |
-| `winapi` | AttachThreadInput + SendMessage | OS layer |
-| `driver` | — | Not implemented |
+Mouse modes (Settings → Capture → Mouse Mode):
+| Mode | Move | Click method | Description |
+|------|------|-------------|-------------|
+| Background (default) | ❌ virtual only | PostMessage | 全后台不抢鼠标 |
+| Semi | ❌ virtual only | SendInput | 点击时短暂抢鼠标 |
+| Seize | ✅ 60fps | SendInput | 前台完全抢鼠标 |
+
+Keyboard modes (Settings → Capture → Keyboard Mode):
+| Mode | Method | Description |
+|------|--------|-------------|
+| PostMsg (default) | PostMessage | 异步高效 |
+| SendMsg | WinAPI | 同步稳定 |
+| Seize | SendInput | 前台独占 |
 
 ### Streaming pipeline
 
@@ -295,8 +302,11 @@ Mapping key: sequence-based (Ctrl+K ≠ K+Ctrl), modifier-only warning, test ind
 
 ### MonitorView remote-control mode
 
-Mouse: continuous 60fps forwarding on canvas. Click: immediate (dblclick suppresses second mouseup).
-Keyboard: engaged on canvas focus. Toolbar: target title + state badge + Snapshot + Preview/Stop.
+Mouse: 3-mode (Seize/Semi/Background) with virtual cursor overlay (OBS-style dot+ring).
+Self-target detection: red cursor + warning when mapped position overlaps GAM window.
+Keyboard: 3-mode (Seize/PostMsg/SendMsg). Canvas focus for keyboard forwarding.
+Settings: self-target avoidance (warn vs WDA_EXCLUDEFROMCAPTURE exclude).
+Toolbar: target title + state badge + Snapshot + Preview/Stop + 映射 toggle.
 
 ### UI component decomposition
 
@@ -336,7 +346,7 @@ CLAUDE.md 只保留摘要和指向 CLAUDE.old.md 的引用。
 ## Changelog
 
 Full development history preserved in `CLAUDE.old.md`. Major milestones:
-- **2026-07-10**: Log collapse (write-then-collapse crash safety), CSS rename accent-dev→accent-secondary (副色 C2), Auto mode uses C2/Manual uses CE, MonitorView clear canvas on stop
+- **2026-07-10**: Log collapse (write-then-collapse crash safety), CSS rename accent-dev→accent-secondary (副色 C2), Auto mode uses C2/Manual uses CE, MonitorView clear canvas on stop, virtual cursor overlay + self-target detection + 3-mode input (mouse Seize/Semi/Background, keyboard Seize/PostMsg/SendMsg) + WDA_EXCLUDEFROMCAPTURE
 - **2026-07-09**: Two-color theme + Dev mode, MonitorView remote-control, component decomposition (1→11 files), input mapping
 - **2026-07-08**: Method routing 铁律 5 enforcement, stream bridge, SharedBuffer pipeline, log UX
 - Earlier: Rust→C++ migration complete, WGC/DXGI capture, MJPEG server, TCP protocol
