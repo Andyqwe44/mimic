@@ -487,8 +487,8 @@ export function MonitorView({
       const code = e.code
       const vk = e.keyCode
 
-      // Filter IME composition keys (VK_PROCESSKEY = 229)
-      if (vk === 229 || key === 'Process' || key === 'Dead') return
+      // Allow IME composition keys through (VK_PROCESSKEY = 229).
+      // IME works best with SendInput (Seize mode) which injects at system level.
       const isModifier = key === 'Control' || key === 'Shift' || key === 'Alt' || key === 'Meta'
 
       // Track for auto-release

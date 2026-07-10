@@ -150,6 +150,7 @@ export function SettingsView({
   const [screenRes, setScreenRes] = useState('?×?')
   const [logDir, setLogDir] = useState('...')
   const [connExpanded, setConnExpanded] = useState(true)
+  const [testTargetRunning, setTestTargetRunning] = useState(false)
 
   // ── Key recording (sequence-based: press order matters) ──
   const [recording, setRecording] = useState(false)
@@ -1006,6 +1007,40 @@ export function SettingsView({
                 >
                   <FolderOpen className="w-4 h-4" />
                 </button>
+              </Tooltip>
+            </div>
+            {/* ── Test Target Launcher ── */}
+            <div className="border-t border-border pt-3 flex items-center justify-between">
+              <div>
+                <div className="text-sm text-text-primary">Test Target</div>
+                <div className="text-xs text-text-muted">
+                  启动独立测试窗口（GAM Test Target），用于验证输入映射
+                </div>
+              </div>
+              <Tooltip text={testTargetRunning ? '关闭 GAM Test Target 测试窗口' : '打开 GAM Test Target 测试窗口，可被 GAM 捕获并测试鼠标/键盘映射'}>
+              <button
+                onClick={() => {
+                  hostCall('launch_test_target')
+                    .then((res: any) => {
+                      if (res?.ok) {
+                        const action = res?.action || 'launched'
+                        setTestTargetRunning(action === 'launched')
+                        addLog(`[Dev] test target ${action}`)
+                      } else {
+                        addLog(`[Dev] test target failed: ${res?.error || '?'}`)
+                      }
+                    })
+                    .catch((err: any) => addLog(`[Dev] test target error: ${err?.message || err}`))
+                }}
+                className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium border transition-colors ${
+                  testTargetRunning
+                    ? 'border-success/30 bg-success/10 text-success hover:bg-success/20'
+                    : 'border-accent-secondary/30 bg-accent-secondary/10 text-accent-secondary hover:bg-accent-secondary/20'
+                }`}
+              >
+                <Play className={`w-3 h-3 ${testTargetRunning ? 'fill-current' : ''}`} />
+                {testTargetRunning ? 'Close' : 'Launch'}
+              </button>
               </Tooltip>
             </div>
           </div>

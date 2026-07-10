@@ -2,6 +2,22 @@
 
 ## Recent Changes (2026-07-10)
 
+### WGC single-frame crash fix — out_ch nullptr dereference
+`call_capture` passes `nullptr` as `out_ch` parameter to `wgc_capture_single`.
+The function unconditionally writes `*out_ch = frame.channels` → access violation.
+Added `if (out_ch)` guard on all three occurrences (single window, single monitor,
+stream read). Also moved `src_tex.Reset()` from after `CopyResource` to after
+`Unmap` to keep source D3D texture alive during GPU copy+readback (some drivers
+release early). Detailed LOGs added between every step of frame copy pipeline.
+
+### BGRA→RGBA conversion optimized
+Byte-level loop replaced with DWORD bit ops — single `(px & 0xFF00FF00) | ((px >> 16) & 0xFF) | ((px << 16) & 0xFF0000)` per pixel instead of 4 byte accesses.
+
+### Settings → Dev Mode → Launch Test Target toggle button
+Button launches/closes test_target.exe via new C++ `launch_test_target` command
+(FindWindow + WM_CLOSE if running, ShellExecute if not). Button shows green
+"Close" or orange "Launch" based on state.
+
 ### Desktop input support — allow mapping on desktop capture
 Desktop (hwnd=0) input was blocked because `norm_to_screen` called `GetClientRect(0)`
 which fails. Fixed by handling hwnd=0 in `norm_to_screen` and `norm_to_client`:

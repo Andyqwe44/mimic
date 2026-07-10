@@ -196,7 +196,7 @@ int wgc_stream_read(WgcStreamHandle* h, uint8_t* buf, int buf_size,
     memcpy(buf, h->frame_buf.data(), needed);
     *out_w = h->frame_w;
     *out_h = h->frame_h;
-    *out_ch = h->frame_ch;
+    if (out_ch) *out_ch = h->frame_ch;
     h->has_frame.store(false, std::memory_order_release);
     return needed;
 }
@@ -248,22 +248,25 @@ int wgc_capture_single(HWND hwnd, uint8_t* buf, int buf_size,
             LOG("wgc", "wgc_capture_single: got frame on attempt %d — %dx%d %zu bytes",
                 i, frame.width, frame.height, frame.pixels.size());
             int needed = (int)frame.pixels.size();
+            LOG("wgc", "wgc_capture_single: needed=%d buf_size=%d", needed, buf_size);
             if (buf_size < needed) {
                 LOG("wgc", "wgc_capture_single: buf too small! need=%d have=%d", needed, buf_size);
                 cap.shutdown();
                 dq.ShutdownQueueAsync();
                 return 0;
             }
+            LOG("wgc", "wgc_capture_single: buf_size OK, about to memcpy...");
             memcpy(buf, frame.pixels.data(), needed);
+            LOG("wgc", "wgc_capture_single: memcpy OK, writing out params...");
             *out_w = frame.width;
             *out_h = frame.height;
-            *out_ch = frame.channels;
+            if (out_ch) *out_ch = frame.channels;
             LOG("wgc", "wgc_capture_single: calling cap.shutdown()...");
             cap.shutdown();
             LOG("wgc", "wgc_capture_single: cap.shutdown() OK, calling dq.ShutdownQueueAsync()...");
             dq.ShutdownQueueAsync();
             LOG("wgc", "wgc_capture_single: SUCCESS %dx%d ch=%d size=%d",
-                *out_w, *out_h, *out_ch, needed);
+                *out_w, *out_h, out_ch ? *out_ch : 0, needed);
             return needed;
         }
         if (!cap.is_ok()) {
@@ -389,22 +392,25 @@ int wgc_capture_single_monitor(HMONITOR hmon, uint8_t* buf, int buf_size,
             LOG("wgc", "wgc_capture_single_monitor: got frame on attempt %d — %dx%d %zu bytes",
                 i, frame.width, frame.height, frame.pixels.size());
             int needed = (int)frame.pixels.size();
+            LOG("wgc", "wgc_capture_single_monitor: needed=%d buf_size=%d", needed, buf_size);
             if (buf_size < needed) {
                 LOG("wgc", "wgc_capture_single_monitor: buf too small! need=%d have=%d", needed, buf_size);
                 cap.shutdown();
                 dq.ShutdownQueueAsync();
                 return 0;
             }
+            LOG("wgc", "wgc_capture_single_monitor: buf_size OK, about to memcpy...");
             memcpy(buf, frame.pixels.data(), needed);
+            LOG("wgc", "wgc_capture_single_monitor: memcpy OK, writing out params...");
             *out_w = frame.width;
             *out_h = frame.height;
-            *out_ch = frame.channels;
+            if (out_ch) *out_ch = frame.channels;
             LOG("wgc", "wgc_capture_single_monitor: calling cap.shutdown()...");
             cap.shutdown();
             LOG("wgc", "wgc_capture_single_monitor: cap.shutdown() OK, calling dq.ShutdownQueueAsync()...");
             dq.ShutdownQueueAsync();
             LOG("wgc", "wgc_capture_single_monitor: SUCCESS %dx%d ch=%d size=%d",
-                *out_w, *out_h, *out_ch, needed);
+                *out_w, *out_h, out_ch ? *out_ch : 0, needed);
             return needed;
         }
         if (!cap.is_ok()) {

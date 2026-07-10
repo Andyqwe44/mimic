@@ -390,7 +390,7 @@ bool WgcCapture::capture(WgcFrame& out, WgcTiming* timing) {
 
     // GPU copy: source texture → staging texture
     ctx_->CopyResource(staging_[si].Get(), src_tex.Get());
-    src_tex.Reset();  // release frame reference early so GPU can reuse surface
+    // Don't release src_tex yet — some drivers need the source alive during Map/readback.
     uint64_t t2 = now_us();
 
     // CPU readback: Map staging texture (blocks until GPU copy complete)
@@ -423,6 +423,7 @@ bool WgcCapture::capture(WgcFrame& out, WgcTiming* timing) {
     }
 
     ctx_->Unmap(staging_[si].Get(), 0);
+    src_tex.Reset();  // safe to release now: GPU copy + CPU readback complete
     uint64_t t3 = now_us();
 
     // Frame consumed; clear ready flag (new FrameArrived will set it again)

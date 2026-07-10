@@ -359,9 +359,10 @@ void shared_buffer_push_frame(const uint8_t* bgra, int w, int h,
         return;
     }
     size_t size = (size_t)w * h * 4;
+    LOG("main", "shared_buffer_push_frame: %dx%d size=%zu bgra=%p", w, h, size, (void*)bgra);
     ComPtr<ICoreWebView2SharedBuffer> buf;
     if (FAILED(env12->CreateSharedBuffer((UINT)size, &buf))) {
-        LOG("main", "shared_buffer_push_frame: CreateSharedBuffer FAILED");
+        LOG("main", "shared_buffer_push_frame: CreateSharedBuffer FAILED size=%u", (UINT)size);
         return;
     }
     BYTE* dst = nullptr;
@@ -369,14 +370,19 @@ void shared_buffer_push_frame(const uint8_t* bgra, int w, int h,
         LOG("main", "shared_buffer_push_frame: get_Buffer FAILED");
         return;
     }
+    LOG("main", "shared_buffer_push_frame: dst=%p, converting BGRA→RGBA...", (void*)dst);
 
-    // Convert BGRA → RGBA inline (ImageData expects RGBA)
-    for (int i = 0; i < w * h; i++) {
-        dst[i * 4 + 0] = bgra[i * 4 + 2];  // B → R
-        dst[i * 4 + 1] = bgra[i * 4 + 1];  // G → G
-        dst[i * 4 + 2] = bgra[i * 4 + 0];  // R → B
-        dst[i * 4 + 3] = bgra[i * 4 + 3];  // A → A
+    // Convert BGRA → RGBA inline (ImageData expects RGBA).
+    // DWORD per iteration: swap B/R bytes via bit ops — ~4× faster than byte access.
+    int total = w * h;
+    uint32_t* dwords = (uint32_t*)dst;
+    const uint32_t* src = (const uint32_t*)bgra;
+    for (int i = 0; i < total; i++) {
+        uint32_t px = src[i];
+        // BGRA=0xBBGGRRAA → RGBA=0xRRGGBBAA
+        dwords[i] = (px & 0xFF00FF00) | ((px & 0x00FF0000) >> 16) | ((px & 0x000000FF) << 16);
     }
+    LOG("main", "shared_buffer_push_frame: conversion done, posting...");
 
     // Pass dimensions as metadata so JS can construct ImageData
     wchar_t meta[64];
@@ -385,6 +391,7 @@ void shared_buffer_push_frame(const uint8_t* bgra, int w, int h,
     // CRITICAL: PostSharedBufferToScript BEFORE Close — per WebView2 docs,
     // the buffer must remain open when posted to script.
     wv17->PostSharedBufferToScript(buf.Get(), COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, meta);
+    LOG("main", "shared_buffer_push_frame: post done, closing buffer...");
     buf->Close();
     LOG("main", "shared_buffer_push_frame: %dx%d OK", w, h);
 }

@@ -424,6 +424,8 @@ static std::string cmd_capture_window(uint64_t hwnd, const std::string& method) 
 
     // Push frame via SharedBuffer (zero-copy) — no more base64 PNG.
     // Frontend receives the frame via 'sharedbufferreceived' event.
+    LOG("cmd", "capture_window: pushing %dx%d (%zu bytes) via SharedBuffer",
+        r.w, r.h, r.pixels.size());
     shared_buffer_push_frame(r.pixels.data(), r.w, r.h);
 
     // Developer mode: dump frame to disk
@@ -978,6 +980,32 @@ std::string dispatch_command(const std::string& json) {
             }
             if (result.empty()) result = "{\"dir\":\"\"}";
             if (!alreadyCOM) CoUninitialize();
+        }
+    }
+    else if (cmd == "launch_test_target") {
+        // Toggle: if test_target window already exists, close it.
+        // Otherwise launch a new instance.
+        HWND hTest = FindWindowW(L"GAMTestTarget", L"GAM Test Target");
+        if (hTest) {
+            PostMessageW(hTest, WM_CLOSE, 0, 0);
+            LOG("cmd", "launch_test_target: close existing window hwnd=0x%llx", (unsigned long long)(uintptr_t)hTest);
+            result = R"({"ok":true,"action":"closed"})";
+        } else {
+            char exeDir[MAX_PATH];
+            GetModuleFileNameA(nullptr, exeDir, MAX_PATH);
+            char* lastSlash = strrchr(exeDir, '\\');
+            if (lastSlash) *lastSlash = '\0';
+            char* p = strrchr(exeDir, '\\'); if (p) *p = '\0';
+            p = strrchr(exeDir, '\\'); if (p) *p = '\0';
+            std::string path = std::string(exeDir) + "\\test_target\\test_target.exe";
+            LOG("cmd", "launch_test_target: %s", path.c_str());
+            HINSTANCE h = ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOW);
+            if ((INT_PTR)h > 32) {
+                result = R"({"ok":true,"action":"launched"})";
+            } else {
+                result = "{\"ok\":false,\"error\":\"failed to launch, code=" +
+                         std::to_string((int)(INT_PTR)h) + "\"}";
+            }
         }
     }
     else if (cmd == "get_self_rect") {

@@ -75,15 +75,16 @@ bool norm_to_screen(HWND hWnd, double nx, double ny, DWORD& absX, DWORD& absY) {
         sx = vsX + (int)(nx * vsW);
         sy = vsY + (int)(ny * vsH);
     } else {
-        RECT cr;
-        if (!GetClientRect(hWnd, &cr)) {
-            LOG("input", "norm_to_screen: GetClientRect FAILED for hwnd=0x%llx", (unsigned long long)(uintptr_t)hWnd);
+        // Window capture: WGC captures full window including non-client area
+        // (title bar, borders). Use GetWindowRect to match the captured image.
+        RECT wr;
+        if (!GetWindowRect(hWnd, &wr)) {
+            LOG("input", "norm_to_screen: GetWindowRect FAILED for hwnd=0x%llx", (unsigned long long)(uintptr_t)hWnd);
             absX = 0; absY = 0;
             return false;
         }
-        POINT pt = { cr.left, cr.top }; ClientToScreen(hWnd, &pt);
-        sx = pt.x + (int)(nx * (cr.right - cr.left));
-        sy = pt.y + (int)(ny * (cr.bottom - cr.top));
+        sx = wr.left + (int)(nx * (double)(wr.right - wr.left));
+        sy = wr.top  + (int)(ny * (double)(wr.bottom - wr.top));
     }
     int vsX = GetSystemMetrics(SM_XVIRTUALSCREEN);
     int vsY = GetSystemMetrics(SM_YVIRTUALSCREEN);
