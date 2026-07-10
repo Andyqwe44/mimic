@@ -880,10 +880,12 @@ static void cursor_overlay_hide() {
 static std::string cmd_send_input(const std::string& args) {
     InputArgs a = parse_input_args(args);
 
-    if (a.hwnd == 0)
-        return "{\"ok\":false,\"error\":\"cannot send input to desktop\"}";
+    // Desktop (hwnd=0): only sendinput works (uses virtual screen coords).
+    // winapi/postmessage need a real window handle for thread attach / message routing.
+    if (a.hwnd == 0 && a.method != "sendinput")
+        return "{\"ok\":false,\"error\":\"desktop input only supports sendinput method\"}";
     HWND hWnd = (HWND)(uintptr_t)a.hwnd;
-    if (!IsWindow(hWnd))
+    if (hWnd != nullptr && !IsWindow(hWnd))
         return "{\"ok\":false,\"error\":\"invalid window handle\"}";
 
     if (a.method == "sendinput")    return input_sendinput(hWnd, a);

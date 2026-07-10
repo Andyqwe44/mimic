@@ -113,9 +113,10 @@ export function MonitorView({
   const stateLabel = STATE_LABEL[winState] || winState
 
   // ── Derived input methods from mode ──
-  const mM = MOUSE_METHOD[mouseMode ?? 'background']   // click/drag/wheel method
-  const kM = KEY_METHOD[keyMode ?? 'postmsg']            // keyboard method
-  const sendMove = (mouseMode ?? 'background') === 'seize'   // only seize sends move
+  // Desktop (hwnd=0) only supports sendinput — postmessage/winapi need a real window.
+  const mM = isDesktop ? 'sendinput' : MOUSE_METHOD[mouseMode ?? 'background']
+  const kM = isDesktop ? 'sendinput' : KEY_METHOD[keyMode ?? 'postmsg']
+  const sendMove = isDesktop || (mouseMode ?? 'background') === 'seize'   // desktop always sends move
 
   // ═══ Interaction state ═══
   const [focused, setFocused] = useState(false)    // canvas has keyboard focus
@@ -256,7 +257,7 @@ export function MonitorView({
   // ── Mouse down → start drag (or click if released without moving) ──
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing || !mappingEnabled) return
+      if (!previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const rect = e.currentTarget.getBoundingClientRect()
@@ -283,7 +284,7 @@ export function MonitorView({
   // ── Mouse move → drag sampling OR cursor forwarding ──
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing || !mappingEnabled) return
+      if (!previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const now = Date.now()
@@ -412,7 +413,7 @@ export function MonitorView({
   // ── Double click — suppresses second mouseup click, sends dblclick immediately ──
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing || !mappingEnabled) return
+      if (!previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       const rect = e.currentTarget.getBoundingClientRect()
@@ -444,7 +445,7 @@ export function MonitorView({
   // ── Mouse wheel → normalized delta (deltaMode-aware) ──
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
-      if (isDesktop || !previewing || !mappingEnabled) return
+      if (!previewing || !mappingEnabled) return
       const dims = targetDims
       if (!dims || dims.w <= 0 || dims.h <= 0) return
       e.preventDefault()
@@ -613,7 +614,7 @@ export function MonitorView({
       <div className="flex-1 overflow-hidden p-4">
         <div
           ref={containerRef}
-          tabIndex={isDesktop || !previewing || !mappingEnabled ? undefined : 0}
+          tabIndex={!previewing || !mappingEnabled ? undefined : 0}
           className={`w-full h-full rounded-xl bg-bg-secondary ring-1 ring-inset overflow-hidden flex items-center justify-center relative outline-none transition-shadow ${
             !isDesktop && previewing && mappingEnabled
               ? focused
@@ -685,9 +686,9 @@ export function MonitorView({
             </div>
           )}
           {mouseOn && isDesktop && previewing && mappingEnabled && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-muted flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
-              <MousePointer2 className="w-3.5 h-3.5 text-text-muted" />
-              桌面预览 · 输入映射已禁用（请选择窗口）
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-bg-tertiary/90 text-xs text-text-secondary flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none z-10">
+              <MousePointer2 className="w-3.5 h-3.5 text-accent" />
+              桌面预览 · SendInput（强制） · {focused ? '点击/键盘已激活' : '点击获取焦点'}
             </div>
           )}
           {mouseOn && isDesktop && previewing && mappingEnabled && isSelfTarget && selfTargetMode === 'warn' && (

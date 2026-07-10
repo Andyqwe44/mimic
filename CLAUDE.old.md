@@ -2,6 +2,25 @@
 
 ## Recent Changes (2026-07-10)
 
+### Desktop input support — allow mapping on desktop capture
+Desktop (hwnd=0) input was blocked because `norm_to_screen` called `GetClientRect(0)`
+which fails. Fixed by handling hwnd=0 in `norm_to_screen` and `norm_to_client`:
+map normalized coords directly to virtual screen rect (SM_XVIRTUALSCREEN etc.).
+
+C++ `cmd_send_input`: desktop now allows sendinput method only (winapi/postmessage
+need real window handle). JS MonitorView: removed all `isDesktop` guards from input
+handlers; `mM`/`kM` forced to `'sendinput'` when `isDesktop`, `sendMove` always true.
+TabIndex no longer disabled for desktop. Hint updated: "桌面预览 · SendInput（强制）".
+
+### test_target — standalone input-test mini EXE
+New `test_target/` directory: single-file Win32 C++ program that opens a 400×400 window
+with a 5×5 color grid + keyboard display bar + console log. Each grid cell (0,0)-(4,4)
+flashes green on left-click, red on right-click. Console prints timestamped event details
+(mouse down/up, grid coords, key name, wheel delta). Used to verify GAM input mapping
+end-to-end: select "GAM Test Target" as capture target → preview → mapping → interact.
+
+Build: `cl.exe /EHsc /O2 test_target.cpp user32.lib gdi32.lib /Fe:test_target.exe`
+
 ### Real-screen cursor indicator via C++ layered window (major)
 Cursor indicator moved from canvas overlay to a real transparent window on the actual screen.
 C++ creates a 32×32 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE window with per-pixel

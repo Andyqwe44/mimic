@@ -65,15 +65,26 @@ bool is_extended_key(WORD vk) {
 // ═══ Coordinate conversion ══════════════════════════════════
 
 bool norm_to_screen(HWND hWnd, double nx, double ny, DWORD& absX, DWORD& absY) {
-    RECT cr;
-    if (!GetClientRect(hWnd, &cr)) {
-        LOG("input", "norm_to_screen: GetClientRect FAILED for hwnd=0x%llx", (unsigned long long)(uintptr_t)hWnd);
-        absX = 0; absY = 0;
-        return false;
+    int sx, sy;
+    if (hWnd == nullptr || hWnd == (HWND)0) {
+        // Desktop: map normalized coords directly to virtual screen
+        int vsX = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vsY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vsW = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vsH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        sx = vsX + (int)(nx * vsW);
+        sy = vsY + (int)(ny * vsH);
+    } else {
+        RECT cr;
+        if (!GetClientRect(hWnd, &cr)) {
+            LOG("input", "norm_to_screen: GetClientRect FAILED for hwnd=0x%llx", (unsigned long long)(uintptr_t)hWnd);
+            absX = 0; absY = 0;
+            return false;
+        }
+        POINT pt = { cr.left, cr.top }; ClientToScreen(hWnd, &pt);
+        sx = pt.x + (int)(nx * (cr.right - cr.left));
+        sy = pt.y + (int)(ny * (cr.bottom - cr.top));
     }
-    POINT pt = { cr.left, cr.top }; ClientToScreen(hWnd, &pt);
-    int sx = pt.x + (int)(nx * (cr.right - cr.left));
-    int sy = pt.y + (int)(ny * (cr.bottom - cr.top));
     int vsX = GetSystemMetrics(SM_XVIRTUALSCREEN);
     int vsY = GetSystemMetrics(SM_YVIRTUALSCREEN);
     int vsW = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -84,6 +95,12 @@ bool norm_to_screen(HWND hWnd, double nx, double ny, DWORD& absX, DWORD& absY) {
 }
 
 bool norm_to_client(HWND hWnd, double nx, double ny, int& cx, int& cy) {
+    if (hWnd == nullptr || hWnd == (HWND)0) {
+        // Desktop: use virtual screen as "client"
+        cx = (int)(nx * GetSystemMetrics(SM_CXVIRTUALSCREEN));
+        cy = (int)(ny * GetSystemMetrics(SM_CYVIRTUALSCREEN));
+        return true;
+    }
     RECT cr;
     if (!GetClientRect(hWnd, &cr)) {
         LOG("input", "norm_to_client: GetClientRect FAILED for hwnd=0x%llx", (unsigned long long)(uintptr_t)hWnd);
