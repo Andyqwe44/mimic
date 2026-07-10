@@ -13,6 +13,15 @@ import {
 } from '../lib/constants'
 import type { WindowInfo } from '../lib/types'
 
+// ── Darken hex color by percentage (0–100) for hover state ──
+function darken(hex: string, pct: number): string {
+  const v = parseInt(hex.slice(1), 16)
+  const r = Math.max(0, ((v >> 16) & 0xff) - Math.round(255 * pct / 100))
+  const g = Math.max(0, ((v >> 8) & 0xff) - Math.round(255 * pct / 100))
+  const b = Math.max(0, (v & 0xff) - Math.round(255 * pct / 100))
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+}
+
 // ── SettingsCard (collapsible) ──
 function SettingsCard({
   icon,
@@ -147,6 +156,11 @@ export function SettingsView({
   const [normalAccent, setNormalAccent] = useState(accent)
   const [normalSecondaryAccent, setNormalSecondaryAccent] = useState(secondaryAccent)
   const DEV_PAIR = themePairs[7] // ['#EF4444', '#EAB308']
+
+  // Sync accent-hover on mount (CSS default may be stale)
+  useEffect(() => {
+    document.documentElement.style.setProperty('--color-accent-hover', darken(accent, 15))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [screenRes, setScreenRes] = useState('?×?')
   const [logDir, setLogDir] = useState('...')
   const [connExpanded, setConnExpanded] = useState(true)
@@ -274,11 +288,13 @@ export function SettingsView({
       setSecondaryAccent(DEV_PAIR[1])
       document.documentElement.style.setProperty('--color-accent', DEV_PAIR[0])
       document.documentElement.style.setProperty('--color-accent-secondary', DEV_PAIR[1])
+      document.documentElement.style.setProperty('--color-accent-hover', darken(DEV_PAIR[0], 15))
     } else {
       setAccent(normalAccent)
       setSecondaryAccent(normalSecondaryAccent)
       document.documentElement.style.setProperty('--color-accent', normalAccent)
       document.documentElement.style.setProperty('--color-accent-secondary', normalSecondaryAccent)
+      document.documentElement.style.setProperty('--color-accent-hover', darken(normalAccent, 15))
     }
   }, [devMode])
 
@@ -753,6 +769,7 @@ export function SettingsView({
                         setNormalSecondaryAccent(c2)
                         document.documentElement.style.setProperty('--color-accent', c1)
                         document.documentElement.style.setProperty('--color-accent-secondary', c2)
+                        document.documentElement.style.setProperty('--color-accent-hover', darken(c1, 15))
                         addLog(`[Theme] accent = ${c1} / ${c2}`)
                       }}
                       className={`relative w-5 h-5 rounded-md overflow-hidden transition-all duration-150 ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}

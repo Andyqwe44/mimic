@@ -197,11 +197,9 @@ export function MonitorView({
       if (seqMatches(pressedHotkeyRef.current, mappingHotkey)) {
         e.preventDefault()
         e.stopPropagation()
-        setMappingEnabled((prev: boolean) => {
-          const next = !prev
-          addLog(`[Input] mapping ${next ? 'ON' : 'OFF'} (${mappingHotkey})`)
-          return next
-        })
+        const next = !mappingEnabled
+        setMappingEnabled(next)
+        addLog(`[Input] mapping ${next ? 'ON' : 'OFF'} (${mappingHotkey})`)
       }
     }
     const onUp = (e: KeyboardEvent) => {
@@ -380,7 +378,7 @@ export function MonitorView({
         })
           .then(() => {
             addLog(
-              `[Mouse] click → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${inputMethod}]`,
+              `[Mouse] click → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${mM}]`,
             )
           })
           .catch((err: any) => {
@@ -395,7 +393,7 @@ export function MonitorView({
         })
           .then(() => {
             addLog(
-              `[Mouse] drag ${path.length} pts → hwnd=0x${selWin.hwnd.toString(16)} [${inputMethod}]`,
+              `[Mouse] drag ${path.length} pts → hwnd=0x${selWin.hwnd.toString(16)} [${mM}]`,
             )
           })
           .catch((err: any) => {
@@ -432,7 +430,7 @@ export function MonitorView({
       })
         .then(() => {
           addLog(
-            `[Mouse] dblclick → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${inputMethod}]`,
+            `[Mouse] dblclick → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${mM}]`,
           )
         })
         .catch((err: any) => {
@@ -465,7 +463,7 @@ export function MonitorView({
       })
         .then(() => {
           addLog(
-            `[Mouse] wheel ${delta > 0 ? 'down' : 'up'} (${delta}) [${inputMethod}]`,
+            `[Mouse] wheel ${delta > 0 ? 'down' : 'up'} (${delta}) [${mM}]`,
           )
         })
         .catch((err: any) => {
