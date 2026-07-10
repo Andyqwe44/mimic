@@ -81,6 +81,7 @@ tictactoe/
 ├── monitor_web/          React frontend (Vite + TypeScript + Tailwind)
 ├── protocol/             Wire format (C++/Python)
 ├── model/                Python AI
+├── test_target/          Standalone input-test window (TCP :9998 self-test feedback)
 └── test/                 Benchmarks + frame viewer
 ```
 
@@ -195,6 +196,32 @@ User presses Ctrl+C in preview canvas (focused):
 
 On blur/Escape: all pressed keys auto-released via keyup events.
 ```
+
+## Self-Test — mapping calibration (Dev)
+
+`test_target/test_target.exe` — standalone 5×5 grid (shrunk inner hit-zone) plus a
+real multiline IME text box. It reports every received click back to GAM over TCP
+(loopback **:9998**, JSON-lines), so a mapping can be validated against ground truth.
+
+One-click **Self-Test** (Settings → Dev mode → Developer Mode card) drives the *real*
+user path end-to-end and compares expected vs actual landings:
+
+1. launch/find test_target + connect TCP — *only genuinely new logic*
+2. select it as capture target — reuses the window-select callback
+3. Monitor → Preview → mapping ON — reuses the preview + mapping toggles
+4. dense sweep — per-cell N×N clicks via the same `sendMappedClick` a user fires
+
+test_target reports `{x,y,gx,gy,hit}` per click; GAM predicts the expected cell/hit
+from the handshake geometry and computes per-cell match rate, systematic offset
+vector, and pixel error → heatmap report. Reveals constant offset, scale error, axis
+flip, DPI mismatch.
+
+Wire (loopback :9998, JSON-lines):
+```
+hello: {type,"hello", client_w, client_h, grid, cell, pad, hit_margin}   # on connect
+click: {type,"click", seq, btn, x, y, gx, gy, hit}                       # per button-down
+```
+Commands: `find_test_target` → `{hwnd}`, `selftest_connect {port}`, `selftest_disconnect`.
 
 ## WGC Internals
 

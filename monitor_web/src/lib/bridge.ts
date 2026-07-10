@@ -188,6 +188,21 @@ export function addLog(msg: string) {
   logMgr.add(msg)
 }
 
+// ═══ Self-test report bus ═══
+// C++ selftest client forwards each test_target report as {type:'selftest', data:{...}}.
+// The orchestrator subscribes here to receive geometry ('hello') + per-click reports.
+export type SelfTestMsg =
+  | { type: 'hello'; client_w: number; client_h: number; grid: number; cell: number; pad: number; hit_margin: number }
+  | { type: 'click'; seq: number; btn: number; x: number; y: number; gx: number; gy: number; hit: boolean }
+  | { type: 'disconnected' }
+
+const _selfTestListeners = new Set<(m: SelfTestMsg) => void>()
+
+export function onSelfTest(fn: (m: SelfTestMsg) => void): () => void {
+  _selfTestListeners.add(fn)
+  return () => { _selfTestListeners.delete(fn) }
+}
+
 // ── C++ → JS message listener (responses + remote log push) ──
 if (typeof (window as any).chrome?.webview !== 'undefined') {
   ;(window as any).chrome.webview.addEventListener('message', (e: any) => {
@@ -197,6 +212,11 @@ if (typeof (window as any).chrome?.webview !== 'undefined') {
       // count > 1 → C++ already collapsed consecutive duplicates (file + ring).
       if (msg.type === 'log') {
         logMgr.addRemote(msg.ts, msg.tag, msg.msg, msg.count || 1, msg.firstTs || '')
+        return
+      }
+      // Self-test report push: C++ selftest client → {type:'selftest', data:{...}}
+      if (msg.type === 'selftest') {
+        _selfTestListeners.forEach((f) => f(msg.data))
         return
       }
       // Command response: {id, result} envelope → resolve matching pending call

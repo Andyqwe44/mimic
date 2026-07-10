@@ -1,5 +1,56 @@
 # CLAUDE.md — TicTacToe → General Visual Game AI
 
+## Recent Changes (2026-07-10) — Self-Test mapping calibration
+
+### test_target upgrade
+- **判定区缩小**: 每格加 `HIT_MARGIN=16` inner-margin，只有格内 28px 中心区算命中；
+  gutter 点击记 MISS。paint 画出 inner target 绿框可视化。status bar 显示 Hits/Miss。
+- **真实输入框 + IME**: 用原生多行 `EDIT` child control（`ES_MULTILINE|ES_AUTOVSCROLL|
+  ES_WANTRETURN`）替代原按键显示区。文字保存/光标/选区/剪贴板/系统中文输入法全部原生支持。
+  Microsoft YaHei 字体 + `WM_CTLCOLOREDIT` 暗色主题。`SetFocus(g_edit)` 即可打字。
+  保留 `WM_KEYDOWN` 控制台检测（GAM 转发键仍打到主窗口）。消息循环**不**用
+  `IsDialogMessage`（否则吞掉 GAM PostMessage 来的 keydown）。
+- **build.cmd 加 `/utf-8`**: 否则 MSVC 按 GBK 读 UTF-8 源码，宽字符串中文标签乱码。
+- **TCP report server (:9998, loopback, JSON-lines)**: winsock server 线程 accept 一个
+  client(GAM)。连上即发握手 `{type:"hello",client_w,client_h,grid,cell,pad,hit_margin}`，
+  之后每次鼠标 down 发 `{type:"click",seq,btn,x,y,gx,gy,hit}`（hit/miss 都发）。
+  `report_send_line` 加 mutex，send 失败即 drop client。build.cmd 加 `ws2_32.lib`。
+
+### GAM C++ self-test client (commands.cpp)
+- selftest client：`socket→connect 127.0.0.1:9998`，reader 线程读 JSON-lines，每行经
+  `PostJsonToWebView("{\"type\":\"selftest\",\"data\":<line>}")` 转前端（line 本就是 JSON
+  对象，直接内嵌免转义）。仿 `on_log_notify` 跨线程 push 模式。
+- `st_cleanup()` 幂等：running=false + closesocket + join；connect/disconnect/shutdown 共用。
+- 新命令：`find_test_target`(`FindWindowW(L"GAMTestTarget",...)`→`{hwnd}`)、
+  `selftest_connect {port}`、`selftest_disconnect`。backend_shutdown 加 st_cleanup。
+
+### 前端
+- **bridge.ts**: `onSelfTest(fn)` 订阅总线，message 监听 `type:'selftest'` → 派发 data。
+- **MonitorView**: 抽出 `sendMappedClick(rx,ry,button)` — 真实 `handleMouseUp` 点击分支与
+  自检共用同一 `send_input` 路径（保证测试=真实操作）。`apiRef` 暴露 `{sendClick, ready}`。
+- **lib/selftest.ts**: `genPoints`（每格 N×N 子网格，列优先栅格 = 上→下再右移）、
+  `predict(px,py)`（镜像 test_target 命中公式：`floor((px-pad)/cell)` + inner-margin）、
+  `runSelfTest`（先订阅再 connect 避免漏 hello；串行发点→arm 等待→await 回传→300ms 超时→
+  correlate）、`summarize`（收到率/格匹配/HIT 匹配/偏移向量 meanDx,meanDy/像素误差/逐格热力）。
+- **App**: 编排器 `runSelfTestFlow(perCell)` — find/launch test_target → setSelWindow →
+  setTab('Monitor') → **sleep(250) 等 re-render** → `startStreamRef.current()`（ref 存最新闭包
+  避免 stale closure 拿到旧 hwnd）→ setMappingEnabled → 等 `apiRef.ready()` → runSelfTest。
+  只有 step1(spawn+TCP) 新写，step2-4 复用真实回调。
+- **SelfTestModal.tsx**: 进度条/中止；5×5 命中率热力图（红→绿）；stats（样本/收到/格匹配/
+  HIT匹配/偏移向量/误差均值最大）；诊断提示（链路断/偏移大/系统性偏移/精确）。
+- **SettingsView**: DEV 面板 Self-Test 按钮 + 密度选择（3/5/8 每格，默认 5=625 点）。
+
+### 验证
+- test_target TCP + 命中逻辑：Python PostMessage 模拟点击 5 用例全过（HIT/MISS 边界正确，
+  坐标精确）。子网格取样点落在格内 0.1/0.3/0.5/0.7/0.9 → 干净 HIT/MISS，无边界歧义。
+- 踩坑：残留多个 test_target.exe（SO_REUSEADDR 多进程绑 9998），Python 连 A、FindWindow 找
+  B → 假象无回报。杀净单实例全过，代码无 bug。
+- monitor_app dev + monitor_web tsc 均编译通过。端到端 GUI 交互需用户运行 dev 验证。
+
+---
+
+# CLAUDE.md — TicTacToe → General Visual Game AI (earlier)
+
 ## Recent Changes (2026-07-10)
 
 ### WGC single-frame crash fix — out_ch nullptr dereference

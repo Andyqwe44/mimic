@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Camera, Play, Cpu, Sun, RefreshCw, ChevronDown,
-  Monitor, Pencil, FolderOpen, MousePointer2, Keyboard,
+  Monitor, Pencil, FolderOpen, MousePointer2, Keyboard, Crosshair,
 } from 'lucide-react'
 import { Tooltip, ActionBtn } from './Toolkit'
 import { ConnectionPanel } from './ConnectionPanel'
@@ -113,6 +113,8 @@ export function SettingsView({
   keyMode, setKeyMode,
   mappingHotkey, setMappingHotkey,
   selfTargetMode, setSelfTargetMode,
+  onRunSelfTest,
+  selfTestRunning,
 }: {
   snapMethod: string; setSnapMethod: (m: string) => void
   streamMethod: string; setStreamMethod: (m: string) => void
@@ -133,6 +135,8 @@ export function SettingsView({
   keyMode: 'seize' | 'postmsg' | 'sendmsg'; setKeyMode: (m: 'seize' | 'postmsg' | 'sendmsg') => void
   mappingHotkey: string; setMappingHotkey: (k: string) => void
   selfTargetMode: 'warn' | 'exclude'; setSelfTargetMode: (m: 'warn' | 'exclude') => void
+  onRunSelfTest?: (perCell: number) => void
+  selfTestRunning?: boolean
 }) {
   const themePairs = [
     ['#3B82F6', '#F97316'], // Ocean — blue + orange
@@ -165,6 +169,7 @@ export function SettingsView({
   const [logDir, setLogDir] = useState('...')
   const [connExpanded, setConnExpanded] = useState(true)
   const [testTargetRunning, setTestTargetRunning] = useState(false)
+  const [selfTestPerCell, setSelfTestPerCell] = useState(5)   // sub-samples per cell axis
 
   // ── Key recording (sequence-based: press order matters) ──
   const [recording, setRecording] = useState(false)
@@ -1059,6 +1064,43 @@ export function SettingsView({
                 {testTargetRunning ? 'Close' : 'Launch'}
               </button>
               </Tooltip>
+            </div>
+            {/* ── Self-Test (mapping calibration) ── */}
+            <div className="border-t border-border pt-3 flex items-center justify-between">
+              <div>
+                <div className="text-sm text-text-primary">Self-Test 映射自检</div>
+                <div className="text-xs text-text-muted">
+                  自动跑完整流程（选窗→预览→映射→密集点击），比对 test_target 反馈校准映射
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Tooltip text="每格采样密度（N×N 子网格）。越大越细，用时越久。">
+                  <select
+                    value={selfTestPerCell}
+                    onChange={(e) => setSelfTestPerCell(Number(e.target.value))}
+                    disabled={selfTestRunning}
+                    className="h-7 rounded-lg border border-border bg-bg-primary px-2 text-xs outline-none focus:border-accent disabled:opacity-50"
+                  >
+                    {[3, 5, 8].map((n) => (
+                      <option key={n} value={n}>{n}×{n}/格</option>
+                    ))}
+                  </select>
+                </Tooltip>
+                <Tooltip text={selfTestRunning ? '自检进行中…' : '一键自检：复用真实用户操作路径，全窗密集点击并比对反馈'}>
+                  <button
+                    onClick={() => onRunSelfTest?.(selfTestPerCell)}
+                    disabled={selfTestRunning}
+                    className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium border transition-colors ${
+                      selfTestRunning
+                        ? 'border-border bg-bg-tertiary text-text-muted cursor-not-allowed'
+                        : 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/20'
+                    }`}
+                  >
+                    <Crosshair className="w-3 h-3" />
+                    {selfTestRunning ? '运行中' : 'Self-Test'}
+                  </button>
+                </Tooltip>
+              </div>
             </div>
           </div>
         </SettingsCard>

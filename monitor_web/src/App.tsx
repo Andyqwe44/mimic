@@ -9,8 +9,10 @@ import { ConnectionPanel } from './components/ConnectionPanel'
 import { ScreenshotPanel } from './components/ScreenshotPanel'
 import { LogPanel } from './components/LogPanel'
 import { SettingsView } from './components/SettingsView'
-import { MonitorView } from './components/MonitorView'
+import { MonitorView, type MonitorApi } from './components/MonitorView'
+import { SelfTestModal } from './components/SelfTestModal'
 import { hostCall, logMgr, addLog, applyTheme } from './lib/bridge'
+import { runSelfTest, sleep, type SelfTestState } from './lib/selftest'
 import { cantCaptureMinimized } from './lib/constants'
 import type { WindowInfo, Rect } from './lib/types'
 
@@ -671,6 +673,71 @@ export default function App() {
     }
   }, [previewing, stopStream, startStream])
 
+  // ═══ Self-Test orchestration ═══
+  // One-click calibration: reuses the real user-facing callbacks (select →
+  // preview → mapping → click) end-to-end, then compares test_target's TCP
+  // feedback against expected landings. Step 1 (launch + connect) is the only
+  // genuinely new logic; steps 2–4 drive existing handlers.
+  const monitorApiRef = useRef<MonitorApi | null>(null)
+  const selfTestAbort = useRef(false)
+  const [selfTest, setSelfTest] = useState<SelfTestState>({ phase: 'idle' })
+  // keep latest capture callback reachable from the async flow (avoid stale closure)
+  const startStreamRef = useRef(startStream)
+  startStreamRef.current = startStream
+
+  const runSelfTestFlow = useCallback(
+    async (perCell: number) => {
+      if (selfTest.phase === 'running') return
+      selfTestAbort.current = false
+      setSelfTest({ phase: 'running', done: 0, total: 0 })
+      addLog(`[SelfTest] start (perCell=${perCell})`)
+      try {
+        // 1 — ensure the test_target window is running (never toggle-close it)
+        let hwnd = (await hostCall('find_test_target'))?.hwnd || 0
+        if (!hwnd) {
+          await hostCall('launch_test_target')
+          for (let i = 0; i < 40 && !hwnd; i++) {
+            await sleep(100)
+            hwnd = (await hostCall('find_test_target'))?.hwnd || 0
+          }
+        }
+        if (!hwnd) throw new Error('test_target 窗口未找到')
+
+        // 2 — select it as the capture target (same state a user selection sets)
+        if (opStateRef.current === 'streaming') await stopStream()
+        setSelWindow({ title: 'GAM Test Target', category: 'window', hwnd })
+        setTab('Monitor')
+        await sleep(250) // let React re-render → fresh capture closures + MonitorView mount
+
+        // 3 — preview + mapping (reuse the real preview start + mapping toggle)
+        if (!previewingRef.current) await startStreamRef.current()
+        setMappingEnabled(true)
+        for (let i = 0; i < 80; i++) {
+          if (monitorApiRef.current?.ready()) break
+          await sleep(100)
+        }
+        if (!monitorApiRef.current?.ready()) throw new Error('预览/映射未就绪')
+
+        // 4 — dense sweep (reuses sendMappedClick via the imperative api)
+        const summary = await runSelfTest({
+          perCell,
+          sendClick: (rx, ry, b) => monitorApiRef.current!.sendClick(rx, ry, b),
+          onProgress: (done, total) =>
+            setSelfTest((s) => (s.phase === 'running' ? { ...s, done, total } : s)),
+          shouldAbort: () => selfTestAbort.current,
+        })
+        setSelfTest({ phase: 'done', summary })
+        addLog(
+          `[SelfTest] done recv=${summary.received}/${summary.total} cell=${Math.round((summary.cellMatch / summary.total) * 100)}% off=(${summary.meanDx.toFixed(1)},${summary.meanDy.toFixed(1)})`,
+        )
+      } catch (e: any) {
+        setSelfTest({ phase: 'error', error: e?.message || String(e) })
+        addLog(`[SelfTest] error: ${e?.message || e}`)
+      }
+    },
+    [selfTest.phase, stopStream, setMappingEnabled],
+  )
+
   // ── Cleanup on unmount: stop any active stream ──
   useEffect(() => {
     return () => {
@@ -771,6 +838,8 @@ export default function App() {
               keyMode={keyMode} setKeyMode={setKeyMode}
               mappingHotkey={mappingHotkey} setMappingHotkey={setMappingHotkey}
               selfTargetMode={selfTargetMode} setSelfTargetMode={setSelfTargetMode}
+              onRunSelfTest={runSelfTestFlow}
+              selfTestRunning={selfTest.phase === 'running'}
             />
           )}
           {/* Monitor tab */}
@@ -791,6 +860,7 @@ export default function App() {
               selfRect={selfRect}
               screenRect={screenRect}
               selfTargetMode={selfTargetMode}
+              apiRef={monitorApiRef}
             >
               <ScreenshotPanel
                 selWin={selWindow} screenRatio={screenRatio}
@@ -901,6 +971,13 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ── Self-Test report overlay ── */}
+      <SelfTestModal
+        state={selfTest}
+        onClose={() => setSelfTest({ phase: 'idle' })}
+        onAbort={() => { selfTestAbort.current = true }}
+      />
     </div>
   )
 }

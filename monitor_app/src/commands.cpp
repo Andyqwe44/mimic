@@ -523,8 +523,73 @@ static void tcp_broadcast_frame(const uint8_t* bgra, int w, int h) {
 
 static std::string cmd_capture_stream_stop(); // fwd decl for cmd_capture_stream_start
 
+// ── Self-test client (connects to test_target 127.0.0.1:9998, JSON-lines) ──
+// Reads reports from test_target and forwards each to the frontend tagged
+// type:"selftest". Each line is already a JSON object → nested directly.
+static SOCKET            g_st_sock = INVALID_SOCKET;
+static std::thread       g_st_thread;
+static std::atomic<bool> g_st_running{false};
+
+static void st_forward(const std::string& jsonObj) {
+    PostJsonToWebView("{\"type\":\"selftest\",\"data\":" + jsonObj + "}");
+}
+
+static void st_cleanup() {
+    g_st_running = false;
+    if (g_st_sock != INVALID_SOCKET) { closesocket(g_st_sock); g_st_sock = INVALID_SOCKET; }
+    if (g_st_thread.joinable()) g_st_thread.join();
+}
+
+static void st_reader_loop() {
+    std::string buf;
+    char tmp[1024];
+    while (g_st_running) {
+        int n = recv(g_st_sock, tmp, sizeof(tmp), 0);
+        if (n <= 0) break;
+        buf.append(tmp, n);
+        size_t nl;
+        while ((nl = buf.find('\n')) != std::string::npos) {
+            std::string line = buf.substr(0, nl);
+            buf.erase(0, nl + 1);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (!line.empty()) st_forward(line);
+        }
+    }
+    g_st_running = false;
+    st_forward(R"({"type":"disconnected"})");   // notify frontend link dropped
+    LOG("cmd", "selftest reader exited");
+}
+
+static std::string cmd_selftest_connect(int port) {
+    st_cleanup();                       // idempotent — drop any stale connection
+    if (port <= 0) port = 9998;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return R"({"ok":false,"error":"socket failed"})";
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons((u_short)port);
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(s, (sockaddr*)&a, sizeof(a)) != 0) {
+        int err = WSAGetLastError();
+        closesocket(s);
+        char e[96];
+        snprintf(e, sizeof(e), "{\"ok\":false,\"error\":\"connect failed (%d)\"}", err);
+        return e;
+    }
+    g_st_sock = s;
+    g_st_running = true;
+    g_st_thread = std::thread(st_reader_loop);
+    LOG("cmd", "selftest connected to 127.0.0.1:%d", port);
+    return R"({"ok":true})";
+}
+
+static std::string cmd_selftest_disconnect() {
+    st_cleanup();
+    LOG("cmd", "selftest disconnected");
+    return R"({"ok":true})";
+}
+
 static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& method, const std::string& transport) {
-    // Stop any existing stream first
     // NOTE: TS now handles conflict resolution (auto-stop before start).
     // This auto-stop is commented out to ensure TS-side bugs are surfaced, not silently fixed.
     // cmd_capture_stream_stop();
@@ -1008,6 +1073,18 @@ std::string dispatch_command(const std::string& json) {
             }
         }
     }
+    else if (cmd == "find_test_target") {
+        HWND h = FindWindowW(L"GAMTestTarget", L"GAM Test Target");
+        char b[64];
+        snprintf(b, sizeof(b), "{\"hwnd\":%llu}", (unsigned long long)(uintptr_t)h);
+        result = b;
+    }
+    else if (cmd == "selftest_connect") {
+        result = cmd_selftest_connect(json_get_int(args, "port"));
+    }
+    else if (cmd == "selftest_disconnect") {
+        result = cmd_selftest_disconnect();
+    }
     else if (cmd == "get_self_rect") {
         HWND self = (HWND)get_main_hwnd();
         RECT r = {};
@@ -1149,6 +1226,7 @@ void backend_shutdown() {
     LOG("cmd", "backend shutdown");
     g_mta_running = false;
     if (g_mta_thread.joinable()) g_mta_thread.join();
+    st_cleanup();          // drop self-test client link
     tcp_server_stop();
     capture_log_flush();
     capture_log_shutdown();

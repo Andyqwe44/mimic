@@ -13,6 +13,13 @@ interface Ripple { id: number; x: number; y: number }
 interface KeyToast { text: string; id: number }
 interface PressedKey { key: string; code: string; keyCode: number }
 
+// Imperative API exposed to the Self-Test orchestrator (App).
+// sendClick drives the EXACT same path as a real user click (see handleMouseUp).
+export interface MonitorApi {
+  sendClick: (rx: number, ry: number, button?: string) => Promise<any>
+  ready: () => boolean   // preview + mapping active and target dims known
+}
+
 // ── Coordinate helper ──
 // Compute normalized (0-1) coords relative to actual image area, accounting for letterbox
 function getImageCoords(
@@ -87,6 +94,7 @@ export function MonitorView({
   selfRect,
   screenRect,
   selfTargetMode,
+  apiRef,
 }: {
   selWin: WindowInfo
   winState: string
@@ -108,6 +116,7 @@ export function MonitorView({
   selfRect?: Rect | null
   screenRect?: Rect | null
   selfTargetMode?: 'warn' | 'exclude'
+  apiRef?: React.MutableRefObject<MonitorApi | null>
 }) {
   const isDesktop = selWin.hwnd === 0
   const stateLabel = STATE_LABEL[winState] || winState
@@ -338,6 +347,38 @@ export function MonitorView({
     [dragging, previewing, isDesktop, mappingEnabled, targetDims, selWin.hwnd, mM, kM],
   )
 
+  // ── Shared click sender — single source of truth for a mapped click ──
+  // Both the real mouseup handler and the Self-Test orchestrator call this,
+  // so an automated sweep hits the identical send_input path a user does.
+  const sendMappedClick = useCallback(
+    (rx: number, ry: number, button = 'left') => {
+      const rippleId = nextId()
+      setRipples((prev) => [...prev, { id: rippleId, x: rx * 100, y: ry * 100 }])
+      return hostCall('send_input', {
+        hwnd: selWin.hwnd, type: 'click', x_norm: rx, y_norm: ry, button, method: mM,
+      })
+        .then(() => {
+          addLog(
+            `[Mouse] click → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${mM}]`,
+          )
+        })
+        .catch((err: any) => {
+          addLog(`[Mouse] click failed: ${err?.message || err}`)
+        })
+    },
+    [selWin.hwnd, mM],
+  )
+
+  // ── Expose imperative API to parent (Self-Test orchestrator) ──
+  useEffect(() => {
+    if (!apiRef) return
+    apiRef.current = {
+      sendClick: (rx, ry, b = 'left') => sendMappedClick(rx, ry, b),
+      ready: () => !!previewing && !!mappingEnabled && !!targetDims && targetDims.w > 0,
+    }
+    return () => { if (apiRef) apiRef.current = null }
+  }, [apiRef, sendMappedClick, previewing, mappingEnabled, targetDims])
+
   // ── Mouse up → send click or drag (immediate, no defer) ──
   const handleMouseUp = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -368,22 +409,8 @@ export function MonitorView({
       const movedPoints = path.length > 1
 
       if (!movedPoints) {
-        // Immediate click — no defer for remote-control feel
-        const rippleId = nextId()
-        setRipples((prev) => [...prev, { id: rippleId, x: rx * 100, y: ry * 100 }])
-
-        hostCall('send_input', {
-          hwnd: selWin.hwnd, type: 'click', x_norm: rx, y_norm: ry,
-          button, method: mM,
-        })
-          .then(() => {
-            addLog(
-              `[Mouse] click → hwnd=0x${selWin.hwnd.toString(16)} (${Math.round(rx * 100)}%,${Math.round(ry * 100)}%) [${mM}]`,
-            )
-          })
-          .catch((err: any) => {
-            addLog(`[Mouse] click failed: ${err?.message || err}`)
-          })
+        // Immediate click — shared path (also used by Self-Test sweep)
+        sendMappedClick(rx, ry, button)
       } else {
         // Drag: add final position
         path.push({ x: rx, y: ry })
@@ -405,7 +432,7 @@ export function MonitorView({
       dragStartRef.current = null
       dragCurrentRef.current = null
     },
-    [dragging, selWin.hwnd, mM, kM, targetDims],
+    [dragging, selWin.hwnd, mM, kM, targetDims, sendMappedClick],
   )
 
   // ── Double click — suppresses second mouseup click, sends dblclick immediately ──
