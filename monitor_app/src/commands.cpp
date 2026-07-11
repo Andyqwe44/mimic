@@ -43,6 +43,8 @@ using Microsoft::WRL::ComPtr;
 
 // Shared by main.cpp — pushed from stream thread
 extern void PostJsonToWebView(const std::string& json);
+// Shared by main.cpp — reveal the (initially hidden) main window on frontend ready
+extern void app_post_show_window();
 
 static constexpr int MAX_PX = 3840 * 2160 * 4;
 
@@ -1545,6 +1547,12 @@ std::string dispatch_command(const std::string& json) {
     else if (cmd == "get_version") {
         result = "\"" APP_VERSION "\"";
     }
+    else if (cmd == "show_window") {
+        // Frontend's first frame is painted — reveal the window (kept hidden
+        // through WebView2 startup to avoid a white flash). Idempotent host-side.
+        app_post_show_window();
+        result = R"({"ok":true})";
+    }
     else if (cmd == "get_log_dir") {
         const char* log_dir = capture_log_get_dir();
         result = "{\"dir\":\"" + json_escape(log_dir ? log_dir : "") + "\"}";
@@ -1758,6 +1766,8 @@ static void mta_daemon() {
     LOG("cmd", "MTA daemon stopped");
 }
 
+extern unsigned long long g_boot_tick;  // perf: set in WinMain (main.cpp) for startup timing
+
 void backend_init() {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // STA for WebView2/WIC
 #ifdef DEV_MODE
@@ -1782,6 +1792,8 @@ void backend_init() {
 #else
     capture_log_set_level(LOG_LEVEL_INFO);   // hide DEBUG in prod
 #endif
+    LOG("cmd", "perf: backend_init entered t+%llums (blocks msg loop until done)",
+        GetTickCount64() - g_boot_tick);
     init_wic();
     tcp_server_start();
 
@@ -1796,7 +1808,7 @@ void backend_init() {
         }
     }
 
-    LOG("cmd", "backend init OK");
+    LOG("cmd", "backend init OK t+%llums", GetTickCount64() - g_boot_tick);
 }
 
 void backend_shutdown() {

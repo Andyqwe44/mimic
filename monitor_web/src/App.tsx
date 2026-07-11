@@ -12,6 +12,7 @@ import { SettingsView } from './components/SettingsView'
 import { MonitorView, type MonitorApi } from './components/MonitorView'
 import { SelfTestModal } from './components/SelfTestModal'
 import { UpdateModal, type UpdateInfo } from './components/UpdateModal'
+import { LoadingScreen } from './components/LoadingScreen'
 import { hostCall, logMgr, addLog, applyTheme, onUpdateProgress, type UpdateProgressMsg } from './lib/bridge'
 import { runSelfTest, sleep, type SelfTestState } from './lib/selftest'
 import { cantCaptureMinimized } from './lib/constants'
@@ -21,11 +22,19 @@ import type { WindowInfo, Rect } from './lib/types'
 const MIN_LEFT_WIDTH = 360
 const DEFAULT_RIGHT_WIDTH = 324
 
+// DELIBERATE test delay so the startup skeleton screen stays visible long enough
+// to observe during development. Real startup needs NO artificial wait — the
+// skeleton would otherwise flash by. Set to 0 (or delete the timer) for production.
+const SPLASH_TEST_MS = 1500
+
 export default function App() {
   // ═══ UI state ═══
   const [tab, setTab] = useState<'Monitor' | 'Log' | 'Settings'>('Settings')
   const [running, setRunning] = useState(false)
-  const [appVersion, setAppVersion] = useState('...')
+  // Initialised from the compile-time version (version.h via Vite) so the splash
+  // shows it instantly; get_version overwrites it at runtime (they match).
+  const [appVersion, setAppVersion] = useState(`v${__APP_VERSION__}`)
+  const [appReady, setAppReady] = useState(false)   // false = show startup splash overlay
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [updateProgress, setUpdateProgress] = useState<UpdateProgressMsg | null>(null)
@@ -172,6 +181,31 @@ export default function App() {
         if (v) setAppVersion(v.startsWith('v') ? v : `v${v}`)
       })
       .catch(() => {})
+  }, [])
+
+  // Reveal the host window once React has painted its first frame, then drop the
+  // startup splash after a brief beat. The window starts HIDDEN on the C++ side to
+  // hide the ~2-4s WebView2 startup gap, so it appears already showing the splash
+  // spinner instead of a white blank. Double rAF ensures layout + paint have
+  // flushed (splash visible) before we ask the host to show the window.
+  useEffect(() => {
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        hostCall('show_window').catch(() => {})
+      })
+    })
+    // Dev preview: open with ?splash to freeze the skeleton (it otherwise clears
+    // after SPLASH_TEST_MS). View at http://localhost:1425/?splash in a browser.
+    const holdSplash = new URLSearchParams(window.location.search).has('splash')
+    // Keep the skeleton up a deliberate beat (test only), then reveal the main UI.
+    const t = holdSplash ? 0 : window.setTimeout(() => setAppReady(true), SPLASH_TEST_MS)
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+      if (t) clearTimeout(t)
+    }
   }, [])
 
   // ── Update check / download handlers ──
@@ -916,7 +950,9 @@ export default function App() {
 
   // ═══ Render ═══
   return (
-    <div className="h-full flex flex-col bg-bg-primary">
+    <div className="relative h-full flex flex-col bg-bg-primary">
+      {/* Startup skeleton overlay — covers the UI (z-50) until initial init settles */}
+      {!appReady && <LoadingScreen />}
       {/* ── Top bar: tabs + Start/Stop + theme ── */}
       <TopBar
         tab={tab}
