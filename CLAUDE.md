@@ -539,6 +539,20 @@ CLAUDE.md 只保留摘要和指向 CLAUDE.old.md 的引用。
 ## Changelog
 
 Full development history preserved in `CLAUDE.old.md`. Major milestones:
+- **2026-07-11 (startup white-screen → hidden-window + skeleton screen，未发布)**: 治真机开屏白屏 2-4s。
+  诊断(埋计时 LOG 实测)：**不是** DLL 拆分(原生加载毫秒级)、**不是** React(bundle 365KB 本地供给 ~100ms)、
+  `backend_init` 仅 **16ms**(先前「backend 串行拖」假设推翻)；2-4s 几乎全是 **WebView2 env 创建**(固有,削不掉)。
+  参考 `codes/MXU`(MaaEnd 的 Tauri 前端)做法 —— `tauri.conf visible:false` 窗口先隐藏、前端就绪再 `show()`。
+  移植：`main.cpp` 窗口建时**隐藏**(去 `ShowWindow`)+ 深色 `hbrBackground` 兜底；`show_window` 命令
+  (`WM_APP_SHOW_WINDOW`)由前端首帧 double-rAF 后调用 → `show_main_window()` 幂等揭窗；`WM_TIMER` **8s 兜底**
+  (前端崩了也弹窗)。隔离 Win32 test 实证「隐藏窗→SetTimer→WM_TIMER→ShowWindow」机制成立(headless 跑不了
+  webview,揭窗真机验)。**骨架屏**(Alipay 式)：新 `LoadingScreen.tsx` overlay(z-50)镜像真实默认屏结构
+  (顶栏 3tab+Start/主题、左列 StatusBar 条+5 卡、分隔、右列 3 卡、底栏),内容换 `.skeleton` shimmer 块
+  (`gam-shimmer` keyframes + 主题变量,深浅自适应,`index.css`)；手写近似非组件派生(布局大改需手动同步)。
+  `App.tsx`：`appReady` gate + `SPLASH_TEST_MS=1500`(**故意** test 停留,prod 设 0)+ `?splash` query 冻结预览。
+  **版本注入**(铁律 8)：`vite.config` 读 `version.h` → `__APP_VERSION__` define,splash/UI 秒显版本(不再 `...` 闪)。
+  计时 LOG 保留(INFO,可筛)。**保留想法**：给首页真异步零件(日志/窗口列表/读盘)做 per-widget 骨架 —— 毫秒级暂缓。
+  未升版(仍 0.3.5),随后续发布。
 - **2026-07-11 (runtime data → LOCALAPPDATA + Inno 托管，未发布)**: 统一所有运行时写入到
   `%LOCALAPPDATA%\GameAgentMonitor`，装 C:/D: 都不散落、卸载删干净。审计发现只剩一个泄漏点：prod 日志走 exe 相对
   `{app}\bin\log`（`backend_init`，Program Files 下标准用户无写权限，白屏同源）—— WebView2/config(settings)/staging

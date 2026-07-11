@@ -34,6 +34,8 @@ declare global {
   interface Window {
     chrome?: ChromeWebView;
   }
+  /** Compile-time app version, injected by Vite from version.h (see vite.config.ts). */
+  const __APP_VERSION__: string;
 }
 
 export {};

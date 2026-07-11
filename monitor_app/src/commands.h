@@ -49,6 +49,11 @@ void backend_shutdown();
 // pushes a {"type":"update_progress",...} message to JS. (Mirrors WM_STREAM_FRAME.)
 static constexpr UINT WM_UPDATE_PROGRESS = WM_USER + 101;
 
+// Posted when the frontend sends 'show_window' (its first frame is painted).
+// WndProc reveals the main window, which was kept hidden through the WebView2
+// startup gap to avoid a white flash. See app_post_show_window (main.cpp).
+static constexpr UINT WM_APP_SHOW_WINDOW = WM_USER + 102;
+
 struct UpdateProgress {
     bool active = false;       // download thread running
     bool succeeded = false;    // all files done OK

@@ -78,8 +78,29 @@ struct WebMessageHandler : ComCallbackBase<ICoreWebView2WebMessageReceivedEventH
     }
 };
 
+// perf: process boot time (ms via GetTickCount64), for startup latency
+// instrumentation. Set first thing in WinMain; each startup milestone logs
+// its offset so the white-screen breakdown (env vs backend) is measurable.
+// Non-static: commands.cpp reads it via extern to time backend_init.
+unsigned long long g_boot_tick = 0;
+
+// perf: log when the first navigation completes — this is ≈ the end of the
+// white screen (content painted). Reuses the ComCallbackBase pattern.
+struct NavCompletedHandler : ComCallbackBase<ICoreWebView2NavigationCompletedEventHandler> {
+    STDMETHODIMP Invoke(ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs*) override {
+        LOG("main", "perf: NavigationCompleted t+%llums (~white-screen end)",
+            GetTickCount64() - g_boot_tick);
+        return S_OK;
+    }
+};
+
 // ── Globals ────────────────────────────────────────────────
 static HWND                  g_hwnd = nullptr;
+// Window starts hidden and is revealed only once the frontend paints its first
+// frame (WM_SHOW_WINDOW) or the safety timer fires — hides the WebView2 startup
+// gap so the window never appears as a white blank. Idempotent via this flag.
+static bool                  g_window_shown = false;
+static constexpr UINT_PTR    TIMER_SHOW_SAFETY = 1;   // fallback reveal if frontend never signals
 static ComPtr<ICoreWebView2Controller> g_webviewController;
 static ComPtr<ICoreWebView2> g_webview;
 static ComPtr<ICoreWebView2Environment12> g_env12;
@@ -174,6 +195,7 @@ static void check_and_heal_updater() {
 // ── WinMain ─────────────────────────────────────────────────
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCmdLine, _In_ int nCmdShow)
 {
+    g_boot_tick = GetTickCount64();  // perf: t0 for startup latency instrumentation
     // ── Single-instance guard ──
     // Named mutex prevents multiple instances of the same app.
     // If another instance is already running, activate its window and exit.
@@ -202,6 +224,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCm
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = hInstance;
     wc.hCursor       = LoadCursor(nullptr, MAKEINTRESOURCE(32512)); // IDC_ARROW
+    // Dark background brush: if the window is ever painted before the webview
+    // attaches, it shows dark chrome instead of a white flash.
+    wc.hbrBackground = CreateSolidBrush(RGB(24, 24, 27));
     wc.lpszClassName = WINDOW_CLASS;
     RegisterClassExW(&wc);
 
@@ -215,8 +240,13 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCm
 
     vd_set_main_hwnd(g_hwnd);  // tell virtual_desktop which HWND to use for desktop detection
 
-    ShowWindow(g_hwnd, nCmdShow);
-    UpdateWindow(g_hwnd);
+    // Keep the window HIDDEN. The frontend calls 'show_window' once its first
+    // frame is painted (see show_main_window / WM_SHOW_WINDOW), so the window
+    // pops in already showing the UI instead of a ~2-4s white blank during
+    // WebView2 env creation + React mount. Mirrors MXU/Tauri's visible:false.
+    // Safety net: reveal anyway after 8s if the frontend never signals (broken JS).
+    (void)nCmdShow;  // intentionally not shown here
+    SetTimer(g_hwnd, TIMER_SHOW_SAFETY, 8000, nullptr);
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     InitWebView2(g_hwnd);
@@ -248,9 +278,38 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPSTR lpCm
 }
 
 // ── Window procedure ────────────────────────────────────────
+
+// Reveal the main window (idempotent). Called once the frontend's first frame is
+// painted (WM_SHOW_WINDOW, from the 'show_window' command) or by the safety timer.
+static void show_main_window()
+{
+    if (g_window_shown) return;
+    g_window_shown = true;
+    KillTimer(g_hwnd, TIMER_SHOW_SAFETY);
+    ShowWindow(g_hwnd, SW_SHOWNORMAL);
+    SetForegroundWindow(g_hwnd);
+    LOG("main", "perf: window shown t+%llums", GetTickCount64() - g_boot_tick);
+}
+
+// Exposed to commands.cpp: the frontend sent 'show_window'. Post to WndProc so
+// the reveal always runs on the UI thread regardless of the caller's thread.
+void app_post_show_window()
+{
+    if (g_hwnd) PostMessageW(g_hwnd, WM_APP_SHOW_WINDOW, 0, 0);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg) {
+    case WM_APP_SHOW_WINDOW:
+        show_main_window();
+        break;
+    case WM_TIMER:
+        if (wParam == TIMER_SHOW_SAFETY) {
+            LOG_WARN("main", "frontend did not signal ready in 8s — revealing window (safety)");
+            show_main_window();
+        }
+        break;
     case WM_SIZE:
         if (g_webviewController) {
             RECT rc;
@@ -323,6 +382,7 @@ HRESULT InitWebView2(HWND hwnd)
 
             // Capture SharedBuffer interfaces
             env->QueryInterface(IID_PPV_ARGS(&g_env12));
+            LOG("main", "perf: WebView2 env created t+%llums", GetTickCount64() - g_boot_tick);
 
             return env->CreateCoreWebView2Controller(hwnd,
                 new ControllerCreatedHandler([hwnd](HRESULT result, ICoreWebView2Controller* ctrl) -> HRESULT {
@@ -343,6 +403,10 @@ HRESULT InitWebView2(HWND hwnd)
 
                     // Register WebMessage handler (replaces Tauri invoke)
                     g_webview->add_WebMessageReceived(new WebMessageHandler(), nullptr);
+
+                    // perf: mark when the first navigation finishes (≈ white end)
+                    g_webview->add_NavigationCompleted(new NavCompletedHandler(), nullptr);
+                    LOG("main", "perf: controller ready t+%llums", GetTickCount64() - g_boot_tick);
 
                     // Register interfaces in GIT for cross-thread access.
                     // CoMarshalInterThreadInterfaceInStream fails (0x80040155)
