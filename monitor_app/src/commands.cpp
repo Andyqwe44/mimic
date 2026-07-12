@@ -1107,13 +1107,19 @@ UpdateProgress update_get_progress() {
 }
 
 // Launch updater.exe for the finished (succeeded) download. Main thread (WndProc).
+// Guard against duplicate WM_UPDATE_PROGRESS — the download thread posts once per
+// chunk AND a terminal "done" post, which can both land in the queue before the
+// first is processed, causing two ShellExecuteEx runas calls (two UAC prompts).
 bool update_launch_updater() {
+    static bool s_launched = false;  // one-shot
+    if (s_launched) return false;
     std::string stagingDir;
     {
         std::lock_guard<std::mutex> lk(g_up_mtx);
         if (!g_up.succeeded || g_up.staging_dir.empty()) return false;
         stagingDir = g_up.staging_dir;
     }
+    s_launched = true;
     std::string installDir  = paths_get_install_dir();
     std::string updaterPath = installDir + "\\bin\\updater.exe";
     DWORD pid = GetCurrentProcessId();
