@@ -174,14 +174,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR lpCmdLine, int) {
         return 0;
     }
 
+    // Strip surrounding double quotes from a token (defensive — the caller
+    // must not embed quotes, but we guard anyway, 铁律 9b).
+    auto unquote = [](char* s) {
+        size_t len = strlen(s);
+        if (len >= 2 && s[0] == '"' && s[len-1] == '"') {
+            memmove(s, s + 1, len - 2);
+            s[len - 2] = '\0';
+        }
+    };
+
     // Parse args
     char stagingDir[MAX_PATH] = {};
     DWORD oldPid = 0;
 
     char* tok = strtok(lpCmdLine, " ");
-    if (tok) { strncpy(stagingDir, tok, MAX_PATH-1); stagingDir[MAX_PATH-1] = '\0'; }
+    if (tok) { unquote(tok); strncpy(stagingDir, tok, MAX_PATH-1); stagingDir[MAX_PATH-1] = '\0'; }
     tok = strtok(nullptr, " ");
-    if (tok) oldPid = (DWORD)strtoul(tok, nullptr, 10);
+    if (tok) { unquote(tok); oldPid = (DWORD)strtoul(tok, nullptr, 10); }
 
     if (!stagingDir[0] || !oldPid) {
         ulog("ERROR: bad args (staging=%s pid=%lu)", stagingDir, (unsigned long)oldPid);
