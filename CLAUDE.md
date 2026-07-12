@@ -591,6 +591,26 @@ CLAUDE.md 只保留摘要和指向 CLAUDE.old.md 的引用。
 ## Changelog
 
 Full development history preserved in `CLAUDE.old.md`. Major milestones:
+- **2026-07-13 (0.3.25 更新系统企业级改造 — P0 真增量 + P1 删除同步 + P2 ECDSA 签名)**: 0.3.23→0.3.24 更新仍
+  「下 21 文件」(全量),排查确认**非**脱钩失败(脱钩已实测生效),真因 `New-VersionJson.ps1` 默认
+  `$MinVersion=$Version` + `commands.cpp` `current<min_version→强制 full` → 每版 min_version=新版 → local 永远
+  小于它 → 永远全量,sha 增量比对根本没走。审计另发现三缺陷。**三阶段全套修复**(用户选企业级):
+  **P0 真增量**:`New-VersionJson.ps1` 默认 `$MinVersion='0.3.24'` 固定基线(只在更新机制不兼容时提升,不随版本走)
+  → 0.3.24+ 客户端走 sha 增量,diff 只含真变的文件。
+  **P1 desired-state(删除同步 + 清单刷新)**:`download_thread_func` 下完 diff 后从首个 file 的 url 反推
+  download_base,下 `version.json` 进 staging(updater copy_staging 天然拷到 install → **清单刷新即时**);
+  `updater.cpp` copy_staging 后加 `sync_deletions`:读刚拷的 install `version.json` 的 files 全集,遍历白名单
+  `bin`/`frontend` 删清单外文件(保护 updater/monitor_app/`.old`/log;空清单则跳过,绝不「空清单删全部」)。
+  解决前端 `index-XXXX.js` hash 重命名的旧 asset 无限累积。**delete 滞后一版生效**(0.3.25 装上新 updater,
+  0.3.25→0.3.26 才 delete;清单刷新即时)。
+  **P2 ECDSA P-256 签名**(CNG/BCrypt,**非** Ed25519——CNG 不原生支持):`New-SigningKey.ps1` 一次性生成密钥
+  (私钥 `scripts/.signing/ec_priv.b64` gitignore,公钥 `BCRYPT_ECCPUBLIC_BLOB`→`monitor_app/src/update_pubkey.h`
+  嵌入);`New-VersionJson.ps1` 对 files 规范化摘要(**ordinal 排序** `path\nsha256\n` 拼接 → SHA256)签名填
+  `sig`;`update_verify.cpp`(新)`BCryptVerifySignature` 验签;`check_update` 灰度接入(sig 空→WARN 跳过兼容旧版;
+  非空→必验过否则 `ok:false` 拒绝,铁律 5)。**round-trip 实测**(`tmp/verify_p2.ps1`):签 21 files→C++
+  `signed=1 verify=1`;篡改 sha→`verify=0` 拒绝。双端 payload 字节一致(独立 ordinal 排序,避 JSON 规范化)。
+  **生效**:0.3.25 客户端起验签;0.3.24(无验签码)忽略 sig 字段,0.3.24→0.3.25 安全。全量编译通过。**待发 0.3.25**
+  验真增量(0.3.24→0.3.25 预期只下 ~6 文件:monitor_app.exe + updater×2 + 前端×3,12 lib + logger 不下)。
 - **2026-07-13 (DLL 版本与 APP_VERSION 解耦 — 真增量更新)**: 痛点:每次 bump APP_VERSION,12 个原生
   DLL 的 VERSIONINFO 都嵌 app 版本 → sha256 全变 → 「增量更新」每版仍重下全部 DLL(假增量)。**根因三层**:
   (1) `capture`/`input` 的 `link.exe` **漏了 `/Brepro`**(logger/app/updater 有)→ 非确定 PE 时间戳,同源码每

@@ -139,6 +139,106 @@ static void remove_tree(const char* dir) {
     RemoveDirectoryA(dir);
 }
 
+// ── Desired-state deletion sync (P1b) ───────────────────────────────────────
+// After copy_staging (which also lands the fresh version.json), delete install
+// files no longer present in the manifest — so removed/renamed files (e.g. the
+// front-end's hashed index-XXXX.js) don't accumulate forever. Strictly bounded:
+// whitelisted dirs only, protected files never touched, no-op on an empty manifest.
+
+static int  g_expectedCount = 0;
+static char g_expected[256][MAX_PATH];   // manifest file paths (forward slashes)
+
+// Extract each file path (the keys of the "files" object) from a version.json.
+// Depth-1 quoted keys are paths; value objects sit at depth 2 (auto-skipped).
+static int manifest_paths(const char* json, char paths[][MAX_PATH], int maxPaths) {
+    const char* p = strstr(json, "\"files\"");
+    if (!p) return 0;
+    p = strchr(p, '{');
+    if (!p) return 0;
+    int depth = 0, count = 0;
+    for (; *p; p++) {
+        if (*p == '{') depth++;
+        else if (*p == '}') { depth--; if (depth == 0) break; }
+        else if (depth == 1 && *p == '"') {
+            const char* keyEnd = strchr(p + 1, '"');
+            if (!keyEnd) break;
+            int len = (int)(keyEnd - (p + 1));
+            if (len > 0 && len < MAX_PATH && count < maxPaths) {
+                memcpy(paths[count], p + 1, len);
+                paths[count][len] = '\0';
+                count++;
+            }
+            p = keyEnd;   // value object's braces handled by depth counting
+        }
+    }
+    return count;
+}
+
+static bool path_in_expected(const char* rel) {   // rel: forward slashes
+    for (int i = 0; i < g_expectedCount; i++)
+        if (_stricmp(g_expected[i], rel) == 0) return true;
+    return false;
+}
+
+// Never delete the updater's own files, the main exe, or any *.old sidecar.
+static bool is_protected_rel(const char* rel) {
+    size_t n = strlen(rel);
+    if (n >= 4 && _stricmp(rel + n - 4, ".old") == 0) return true;
+    static const char* prot[] = {
+        "bin/updater.exe", "bin/updater.new", "bin/updater.log", "bin/monitor_app.exe"
+    };
+    for (int i = 0; i < 4; i++) if (_stricmp(rel, prot[i]) == 0) return true;
+    return false;
+}
+
+// Recursively scan installDir\<subdir>; delete files whose relative path
+// (forward-slash, from installDir) is neither expected nor protected.
+static int sync_delete_dir(const char* installDir, const char* subdir) {
+    char searchPath[MAX_PATH];
+    snprintf(searchPath, MAX_PATH, "%s\\%s\\*", installDir, subdir);
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(searchPath, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return 0;
+    int removed = 0;
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        char rel[MAX_PATH];
+        snprintf(rel, MAX_PATH, "%s/%s", subdir, fd.cFileName);   // forward slash
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            removed += sync_delete_dir(installDir, rel);
+        } else if (!path_in_expected(rel) && !is_protected_rel(rel)) {
+            char full[MAX_PATH];
+            snprintf(full, MAX_PATH, "%s\\%s", installDir, rel);
+            if (DeleteFileA(full)) { ulog("  deleted stale: %s", rel); removed++; }
+            else ulog("  DELETE FAIL: %s (err=%lu)", rel, (unsigned long)GetLastError());
+        }
+    } while (FindNextFileA(hFind, &fd));
+    FindClose(hFind);
+    return removed;
+}
+
+// Load {install}\version.json (just copied from staging) and prune stale files.
+static void sync_deletions(const char* installDir) {
+    char vjPath[MAX_PATH];
+    snprintf(vjPath, MAX_PATH, "%s\\version.json", installDir);
+    FILE* f = fopen(vjPath, "rb");
+    if (!f) { ulog("sync_deletions: no install version.json -> skip"); return; }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (sz <= 0 || sz > 1024 * 1024) { fclose(f); ulog("sync_deletions: manifest size bad -> skip"); return; }
+    char* buf = (char*)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return; }
+    size_t rd = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[rd] = '\0';
+    g_expectedCount = manifest_paths(buf, g_expected, 256);
+    free(buf);
+    // NEVER treat an empty/unparsable manifest as "delete everything".
+    if (g_expectedCount <= 0) { ulog("sync_deletions: 0 expected paths -> skip (never delete-all)"); return; }
+    ulog("sync_deletions: %d expected files; scanning bin, frontend", g_expectedCount);
+    int removed = sync_delete_dir(installDir, "bin") + sync_delete_dir(installDir, "frontend");
+    ulog("sync_deletions: removed %d stale files", removed);
+}
+
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR lpCmdLine, int) {
     // Full path of this running updater image.
     GetModuleFileNameA(nullptr, g_selfPath, MAX_PATH);
@@ -253,6 +353,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR lpCmdLine, int) {
     ulog("copying staging -> install ...");
     int copied = copy_staging(stagingDir, installDir);
     ulog("copied %d files total", copied);
+
+    // Desired-state sync: prune install files no longer in the (freshly-copied)
+    // manifest. Whitelisted dirs only, protected files kept, no-op on empty manifest.
+    sync_deletions(installDir);
 
     char msg[256];
     snprintf(msg, sizeof(msg), "Update complete: %d files replaced.\nRestarting...", copied);
