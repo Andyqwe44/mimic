@@ -1121,7 +1121,8 @@ bool update_launch_updater() {
     // it from this non-elevated process via CreateProcess fails with
     // ERROR_ELEVATION_REQUIRED (740). ShellExecuteEx + "runas" raises the UAC
     // prompt so the updater runs elevated.
-    std::string params = "\"" + stagingDir + "\" " + std::to_string((unsigned long)pid);
+    // 铁律 9a: params do NOT quote the staging path (the updater strips quotes defensively).
+    std::string params = stagingDir + " " + std::to_string((unsigned long)pid);
     SHELLEXECUTEINFOA sei = {};
     sei.cbSize       = sizeof(sei);
     sei.fMask        = SEE_MASK_NOCLOSEPROCESS;
