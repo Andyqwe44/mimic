@@ -1237,25 +1237,39 @@ static bool relaunch_as_medium() {
         SID_IDENTIFIER_AUTHORITY sia = SECURITY_MANDATORY_LABEL_AUTHORITY;
         PSID pMed = nullptr;
         if (AllocateAndInitializeSid(&sia, 1, SECURITY_MANDATORY_MEDIUM_RID, 0, 0, 0, 0, 0, 0, 0, &pMed)) {
-            TOKEN_MANDATORY_LABEL tml = {};
-            tml.Label.Attributes = SE_GROUP_INTEGRITY;
-            tml.Label.Sid = pMed;
-            if (!SetTokenInformation(hNew, TokenIntegrityLevel, &tml,
-                    (DWORD)(sizeof(TOKEN_MANDATORY_LABEL) + GetLengthSid(pMed)))) {
-                LOG_ERROR("cmd", "relaunch_as_medium: SetTokenInformation(Medium IL) failed err=%lu — token stays High, process would be admin. Aborting downgrade.",
-                    (unsigned long)GetLastError());
-            } else {
-                wchar_t wexe[MAX_PATH] = {};
-                MultiByteToWideChar(CP_UTF8, 0, exePath, -1, wexe, MAX_PATH);
-                STARTUPINFOW si = {}; si.cb = sizeof(si);
-                PROCESS_INFORMATION pi = {};
-                if (CreateProcessAsUserW(hNew, wexe, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
-                    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-                    ok = true;
-                } else {
-                    LOG_ERROR("cmd", "relaunch_as_medium: CreateProcessAsUserW failed err=%lu",
+            // SetTokenInformation(TokenIntegrityLevel) requires a CONTIGUOUS
+            // buffer: TOKEN_MANDATORY_LABEL struct immediately followed by the
+            // SID data. The PSID in the struct must point to offset sizeof(*pTml)
+            // into this same buffer. Passing a struct with a PSID pointing to
+            // separately heap-allocated SID memory (AllocateAndInitializeSid)
+            // silently fails — SetTokenInformation returns TRUE but cannot find
+            // the SID, and the integrity level is never lowered. 铁律 ?: check
+            // EVERY API return and validate side-effects.
+            DWORD sidLen = GetLengthSid(pMed);
+            DWORD bufLen = sizeof(TOKEN_MANDATORY_LABEL) + sidLen;
+            BYTE* buf = (BYTE*)malloc(bufLen);
+            if (buf) {
+                TOKEN_MANDATORY_LABEL* pTml = (TOKEN_MANDATORY_LABEL*)buf;
+                pTml->Label.Attributes = SE_GROUP_INTEGRITY;
+                pTml->Label.Sid = (PSID)(buf + sizeof(TOKEN_MANDATORY_LABEL));
+                memcpy(buf + sizeof(TOKEN_MANDATORY_LABEL), pMed, sidLen);
+                if (!SetTokenInformation(hNew, TokenIntegrityLevel, pTml, bufLen)) {
+                    LOG_ERROR("cmd", "relaunch_as_medium: SetTokenInformation(Medium IL) failed err=%lu",
                         (unsigned long)GetLastError());
+                } else {
+                    wchar_t wexe[MAX_PATH] = {};
+                    MultiByteToWideChar(CP_UTF8, 0, exePath, -1, wexe, MAX_PATH);
+                    STARTUPINFOW si = {}; si.cb = sizeof(si);
+                    PROCESS_INFORMATION pi = {};
+                    if (CreateProcessAsUserW(hNew, wexe, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+                        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+                        ok = true;
+                    } else {
+                        LOG_ERROR("cmd", "relaunch_as_medium: CreateProcessAsUserW failed err=%lu",
+                            (unsigned long)GetLastError());
+                    }
                 }
+                free(buf);
             }
             FreeSid(pMed);
         }
