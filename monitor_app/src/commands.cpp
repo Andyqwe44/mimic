@@ -1239,14 +1239,23 @@ static bool relaunch_as_medium() {
     hLinked = tlt.LinkedToken;
     bool ok = false;
     if (hLinked) {
-        wchar_t wexe[MAX_PATH] = {};
-        MultiByteToWideChar(CP_UTF8, 0, exePath, -1, wexe, MAX_PATH);
-        STARTUPINFOW si = {}; si.cb = sizeof(si);
-        PROCESS_INFORMATION pi = {};
-        // Try primary-token approach first (DuplicateTokenEx → CreateProcessAsUserW).
+        // TokenLinkedToken is at SecurityIdentification level (too low for
+        // CreateProcessAsUserW / CreateProcessWithTokenW). Raise it to
+        // SecurityImpersonation, then duplicate to a primary token.
+        HANDLE hImp = nullptr;
+        if (DuplicateToken(hLinked, SecurityImpersonation, &hImp)) {
+            CloseHandle(hLinked);
+            hLinked = hImp;
+        }
         HANDLE hPrimary = nullptr;
         if (DuplicateTokenEx(hLinked, TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY, nullptr,
                 SecurityImpersonation, TokenPrimary, &hPrimary)) {
+            CloseHandle(hLinked);
+            hLinked = nullptr;
+            wchar_t wexe[MAX_PATH] = {};
+            MultiByteToWideChar(CP_UTF8, 0, exePath, -1, wexe, MAX_PATH);
+            STARTUPINFOW si = {}; si.cb = sizeof(si);
+            PROCESS_INFORMATION pi = {};
             if (CreateProcessAsUserW(hPrimary, wexe, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
                 CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
                 ok = true;
@@ -1255,20 +1264,11 @@ static bool relaunch_as_medium() {
                     (unsigned long)GetLastError());
             }
             CloseHandle(hPrimary);
+        } else {
+            LOG_ERROR("cmd", "relaunch_as_medium: DuplicateTokenEx(linked->primary) failed err=%lu",
+                (unsigned long)GetLastError());
         }
-        // Fallback: CreateProcessWithTokenW accepts impersonation tokens directly.
-        if (!ok) {
-            DWORD dupErr = GetLastError();
-            LOG("cmd", "relaunch_as_medium: DuplicateTokenEx/CreateProcessAsUserW path failed (last-err=%lu), trying CreateProcessWithTokenW", dupErr);
-            if (CreateProcessWithTokenW(hLinked, 0, wexe, nullptr, 0, nullptr, nullptr, &si, &pi)) {
-                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-                ok = true;
-            } else {
-                LOG_ERROR("cmd", "relaunch_as_medium: CreateProcessWithTokenW also failed err=%lu",
-                    (unsigned long)GetLastError());
-            }
-        }
-        CloseHandle(hLinked);
+        if (hLinked) CloseHandle(hLinked);
     } else {
         LOG_ERROR("cmd", "relaunch_as_medium: TokenLinkedToken not found — cannot launch normal process");
     }
