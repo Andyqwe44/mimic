@@ -34,7 +34,7 @@ function Build-Logger {
         Invoke-Native { cl.exe /nologo /EHsc /std:c++17 /source-charset:utf-8 /I "$Root\common\include" /I build `
                 /DGAM_BUILD_DLL /MT /c /Fo"build\logger.obj" logger.cpp } 'logger cl'
         Invoke-Native { rc.exe /nologo /I build /fo build\logger.res "$Root\common\version.rc" } 'logger rc'
-        Invoke-Native { link.exe /nologo /DLL /NXCOMPAT /DYNAMICBASE /OUT:build\logger.dll `
+        Invoke-Native { link.exe /nologo /DLL /NXCOMPAT /DYNAMICBASE /Brepro /OUT:build\logger.dll `
                 build\logger.obj build\logger.res /IMPLIB:build\logger.lib } 'logger link'
     }
     finally { Pop-Location }
@@ -129,7 +129,7 @@ function Build-Updater {
         New-Item -ItemType Directory -Force -Path 'build' | Out-Null
         # --% (stop-parsing) passes the rest verbatim to cl — avoids PowerShell
         # mangling the /MANIFESTUAC quotes. The whole line is literal (no PS vars).
-        cl.exe --% /nologo /EHsc /std:c++17 /source-charset:utf-8 /DNDEBUG /O2 /GS- /Gy /Gw /MT /Fobuild\updater.obj /Fe:build\updater.exe updater.cpp advapi32.lib shell32.lib user32.lib kernel32.lib /link /OPT:REF /OPT:ICF /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'"
+        cl.exe --% /nologo /EHsc /std:c++17 /source-charset:utf-8 /DNDEBUG /O2 /GS- /Gy /Gw /MT /Fobuild\updater.obj /Fe:build\updater.exe updater.cpp advapi32.lib shell32.lib user32.lib kernel32.lib /link /OPT:REF /OPT:ICF /Brepro /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'"
         if ($LASTEXITCODE) { throw 'updater: build failed' }
     }
     finally { Pop-Location }
@@ -159,7 +159,7 @@ function Build-MonitorApp {
         $lflags = @('d3d11.lib', 'dxgi.lib', 'windowsapp.lib', 'user32.lib', 'gdi32.lib', 'ole32.lib',
             'oleaut32.lib', 'ws2_32.lib', 'windowscodecs.lib', 'dwmapi.lib', 'shell32.lib', 'shlwapi.lib',
             'winhttp.lib', 'bcrypt.lib', 'advapi32.lib')
-        $linkflags = if ($Dev) { @('/DEBUG:FULL') } else { @('/OPT:REF', '/OPT:ICF') }
+        $linkflags = if ($Dev) { @('/DEBUG:FULL') } else { @('/OPT:REF', '/OPT:ICF', '/Brepro') }
         $srcs = @('src\main.cpp', 'src\commands.cpp', 'src\virtual_desktop.cpp', 'src\paths.cpp', 'src\sha256_util.cpp')
         $libs = @('dep\WebView2LoaderStatic.lib', "$Root\logger\build\logger.lib") +
         (@('common', 'wgc', 'gdi', 'pw', 'screen', 'desktop') | ForEach-Object { "$Root\capture\build\capture_$_.lib" }) +
