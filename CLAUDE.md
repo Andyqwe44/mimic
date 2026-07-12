@@ -530,15 +530,20 @@ lib/: bridge.ts, types.ts, constants.ts
 
 | 消费者 | 继承方式 |
 |--------|----------|
-| `monitor_app/app.rc` | `#include "src/version.h"` → `APP_VERSION` / `APP_VERSION_RC` |
-| `logger/logger.cpp` + 各 DLL | `Build.ps1`（`New-VerModuleHeader`）从 version.h 生成 `build/_ver_module.h`（给 RC 用） |
+| `monitor_app/app.rc` | `#include "src/version.h"` → `APP_VERSION` / `APP_VERSION_RC`（唯一嵌 app 版本的原生产物）|
+| `logger` 运行时 banner | monitor_app `capture_log_init("agent", APP_VERSION, …)` **运行时传参**（DLL 字节不含版本）|
 | `installer/setup.iss` | `Release.ps1` 读 version.h → `ISCC /DMyAppVersion=<ver>`，setup.iss 条件 define |
 | 前端 `App.tsx` | 运行时 `hostCall('get_version')`；构建时 `vite.config` 读 version.h → `__APP_VERSION__`（splash 秒显） |
 | `scripts/New-VersionJson.ps1` | `Get-AppVersion`（读 version.h）→ version.json |
 
+**⚠️ 原生 lib/DLL（logger/capture/input，共 12 个）版本已与 APP_VERSION 脱钩**（真增量更新，见 changelog
+2026-07-13）：其 VERSIONINFO 用 `Build.ps1` 的独立 `$LibVer`（模块版本，**改 lib 源码才手动 bump**），
+配 `/Brepro` 确定性 PE → app 版本 bump 不改 lib 字节 → 发版只重下 `monitor_app.exe`。**勿**把 lib 版本改回读
+version.h（会退回「每版全量下载」的假增量）。
+
 **改版本号步骤：**
 1. 编辑 `monitor_app/src/version.h`：修改 `APP_VERSION` 和 `APP_VERSION_RC`
-2. 重建所有 lib + app（构建脚本自动读取新版本）
+2. 重建 app（`Release.ps1` 自动读新版本；lib 版本无关，除非改了 lib 源码则先 bump `$LibVer`）
 3. 前端 `npm run build`（JS hash 自动更新）
 4. 组装 release 目录 + 生成 `version.json` + ISCC 打包
 
@@ -586,6 +591,19 @@ CLAUDE.md 只保留摘要和指向 CLAUDE.old.md 的引用。
 ## Changelog
 
 Full development history preserved in `CLAUDE.old.md`. Major milestones:
+- **2026-07-13 (DLL 版本与 APP_VERSION 解耦 — 真增量更新)**: 痛点:每次 bump APP_VERSION,12 个原生
+  DLL 的 VERSIONINFO 都嵌 app 版本 → sha256 全变 → 「增量更新」每版仍重下全部 DLL(假增量)。**根因三层**:
+  (1) `capture`/`input` 的 `link.exe` **漏了 `/Brepro`**(logger/app/updater 有)→ 非确定 PE 时间戳,同源码每
+  次 link 字节都变;(2) `New-VerModuleHeader` 给每 DLL 的 VERSIONINFO 写 `GAM_RC_STR=$Ver`(=APP_VERSION);
+  (3) `logger.cpp` ring banner 硬编码 `APP_VERSION` 宏(还和 file banner 用传入 `app_version` 参数不一致=小 bug)。
+  **修**:① `Build.ps1` 引入 `$LibVer`(模块版本,`logger`/`capture`/`input` 的 VERSIONINFO 用它,与 APP_VERSION
+  脱钩;改 lib 源码才 bump)+ capture/input link 补 `/Brepro`;② `logger.cpp` banner 改用传入 `app_version`
+  参数(monitor_app `capture_log_init("agent", APP_VERSION, …)` 运行时传,DLL 本身不含版本);③ `New-VerModuleHeader`
+  删 `#define APP_VERSION`。**双重实测验证**(`tmp/verify_*.ps1`):同源码连编两次 → 12/12 DLL sha256 一致
+  (`/Brepro` 生效);临时 bump version.h 0.3.23→9.9.9 重编 → 12/12 lib DLL **字节不变**(脱钩),version.h 自动恢复。
+  **效果**:此后发版增量货 = `monitor_app.exe`(+前端若改),12 lib 冻结;`version.json` 逐文件 sha 比对天然只
+  下变的文件,`check_update` 零改动。**一次性迁移成本**:下次发版这 12 lib 因构建方式变(去宏/`$LibVer`/`/Brepro`)
+  相对线上会变一次,之后永久冻结。commit `f1fa213`(未发,随下个版本发布)。
 - **2026-07-13 (0.3.23 降级终于通 — Raymond Chen explorer-shellview)**: 0.3.22 `CoCreateInstance(CLSID_Shell)`
   实测炸 `0x80040154 REGDB_E_CLASSNOTREG`——CLSID_Shell 只注册 InProcServer32,无 LOCAL_SERVER;且 in-proc Shell
   对象跑在**自己 High IL**,`ShellExecute` 出来仍是管理员,根本不降级。**正解**(`commands.cpp`
