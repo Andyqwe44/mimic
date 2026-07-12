@@ -45,6 +45,10 @@ log/
 **/log/
 ai/logs/
 
+# === Secrets ===
+# Update-signing private key (public key lives in monitor_app/src/update_pubkey.h)
+scripts/.signing/
+
 # === Temp / Scratch ===
 tmp/
 *.tmp

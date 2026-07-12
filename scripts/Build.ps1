@@ -166,7 +166,7 @@ function Build-MonitorApp {
             'oleaut32.lib', 'ws2_32.lib', 'windowscodecs.lib', 'dwmapi.lib', 'shell32.lib', 'shlwapi.lib',
             'winhttp.lib', 'bcrypt.lib', 'advapi32.lib')
         $linkflags = if ($Dev) { @('/DEBUG:FULL') } else { @('/OPT:REF', '/OPT:ICF', '/Brepro') }
-        $srcs = @('src\main.cpp', 'src\commands.cpp', 'src\virtual_desktop.cpp', 'src\paths.cpp', 'src\sha256_util.cpp')
+        $srcs = @('src\main.cpp', 'src\commands.cpp', 'src\virtual_desktop.cpp', 'src\paths.cpp', 'src\sha256_util.cpp', 'src\update_verify.cpp')
         $libs = @('dep\WebView2LoaderStatic.lib', "$Root\logger\build\logger.lib") +
         (@('common', 'wgc', 'gdi', 'pw', 'screen', 'desktop') | ForEach-Object { "$Root\capture\build\capture_$_.lib" }) +
         (@('common', 'sendinput', 'winapi', 'postmessage', 'driver') | ForEach-Object { "$Root\input\build\input_$_.lib" })

@@ -12,6 +12,7 @@
 #include "paths.h"
 #include "version.h"
 #include "sha256_util.h"
+#include "update_verify.h"
 #include "../../logger/logger.h"
 #include "../../capture/include/capture_methods.h"
 #include "../../capture/include/capture_wgc_ffi.h"
@@ -1445,6 +1446,23 @@ static std::string cmd_check_update(bool forceFull) {
                    ",\"latest\":\"" + json_escape(latest) + "\""
                    ",\"download_url\":\"" + json_escape(relUrl) + "\"}";
         }
+
+        // Manifest signature (P2, ECDSA P-256). Gradual rollout: an UNSIGNED
+        // manifest (empty "sig") → WARN + proceed (back-compat with pre-signing
+        // releases); a SIGNED manifest MUST verify against the embedded public key
+        // or we refuse the update (铁律 5 — never apply an unverifiable payload).
+        if (update_manifest_is_signed(remoteManifest)) {
+            if (!update_verify_manifest(remoteManifest)) {
+                LOG_ERROR("cmd", "check_update: manifest signature INVALID - refusing update");
+                return "{\"ok\":false,\"error\":\"manifest signature invalid - refusing update\""
+                       ",\"current\":\"" + json_escape(current) + "\""
+                       ",\"latest\":\"" + json_escape(latest) + "\"}";
+            }
+            LOG("cmd", "check_update: manifest signature OK");
+        } else {
+            LOG_WARN("cmd", "check_update: manifest unsigned - skipping signature check");
+        }
+
         // download_base: build every file URL from this (server can move host/CDN
         // without a client rebuild). message/mandatory: server steers the UI.
         downloadBase = json_val(remoteManifest, "download_base");
@@ -1549,6 +1567,7 @@ static void download_thread_func(std::string diffJsonStr, std::string stagingDir
     int index = 0;
     ULONGLONG lastPost = 0;
     bool ok = true;
+    std::string firstUrl, firstPath;   // first file's url/path → derive download_base (P1a)
 
     size_t pos = 0;
     while ((pos = diffJsonStr.find("\"path\"", pos)) != std::string::npos) {
@@ -1558,6 +1577,7 @@ static void download_thread_func(std::string diffJsonStr, std::string stagingDir
         pos++;
         if (filePath.empty() || dlUrl.empty()) continue;
         index++;
+        if (firstUrl.empty()) { firstUrl = dlUrl; firstPath = filePath; }
 
         {
             std::lock_guard<std::mutex> lk(g_up_mtx);
@@ -1620,6 +1640,29 @@ static void download_thread_func(std::string diffJsonStr, std::string stagingDir
         }
         LOG("cmd", "download_update: wrote %s (%zu bytes)", filePath.c_str(), data.size());
         post();
+    }
+
+    // P1a: stage the manifest (version.json) so the updater can refresh the install
+    // manifest AND learn the desired file set (for deletion sync). Derive the download
+    // base from the first file's URL (dlUrl == base + filePath). No sha check — it IS
+    // the manifest. Failure is non-fatal (WARN): the update still applies additively.
+    if (ok && index > 0 && !firstUrl.empty() && firstUrl.size() > firstPath.size()
+        && firstUrl.compare(firstUrl.size() - firstPath.size(), firstPath.size(), firstPath) == 0) {
+        std::string base = firstUrl.substr(0, firstUrl.size() - firstPath.size());
+        std::string vj = winhttp_get_str(base + "version.json", "update");
+        if (!vj.empty()) {
+            std::string vjPath = stagingDir + "\\version.json";
+            FILE* vf = fopen(vjPath.c_str(), "wb");
+            if (vf) {
+                fwrite(vj.data(), 1, vj.size(), vf);
+                fclose(vf);
+                LOG("cmd", "download_update: staged version.json (%zu bytes)", vj.size());
+            } else {
+                LOG_WARN("cmd", "download_update: cannot write staged version.json");
+            }
+        } else {
+            LOG_WARN("cmd", "download_update: version.json fetch empty - install manifest stays stale");
+        }
     }
 
     {
