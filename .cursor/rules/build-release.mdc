@@ -1,0 +1,41 @@
+---
+description: 构建、版本号、发布与增量更新约定
+globs: scripts/**/*.ps1,installer/**/*.iss,release/**/*.json,monitor_app/src/version.h,docs/auto-update.md
+alwaysApply: false
+---
+
+# Build & Release
+
+## 版本（铁律 8）
+
+**只改** `monitor_app/src/version.h` 的 `APP_VERSION`。  
+`app.rc` / installer / 前端 `__APP_VERSION__` / `version.json` 均由此继承。
+
+原生 lib/DLL（logger/capture/input）用 `Build.ps1` 的 `$LibVer` + `/Brepro`，**不要**绑回 `version.h`（否则假增量、每版全量下载）。
+
+## 构建（全 PowerShell）
+
+```powershell
+powershell -File scripts\Build.ps1                         # 全部
+powershell -File scripts\Build.ps1 -Module monitor_app -Dev # → build_dev\bin\
+cd monitor_web; npm run dev                                # Vite :1420
+cd monitor_web; npm run build                              # 再 Build monitor_app prod
+```
+
+| | Dev | Prod |
+|---|---|---|
+| Macro | `DEV_MODE` | `NDEBUG` |
+| Out | `monitor_app/build_dev/bin/` | `monitor_app/build/{bin,frontend,config}` |
+
+单实例：exit code `2` = 已在运行（已前置窗口）。Dev/Prod mutex 分离，可共存。
+
+## 一键发布
+
+```powershell
+# 先 bump version.h
+powershell -File scripts\Release.ps1          # build→verify→git→Gitee
+powershell -File scripts\Release.ps1 -DryRun  # 不 push/发
+```
+
+增量货在 git：`release/GameAgentMonitor/` + `version.json`（raw URL 下载，非 Release 附件）。  
+详踩坑：`docs/auto-update.md`。

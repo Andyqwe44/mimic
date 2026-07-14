@@ -1,0 +1,47 @@
+---
+description: monitor_web 前端 — Tooltip、design tokens、i18n、className 规则
+globs: monitor_web/**/*.ts,monitor_web/**/*.tsx,monitor_web/**/*.css
+alwaysApply: false
+---
+
+# monitor_web
+
+## Tooltip
+
+禁止原生 `title=`。一律：
+
+```tsx
+<Tooltip text={t('some.key')}>
+  <button>...</button>
+</Tooltip>
+```
+
+## i18n
+
+`constants.ts` 里 `STATE_LABEL` / `CAPTURE_MODES.label|desc` 等存的是 **key**，渲染必须 `t(...)`。
+
+```tsx
+// ✅
+{t(STATE_LABEL[winState] || winState)}
+{t(m.label)}  /  text={t(m.desc)}
+// ❌ 直接渲染 key 字符串
+{STATE_LABEL[winState]}
+```
+
+参考：`MonitorView` / `SettingsView` 的 `t()` 用法。
+
+## 设计令牌 — `src/lib/design.ts`
+
+可复用尺寸/间距/字号/圆角必须来自 `design.ts`（`H` `GAP` `TEXT` `RADIUS` `MODAL_W` `BTN_SIZE_CLASS`…）。禁止在新组件里散落 magic Tailwind。
+
+## className 禁止静默覆盖
+
+外部 `className` **不得**覆盖组件内部的 `h-*`/`w-*`/`px-*`/`text-*`/`bg-*` 等原子类（Tailwind 声明顺序不确定）。
+
+- 尺寸 → 组件 `size` prop（如 `ActionBtn`）
+- 颜色 → `variant` prop
+- `className` 仅布局：`flex-1` `shrink-0` `self-center`
+
+## Bridge
+
+`hostCall` 已 unwrap `{id, result}`；SharedBuffer 用 `e.additionalData`（对象，非 `getAdditionalData()`）。

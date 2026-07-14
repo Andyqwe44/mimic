@@ -1,0 +1,43 @@
+---
+description: C++ 后端 — LOG 专用、铁律5 方法路由、WebMessage 命令
+globs: monitor_app/**/*.{cpp,h},capture/**/*.{cpp,h},input/**/*.{cpp,h},logger/**/*.{cpp,h},updater/**/*.{cpp,h},protocol/**/*.h
+alwaysApply: false
+---
+
+# C++ Backend
+
+## 日志（唯一合法方式）
+
+```cpp
+#include "logger/logger.h"
+LOG_ERROR("tag", "format", args...);
+LOG_WARN("tag", "format", args...);
+LOG("tag", "format", args...);        // INFO
+LOG_DEBUG("tag", "format", args...);  // Dev only
+```
+
+禁用：`printf` / `fprintf` / `std::cout` / `std::cerr` / `puts` / `WriteConsole` / `OutputDebugString`（仅 `logger/logger.cpp` 例外）。
+
+常用 tag：`wgc` `dxgi` `cmd` `main` `mjpeg` `ui` `agent`。
+
+## 铁律 5 — 方法路由
+
+**前端决定 method，C++ 只执行。** 禁止静默 fallback / 改写参数 / 谎报 method。
+
+单帧示例：
+- `wgc` + hwnd=0 → **error**（桌面用 `wgc-monitor` 或前端选 `dxgi`）
+- unknown method → **error**，不要 DesktopBlt 链
+
+流：`dxgi` stream 未实现 → 返回 error，不要偷偷换成 WGC。
+
+## WebMessage
+
+`hostCall(cmd, args)` ↔ `HandleWebMessage` → `{"id", "result"}`；失败显式 error。
+
+关键：`list_windows` / `capture_window` / `capture_stream_*` / `send_input` / `get_version` / `read_live_log`。
+
+## Windows 路径（铁律 9）
+
+- `ShellExecuteEx`/`CreateProcess` 的 `lpParameters`：**路径不加引号**
+- 接收端：解析后立刻剥两端 `"`
+- 路径拼接用 `snprintf(..., "%s\\%s", ...)`；目录勿尾 `\\`（除 `"\\*"`）

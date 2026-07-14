@@ -1,5 +1,17 @@
 # CLAUDE.md — TicTacToe → General Visual Game AI
 
+## Recent Changes (2026-07-14) — i18n render fix + Cursor rules
+
+### Fix: STATE_LABEL / CAPTURE_MODES raw i18n keys in UI
+- `ConnectionPanel`: wrap `STATE_LABEL[winState]` with `t()` (was showing `state.desktop` etc.)
+- `TargetPickerModal`: wrap `CAPTURE_MODES` `label`/`desc` with `t()` in Tooltip + spans (match SettingsView / MonitorView)
+
+### Cursor project context
+- Added `.cursor/rules/`: `project-core.mdc` (alwaysApply), `cpp-backend.mdc`, `monitor-web.mdc`, `build-release.mdc`
+- Distilled from CLAUDE.md; CLAUDE.md 铁律 7 notes Cursor rules as complementary
+
+---
+
 ## Recent Changes (2026-07-11) — Update system overhaul (v0.3.5)
 
 「进度条」需求扩成一次更新系统改造，并根治 updater 自替换死循环。

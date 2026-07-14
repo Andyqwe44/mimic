@@ -99,7 +99,7 @@ export function ConnectionPanel({
           </span>
           <span className="text-sm font-medium text-text-primary shrink-0">{t('connection.title')}</span>
           <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">
-            {STATE_LABEL[winState] || winState}
+            {t(STATE_LABEL[winState] || winState)}
           </span>
           <span className="text-[11px] font-medium text-accent bg-accent/10 px-1.5 py-0.5 rounded shrink-0">
             {METHOD_SHORT[recommendedMethod] || recommendedMethod}

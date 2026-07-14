@@ -138,6 +138,7 @@ v0.3.0 — pure C++ WebView2 host, zero Rust.
 
 ```
 tictactoe/
+├── .cursor/rules/                # Cursor project rules (.mdc) — core / cpp / web / build
 ├── logger/                       # Unified C++ logging engine (C API)
 │   ├── logger.h                  capture_log_write_msg — THE ONE write function
 │   ├── logger.cpp                Thread-safe file + ring buffer implementation
