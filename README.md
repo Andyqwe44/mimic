@@ -22,6 +22,8 @@ Desktop monitor for visual game AI — **pixels in, actions out**.
 
 **Zero Rust. Single MSVC command builds everything.**
 
+Agent context: Cursor loads `.cursor/rules/*.mdc` (iron laws + scoped C++/web/build rules). Long-form docs: `CLAUDE.md` / `AGENTS.md`.
+
 | Language | Role |
 |----------|------|
 | C++17 | Host: Win32 window, WebView2, capture, SharedBuffer, stream bridge, TCP, logging |

@@ -309,13 +309,13 @@ export function TargetPickerModal({
                 {t('targetPicker.mode_description')}
               </div>
               {CAPTURE_MODES.map((m) => (
-                <Tooltip key={m.v} text={m.desc}>
+                <Tooltip key={m.v} text={t(m.desc)}>
                 <button
                   onClick={() => handlePickMode(m.method, m.v)}
                   className="w-full flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-lg text-left transition-colors hover:bg-bg-hover border border-border"
                 >
-                  <span className="text-sm font-medium text-text-primary">{m.label}</span>
-                  <span className="text-xs text-text-muted">{m.desc}</span>
+                  <span className="text-sm font-medium text-text-primary">{t(m.label)}</span>
+                  <span className="text-xs text-text-muted">{t(m.desc)}</span>
                 </button>
                 </Tooltip>
               ))}
