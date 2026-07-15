@@ -2,10 +2,10 @@
     "schema":  2,
     "app":  "0.3.32",
     "channel":  "stable",
-    "released":  "2026-07-15T04:31:59.999Z",
+    "released":  "2026-07-15T04:42:23.482Z",
     "min_version":  "0.3.24",
     "mandatory":  false,
-    "message":  "",
+    "message":  "仓库已迁移到 mimic。本次可能是跳板升级的一步：安装完成后请再次点击「检查更新」。需要多轮手动操作才能升到最新版，只更新一次不等于已到最新。",
     "full_update":  false,
     "download_base":  "https://gitee.com/Andyqwe44/mimic/raw/v0.3.32/release/GameAgentMonitor/",
     "sources":  [
@@ -15,7 +15,7 @@
     "updater":  {
                     "path":  "bin/updater.exe"
                 },
-    "sig":  "zslbc+Xr21amsQXtbY2w747Q6sU1ENOS8bLgpKNxJVLLyiVB9g6LRxHk6LYRQ5fWRf2rzheRsQulB8xiIq5ZVg==",
+    "sig":  "fPnYExL8z1+O6XAGWeaWS+zcPTwAo4rZx2JiXW3aX9AHQ9b4Ndui2IGxb1zDhNVrjPgilOKWSaJHXj+jaJdB6A==",
     "files":  {
                   "bin/capture_common.dll":  {
                                                  "v":  "0.3.32",
@@ -79,8 +79,8 @@
                                      },
                   "bin/monitor_app.exe":  {
                                               "v":  "0.3.32",
-                                              "sha256":  "b42d0c9f6f3f904997f0fab77491bee766b06306a2cbbb82cf39426abcc6873b",
-                                              "size":  493056
+                                              "sha256":  "55946962a03bd2d813b85cdbc4c0f679adfc172e11566f1cf2e8501800655fd5",
+                                              "size":  493568
                                           },
                   "bin/updater.exe":  {
                                           "v":  "0.3.32",
@@ -94,19 +94,19 @@
                                       },
                   "config/settings.default.json":  {
                                                        "v":  "0.3.32",
-                                                       "sha256":  "988336c4d9ad613ce1195a2b44dc2c7df4af2301760684e134c657c8231dfe3a",
-                                                       "size":  451
+                                                       "sha256":  "997c97941a0fb0ede6719cd17ae4ccb63644bda12c43f793f6754a73addb6c2a",
+                                                       "size":  432
                                                    },
-                  "frontend/assets/index-BGGwIAzJ.css":  {
-                                                             "v":  "0.3.32",
-                                                             "sha256":  "cf9a031521acf36235d41201313095febda75c78c81c67aa7c80857859bf0851",
-                                                             "size":  39796
-                                                         },
-                  "frontend/assets/index-blXmTGg3.js":  {
+                  "frontend/assets/index-B_2c8hvH.js":  {
                                                             "v":  "0.3.32",
-                                                            "sha256":  "bf76ed1090d9d579315ce44ee2669542db66f5a643609b07e4de9e208dcc9325",
-                                                            "size":  444414
+                                                            "sha256":  "089f063a1869f1f2854a07a98b58330e35d9a4609f0fb56eb86dda0cdfeb3804",
+                                                            "size":  447962
                                                         },
+                  "frontend/assets/index-BW73RtIx.css":  {
+                                                             "v":  "0.3.32",
+                                                             "sha256":  "d627c5492030d54c9ce5c81e3aea9d2830b21fdce69d2864408af44ea84774ca",
+                                                             "size":  39839
+                                                         },
                   "frontend/favicon.svg":  {
                                                "v":  "0.3.32",
                                                "sha256":  "61bc9a161de58248288e6905425d7180f0624c2865007b97d763fdac12043a66",
@@ -119,8 +119,9 @@
                                          },
                   "frontend/index.html":  {
                                               "v":  "0.3.32",
-                                              "sha256":  "0442551a55384c8e0c4d058d47c5729898125afe68f679b4ecbf397496b28b6a",
+                                              "sha256":  "e10c8417dc5ce8510f064d4384a6be07cc60b0ab731d9fde2ceb87eab46c8b59",
                                               "size":  461
                                           }
-              }
+              },
+    "jump_pad":  "0.3.31"
 }

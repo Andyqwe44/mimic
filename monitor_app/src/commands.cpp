@@ -1535,6 +1535,7 @@ static std::string cmd_check_update(bool forceFull) {
     bool useFull = forceFull;
     std::string message = changelog, downloadBase;
     bool mandatory = false;
+    std::string jumpPad = json_val(remoteManifest, "jump_pad");
 
     if (hasUpdate) {
         downloadBase = json_val(remoteManifest, "download_base");
@@ -1657,6 +1658,7 @@ static std::string cmd_check_update(bool forceFull) {
         + ",\"mode\":\"" + (useFull ? "full" : "incremental") + "\""
         + ",\"mandatory\":" + (mandatory ? "true" : "false")
         + ",\"message\":\"" + json_escape(message) + "\""
+        + ",\"jump_pad\":\"" + json_escape(jumpPad) + "\""
         + ",\"diff\":" + diffJson
         + stagingStateJson + "}";
 }

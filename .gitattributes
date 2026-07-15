@@ -15,3 +15,13 @@
 *.cmd  text eol=crlf
 *.bat  text eol=crlf
 *.ps1  text eol=crlf
+
+# Release package text must match Gitee/GitHub raw (LF). CRLF on disk ⇒
+# New-VersionJson hashes CRLF but clients download LF → SHA256 mismatch.
+*.json text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.js   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+release/** text eol=lf
