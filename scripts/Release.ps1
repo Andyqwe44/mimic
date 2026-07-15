@@ -84,9 +84,24 @@ try {
     if ($LASTEXITCODE) { throw "git push main failed (exit $LASTEXITCODE)" }
     git push -f origin "refs/tags/v${ver}" 2>&1 | Write-Host   # force: overwrite a stale remote tag
     if ($LASTEXITCODE) { throw "git tag push failed (exit $LASTEXITCODE)" }
+
+    # Best-effort GitHub mirror sync (origin=Gitee mimic is source of truth).
+    # Failure must NOT block the Gitee release — China networks may block github.com.
+    git push github main 2>&1 | Write-Host
+    if ($LASTEXITCODE) {
+        Write-Warn2 "git push github main failed (exit $LASTEXITCODE) — Gitee release continues"
+    } else {
+        Write-Ok 'pushed github main'
+    }
+    git push -f github "refs/tags/v${ver}" 2>&1 | Write-Host
+    if ($LASTEXITCODE) {
+        Write-Warn2 "git push github tag failed (exit $LASTEXITCODE) — Gitee release continues"
+    } else {
+        Write-Ok "pushed github v$ver"
+    }
 }
 finally { $ErrorActionPreference = $eap }
-Write-Ok "pushed main + v$ver"
+Write-Ok "pushed origin main + v$ver"
 
 # 8. Publish the Gitee Release + installer.
 & "$PSScriptRoot\Publish.ps1" -Version $ver
