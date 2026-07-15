@@ -1,15 +1,19 @@
-# New-VersionJson.ps1 — generate <ReleaseDir>\version.json (schema v3).
+# New-VersionJson.ps1 — generate <ReleaseDir>\version.json (schema v2/v3).
 #
 # Walks the release dir, computes SHA256 + size per file, writes the manifest.
 # lowercase hex hashes, forward-slash paths, files sorted, no-BOM UTF-8.
 # version.json itself is excluded from the walk.
 #
 #   powershell -File scripts\New-VersionJson.ps1 -ReleaseDir release\GameAgentMonitor -Version 0.3.32 [-Full]
+#   -Schema 2  # transitional: 0.3.31 (KNOWN_SCHEMA=2) can still incremental-update
+#   -Schema 3  # signs download_base + sources; requires clients ≥0.3.32
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$ReleaseDir,
     [Parameter(Mandatory)][string]$Version,
+    [ValidateSet(2, 3)]
+    [int]$Schema = 2,                    # default 2 until fleet is on ≥0.3.32; then flip Release.ps1 to 3
     [switch]$Full,                       # mark as a FULL (non-incremental) update
     [string]$MinVersion = '0.3.24',      # BASELINE: clients below this can't incrementally update (must full-install).
                                          # Bump ONLY when the update mechanism itself becomes incompatible — NOT per release.
@@ -38,17 +42,14 @@ foreach ($e in $entries) {
     $files[$e.Rel] = [ordered]@{ v = $Version; sha256 = $e.Sha256; size = $e.Size }
 }
 
-# ── Manifest signature (ECDSA P-256, schema v3) ──
+# ── Manifest signature (ECDSA P-256) ──
 # Canonical digest MUST match update_verify.cpp build_canon:
-#   schema=3\n
-#   app=<ver>\n
-#   download_base=<url>\n
-#   source=<url>\n   (each source, ordinal-sorted)
-#   <path>\n<sha256>\n ...
+#   schema ≤2: <path>\n<sha256>\n ...  (files only)
+#   schema ≥3: schema=/app=/download_base=/source=* + files
 $sig = ''
 $tag = "v$Version"
 $downloadBase = "https://gitee.com/Andyqwe44/mimic/raw/$tag/release/GameAgentMonitor/"
-# Discovery URLs for "latest" manifest (main tip). Clients persist & prefer these.
+# Discovery URLs for "latest" manifest (main tip). Clients ≥0.3.32 persist & prefer these.
 $sources = [System.Collections.ArrayList]@(
     'https://gitee.com/Andyqwe44/mimic/raw/main/release/GameAgentMonitor/version.json',
     'https://raw.githubusercontent.com/Andyqwe44/Mimic/main/release/GameAgentMonitor/version.json'
@@ -61,11 +62,13 @@ if (Test-Path $privPath) {
     $rels.Sort([System.StringComparer]::Ordinal)
     $shaMap = @{}; foreach ($e in $entries) { $shaMap[$e.Rel] = $e.Sha256 }
     $csb = New-Object System.Text.StringBuilder
-    [void]$csb.Append("schema=3`n")
-    [void]$csb.Append("app=$Version`n")
-    [void]$csb.Append("download_base=$downloadBase`n")
-    foreach ($src in $sources) {
-        [void]$csb.Append("source=$src`n")
+    if ($Schema -ge 3) {
+        [void]$csb.Append("schema=$Schema`n")
+        [void]$csb.Append("app=$Version`n")
+        [void]$csb.Append("download_base=$downloadBase`n")
+        foreach ($src in $sources) {
+            [void]$csb.Append("source=$src`n")
+        }
     }
     foreach ($r in $rels) {
         [void]$csb.Append($r);          [void]$csb.Append("`n")
@@ -83,13 +86,13 @@ if (Test-Path $privPath) {
     $ecp.Q = $pt
     $signer = [System.Security.Cryptography.ECDsa]::Create($ecp)
     $sig = [Convert]::ToBase64String($signer.SignHash($hash))   # IEEE P1363 r||s (64B)
-    Write-Host "manifest signed (ECDSA P-256 schema=3, $($rels.Count) files, $($sources.Count) sources)" -ForegroundColor DarkGray
+    Write-Host "manifest signed (ECDSA P-256 schema=$Schema, $($rels.Count) files, $($sources.Count) sources)" -ForegroundColor DarkGray
 } else {
     Write-Host "no signing key ($privPath) -> manifest unsigned (sig='')" -ForegroundColor DarkYellow
 }
 
 $manifest = [ordered]@{
-    schema        = 3
+    schema        = $Schema
     app           = $Version
     channel       = $Channel
     released      = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
@@ -99,7 +102,7 @@ $manifest = [ordered]@{
     full_update   = [bool]$Full
     # Tag-pinned file download base (immutable per release).
     download_base = $downloadBase
-    # Manifest discovery URLs — clients try these after compile-time bootstrap.
+    # Present even on schema 2: 0.3.31 ignores; ≥0.3.32 persists for multi-source.
     sources       = @($sources)
     updater       = [ordered]@{ path = 'bin/updater.exe' }
     sig           = $sig
@@ -110,4 +113,4 @@ $json = $manifest | ConvertTo-Json -Depth 6
 $outPath = Join-Path $root 'version.json'
 [System.IO.File]::WriteAllText($outPath, $json, [System.Text.UTF8Encoding]::new($false))
 
-Write-Host "version.json written (schema=3, $($entries.Count) files)" -ForegroundColor Green
+Write-Host "version.json written (schema=$Schema, $($entries.Count) files)" -ForegroundColor Green

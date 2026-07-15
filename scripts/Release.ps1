@@ -44,7 +44,9 @@ foreach ($sub in 'bin', 'frontend', 'config') {
 Write-Ok 'release\GameAgentMonitor'
 
 # 4. version.json (SHA256 manifest).
-& "$PSScriptRoot\New-VersionJson.ps1" -ReleaseDir $rel -Version $ver
+# Schema 2 (default): 0.3.31 jump-pad clients (KNOWN_SCHEMA=2) can still incremental-update.
+# Flip to -Schema 3 only after the fleet is on ≥0.3.32 (otherwise they get needs_full_installer).
+& "$PSScriptRoot\New-VersionJson.ps1" -ReleaseDir $rel -Version $ver -Schema 2
 
 # 5. Installer (Inno Setup).
 Write-Step 'installer (ISCC)'
