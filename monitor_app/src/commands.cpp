@@ -1344,6 +1344,8 @@ static std::string cmd_switch_permission(bool toAdmin) {
     return R"({"ok":true,"changed":true})";
 }
 
+static std::string cmd_set_setting(const std::string& key, const std::string& valueLiteral);
+static const char* get_settings_path();
 // Compare dotted numeric versions: version_lt("0.3.7","0.3.10") == true.
 // Missing trailing segments count as 0. Non-digits within a segment are ignored.
 static bool version_lt(const std::string& a, const std::string& b) {
@@ -1362,114 +1364,182 @@ static bool version_lt(const std::string& a, const std::string& b) {
 // Highest manifest schema this client understands. A remote manifest with a
 // higher "schema" means the update needs a newer bootstrap → tell the user to
 // install the full package rather than guessing at fields we don't know.
-static const int KNOWN_SCHEMA = 2;
+static const int KNOWN_SCHEMA = 3;
 
-// check_update — query Gitee for latest release; per-file diff by sha256.
-// forceFull (or remote "full_update":true) → include every file (full package).
-static std::string cmd_check_update(bool forceFull) {
-    // Dev/test override: GAM_UPDATE_TAG points the check at an explicit tag and
-    // skips the releases API, so the update chain can be exercised against any
-    // pushed tag (even a non-latest "test" tag) without publishing a release.
-    std::string tag, name, changelog;
+// Compile-time bootstrap URLs for "latest" manifest discovery (main tip).
+// After a successful check, remote "sources" are persisted to settings and
+// tried first on subsequent runs — so the server can rotate hosts without a
+// client rebuild. These are factory defaults only.
+static const char* BOOTSTRAP_MANIFEST_URLS[] = {
+    "https://gitee.com/Andyqwe44/mimic/raw/main/release/GameAgentMonitor/version.json",
+    "https://raw.githubusercontent.com/Andyqwe44/Mimic/main/release/GameAgentMonitor/version.json",
+    nullptr
+};
+
+// Extract quoted strings from a JSON string-array value for `key`.
+static void parse_json_str_array(const std::string& m, const char* key,
+                                 std::vector<std::string>& out) {
+    std::string k = "\""; k += key; k += "\"";
+    size_t p = m.find(k);
+    if (p == std::string::npos) return;
+    p = m.find('[', p + k.size());
+    if (p == std::string::npos) return;
+    int depth = 0;
+    for (size_t i = p; i < m.size(); i++) {
+        char c = m[i];
+        if (c == '[') depth++;
+        else if (c == ']') { depth--; if (depth == 0) break; }
+        else if (depth == 1 && c == '"') {
+            size_t e = i + 1;
+            while (e < m.size() && !(m[e] == '"' && m[e - 1] != '\\')) e++;
+            if (e >= m.size()) break;
+            out.push_back(m.substr(i + 1, e - i - 1));
+            i = e;
+        }
+    }
+}
+
+// Build the ordered candidate list: persisted sources first, then bootstrap
+// (deduped). GAM_UPDATE_TAG override (if set) replaces the list with a single
+// tag-pinned raw URL for isolated update-chain testing.
+static void build_manifest_urls(std::vector<std::string>& urls) {
     char tagEnv[128] = {};
     DWORD tagEnvLen = GetEnvironmentVariableA("GAM_UPDATE_TAG", tagEnv, sizeof(tagEnv));
     if (tagEnvLen > 0 && tagEnvLen < sizeof(tagEnv)) {
-        tag = tagEnv;
-        LOG_WARN("cmd", "check_update: GAM_UPDATE_TAG override -> %s (skipping releases API)", tag.c_str());
-    } else {
-        LOG("cmd", "check_update: querying Gitee API...");
-        std::string body = winhttp_get(
-            L"https://gitee.com/api/v5/repos/Andyqwe44/mimic/releases/latest",
-            "update");
-        if (body.empty()) {
-            LOG("cmd", "check_update: HTTP request failed");
-            return R"({"ok":false,"error":"network request failed"})";
-        }
-        tag       = json_val(body, "tag_name");
-        name      = json_val(body, "name");
-        changelog = json_val(body, "body");
+        std::string u1 = "https://gitee.com/Andyqwe44/mimic/raw/";
+        u1 += tagEnv;
+        u1 += "/release/GameAgentMonitor/version.json";
+        urls.push_back(u1);
+        std::string u2 = "https://raw.githubusercontent.com/Andyqwe44/Mimic/";
+        u2 += tagEnv;
+        u2 += "/release/GameAgentMonitor/version.json";
+        urls.push_back(u2);
+        LOG_WARN("cmd", "check_update: GAM_UPDATE_TAG override -> %s", tagEnv);
+        return;
     }
-    // Strip leading 'v' for comparison
-    std::string latest = tag;
-    if (!latest.empty() && (latest[0] == 'v' || latest[0] == 'V'))
-        latest = latest.substr(1);
-    std::string current = APP_VERSION;
 
-    bool hasUpdate = !latest.empty() && latest != current;
-    std::string diffJson = "[]";
-    bool useFull = forceFull;
-    // Server-controllable policy (parsed from the manifest below); defaults are
-    // the safe no-op so an old (schema-1) manifest behaves exactly as before.
-    std::string message, downloadBase;
-    bool mandatory = false;
+    std::string settings = read_file(get_settings_path());
+    std::vector<std::string> persisted;
+    if (!settings.empty())
+        parse_json_str_array(settings, "updateSources", persisted);
+    for (size_t i = 0; i < persisted.size(); i++) {
+        if (persisted[i].empty()) continue;
+        bool dup = false;
+        for (size_t j = 0; j < urls.size(); j++)
+            if (urls[j] == persisted[i]) { dup = true; break; }
+        if (!dup) urls.push_back(persisted[i]);
+    }
+    for (int i = 0; BOOTSTRAP_MANIFEST_URLS[i]; i++) {
+        std::string u = BOOTSTRAP_MANIFEST_URLS[i];
+        bool dup = false;
+        for (size_t j = 0; j < urls.size(); j++)
+            if (urls[j] == u) { dup = true; break; }
+        if (!dup) urls.push_back(u);
+    }
+}
 
-    if (hasUpdate) {
-        // Fetch remote version.json from the release tag, with retries. The raw
-        // CDN can lag right after a release is published (302 propagation / tag
-        // raw not yet live). A transient miss must NEVER be reported as "no
-        // update" — that was the 0.3.x update-stuck bug.
-        std::string manifestUrl = "https://gitee.com/Andyqwe44/mimic/raw/";
-        manifestUrl += tag;
-        manifestUrl += "/release/GameAgentMonitor/version.json";
-        std::string remoteManifest;
+// Persist remote "sources" into settings so the next check prefers them.
+static void persist_update_sources(const std::string& manifest) {
+    std::vector<std::string> sources;
+    parse_json_str_array(manifest, "sources", sources);
+    if (sources.empty()) return;
+    std::string arr = "[";
+    for (size_t i = 0; i < sources.size(); i++) {
+        if (i) arr += ",";
+        arr += "\"" + json_escape(sources[i]) + "\"";
+    }
+    arr += "]";
+    cmd_set_setting("updateSources", arr);
+    LOG("cmd", "check_update: persisted %zu updateSources", sources.size());
+}
+
+// Try each candidate URL (with short retries) until a body containing "files"
+// arrives. Returns empty on total failure; *usedUrl (optional) gets the winner.
+static std::string fetch_remote_manifest(const std::vector<std::string>& urls,
+                                         std::string* usedUrl) {
+    for (size_t ui = 0; ui < urls.size(); ui++) {
+        const std::string& url = urls[ui];
         for (int attempt = 1; attempt <= 3; attempt++) {
-            remoteManifest = winhttp_get_str(manifestUrl, "update");
-            if (!remoteManifest.empty() && remoteManifest.find("\"files\"") != std::string::npos)
-                break;
-            LOG_WARN("cmd", "check_update: manifest attempt %d empty/invalid (len=%zu), retrying",
-                attempt, remoteManifest.size());
+            std::string body = winhttp_get_str(url, "update");
+            if (!body.empty() && body.find("\"files\"") != std::string::npos) {
+                if (usedUrl) *usedUrl = url;
+                LOG("cmd", "check_update: manifest ok from %s (attempt %d)",
+                    url.c_str(), attempt);
+                return body;
+            }
+            LOG_WARN("cmd", "check_update: manifest attempt %d empty/invalid (len=%zu) url=%s",
+                attempt, body.size(), url.c_str());
             Sleep(500);
         }
+    }
+    return "";
+}
 
-        // Hard-fail on a missing/invalid manifest. Return ok:false (NOT
-        // has_update + empty diff) so the UI shows a real error instead of a
-        // misleading "already latest / nothing to update". 铁律 5.
-        if (remoteManifest.empty() || remoteManifest.find("\"files\"") == std::string::npos) {
-            LOG_ERROR("cmd", "check_update: manifest fetch FAILED after retries (len=%zu) url=%s",
-                remoteManifest.size(), manifestUrl.c_str());
-            return "{\"ok\":false,\"error\":\"manifest fetch failed (network/CDN) - please retry\""
+// check_update — multi-source manifest fetch + per-file sha256 diff.
+// forceFull (or remote "full_update":true) → include every file (full package).
+// Discovery no longer depends on the Gitee releases API: any static host that
+// serves a signed version.json works (bootstrap + persisted sources).
+static std::string cmd_check_update(bool forceFull) {
+    LOG("cmd", "check_update: discovering remote manifest...");
+    std::vector<std::string> urls;
+    build_manifest_urls(urls);
+    if (urls.empty()) {
+        LOG_ERROR("cmd", "check_update: no manifest URLs configured");
+        return R"({"ok":false,"error":"no manifest URLs configured"})";
+    }
+
+    std::string usedUrl;
+    std::string remoteManifest = fetch_remote_manifest(urls, &usedUrl);
+    if (remoteManifest.empty() || remoteManifest.find("\"files\"") == std::string::npos) {
+        LOG_ERROR("cmd", "check_update: manifest fetch FAILED after all sources");
+        return R"({"ok":false,"error":"manifest fetch failed (network/CDN) - please retry"})";
+    }
+
+    // Latest version lives in the manifest itself (schema v2/v3 "app" field).
+    std::string latest = json_val(remoteManifest, "app");
+    if (!latest.empty() && (latest[0] == 'v' || latest[0] == 'V'))
+        latest = latest.substr(1);
+    std::string changelog = json_val(remoteManifest, "message");
+
+    // ── Validate schema + signature BEFORE trusting app/version (铁律 5) ──
+    std::string schemaStr = json_val(remoteManifest, "schema");
+    int remoteSchema = schemaStr.empty() ? 1 : atoi(schemaStr.c_str());
+    std::string current = APP_VERSION;
+    std::string tag = latest.empty() ? "" : ("v" + latest);
+    if (remoteSchema > KNOWN_SCHEMA) {
+        LOG_ERROR("cmd", "check_update: manifest schema %d > known %d - client too old for incremental",
+            remoteSchema, KNOWN_SCHEMA);
+        std::string relUrl = "https://gitee.com/Andyqwe44/mimic/releases/tag/" + tag;
+        return "{\"ok\":false,\"needs_full_installer\":true"
+               ",\"error\":\"this update needs a newer installer - please download the full package\""
+               ",\"current\":\"" + json_escape(current) + "\""
+               ",\"latest\":\"" + json_escape(latest) + "\""
+               ",\"download_url\":\"" + json_escape(relUrl) + "\"}";
+    }
+    if (update_manifest_is_signed(remoteManifest)) {
+        if (!update_verify_manifest(remoteManifest)) {
+            LOG_ERROR("cmd", "check_update: manifest signature INVALID - refusing update");
+            return "{\"ok\":false,\"error\":\"manifest signature invalid - refusing update\""
                    ",\"current\":\"" + json_escape(current) + "\""
                    ",\"latest\":\"" + json_escape(latest) + "\"}";
         }
+        LOG("cmd", "check_update: manifest signature OK");
+    } else {
+        LOG_WARN("cmd", "check_update: manifest unsigned - skipping signature check");
+    }
+    persist_update_sources(remoteManifest);
 
-        // ── Manifest schema v2 policy (all fields optional / forward-compatible) ──
-        // schema: reject a manifest newer than we understand rather than guessing.
-        std::string schemaStr = json_val(remoteManifest, "schema");
-        int remoteSchema = schemaStr.empty() ? 1 : atoi(schemaStr.c_str());
-        if (remoteSchema > KNOWN_SCHEMA) {
-            LOG_ERROR("cmd", "check_update: manifest schema %d > known %d - client too old for incremental",
-                remoteSchema, KNOWN_SCHEMA);
-            std::string relUrl = "https://gitee.com/Andyqwe44/mimic/releases/tag/" + tag;
-            return "{\"ok\":false,\"needs_full_installer\":true"
-                   ",\"error\":\"this update needs a newer installer - please download the full package\""
-                   ",\"current\":\"" + json_escape(current) + "\""
-                   ",\"latest\":\"" + json_escape(latest) + "\""
-                   ",\"download_url\":\"" + json_escape(relUrl) + "\"}";
-        }
+    std::string name = latest.empty() ? "" : ("v" + latest);
+    bool hasUpdate = !latest.empty() && latest != current;
+    std::string diffJson = "[]";
+    bool useFull = forceFull;
+    std::string message = changelog, downloadBase;
+    bool mandatory = false;
 
-        // Manifest signature (P2, ECDSA P-256). Gradual rollout: an UNSIGNED
-        // manifest (empty "sig") → WARN + proceed (back-compat with pre-signing
-        // releases); a SIGNED manifest MUST verify against the embedded public key
-        // or we refuse the update (铁律 5 — never apply an unverifiable payload).
-        if (update_manifest_is_signed(remoteManifest)) {
-            if (!update_verify_manifest(remoteManifest)) {
-                LOG_ERROR("cmd", "check_update: manifest signature INVALID - refusing update");
-                return "{\"ok\":false,\"error\":\"manifest signature invalid - refusing update\""
-                       ",\"current\":\"" + json_escape(current) + "\""
-                       ",\"latest\":\"" + json_escape(latest) + "\"}";
-            }
-            LOG("cmd", "check_update: manifest signature OK");
-        } else {
-            LOG_WARN("cmd", "check_update: manifest unsigned - skipping signature check");
-        }
-
-        // download_base: build every file URL from this (server can move host/CDN
-        // without a client rebuild). message/mandatory: server steers the UI.
+    if (hasUpdate) {
         downloadBase = json_val(remoteManifest, "download_base");
         message      = json_val(remoteManifest, "message");
         mandatory    = json_val(remoteManifest, "mandatory") == "true";
-        // min_version: a client older than this cannot incrementally cross a
-        // breaking change → force a full download of every file.
         std::string minVer = json_val(remoteManifest, "min_version");
         if (!minVer.empty() && version_lt(current, minVer)) {
             useFull = true;
@@ -1477,10 +1547,6 @@ static std::string cmd_check_update(bool forceFull) {
                 current.c_str(), minVer.c_str());
         }
 
-        // Read the local baseline manifest for the sha diff. Prefer the appdata
-        // copy (monitor_app rebuilds it at startup to match the running exe;
-        // Program Files isn't writable by a normal-user process), fall back to the
-        // installed one on first run.
         std::string installDir = paths_get_install_dir();
         std::string localPath = paths_get_appdata_dir() + "\\version.json";
         std::string localManifest = read_file(localPath.c_str());
@@ -1492,18 +1558,13 @@ static std::string cmd_check_update(bool forceFull) {
             LOG_WARN("cmd", "check_update: local manifest missing (%s) - all files count as changed",
                 localPath.c_str());
 
-        // Remote may force a full update (updater/protocol changed).
         if (json_val(remoteManifest, "full_update") == "true") useFull = true;
 
-        // Compare manifests: include files whose sha256 differs (or all, if full).
-        // remoteManifest is guaranteed non-empty and to contain "files" here.
         {
             diffJson = "[";
             bool first = true;
-            // Parse remote files object — extract each "path": {"v":..., ...}
             size_t filesPos = remoteManifest.find("\"files\"");
             if (filesPos != std::string::npos) {
-                // Walk through each file entry
                 size_t pos = remoteManifest.find("{", filesPos);
                 if (pos != std::string::npos) {
                     int depth = 0;
@@ -1511,7 +1572,6 @@ static std::string cmd_check_update(bool forceFull) {
                         if (remoteManifest[i] == '{') depth++;
                         else if (remoteManifest[i] == '}') { depth--; if (depth == 0) break; }
                         else if (depth == 1 && remoteManifest[i] == '"' && (i == pos+1 || remoteManifest[i-1] != '\\')) {
-                            // Start of a key (file path)
                             size_t keyEnd = remoteManifest.find("\"", i+1);
                             if (keyEnd == std::string::npos) break;
                             std::string filePath = remoteManifest.substr(i+1, keyEnd - i - 1);
@@ -1520,12 +1580,9 @@ static std::string cmd_check_update(bool forceFull) {
                                 localManifest.find("\"" + filePath + "\""));
                             std::string remoteVer = json_val(remoteManifest, "v", keyEnd);
                             std::string sz = json_val(remoteManifest, "size", keyEnd);
-                            // Incremental: content changed (sha differs). Full: everything.
                             bool changed = useFull || (!remoteSha.empty() && remoteSha != localSha);
                             if (changed) {
                                 if (!first) diffJson += ","; first = false;
-                                // Download URL from server-provided base (falls
-                                // back to the tag path for a schema-1 manifest).
                                 std::string dlUrl = !downloadBase.empty()
                                     ? downloadBase + filePath
                                     : ("https://gitee.com/Andyqwe44/mimic/raw/"
@@ -1543,21 +1600,24 @@ static std::string cmd_check_update(bool forceFull) {
             }
             diffJson += "]";
         }
+    } else {
+        // Even when up-to-date, refresh persisted sources from a good fetch so
+        // URL rotations still propagate without requiring an update.
+        persist_update_sources(remoteManifest);
     }
 
     size_t nDiff = (size_t)std::count(diffJson.begin(), diffJson.end(), '{');
     if (hasUpdate && nDiff == 0)
         LOG_WARN("cmd", "check_update: hasUpdate but 0 files differ - local already matches remote content");
-    LOG("cmd", "check_update: current=%s latest=%s hasUpdate=%d full=%d diff_files=%zu",
-        current.c_str(), latest.c_str(), (int)hasUpdate, (int)useFull, nDiff);
+    LOG("cmd", "check_update: current=%s latest=%s hasUpdate=%d full=%d diff_files=%zu source=%s",
+        current.c_str(), latest.c_str(), (int)hasUpdate, (int)useFull, nDiff, usedUrl.c_str());
 
-    // ── Staging state: check how many diff files are already in staging (resume info) ──
     std::string stagingStateJson;
     if (hasUpdate && nDiff > 0) {
         std::string stagingDir = paths_get_appdata_dir() + "\\staging";
         int doneFiles = 0;
         unsigned long long doneBytes = 0, totalBytes2 = 0;
-        std::string donePaths = "[";  // file paths already in staging with matching sha256
+        std::string donePaths = "[";
         size_t sp = 0;
         while ((sp = diffJson.find("\"path\"", sp)) != std::string::npos) {
             std::string fp = json_val(diffJson, "path", sp);

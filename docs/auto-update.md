@@ -1,9 +1,9 @@
 # 自动更新系统 (Auto-Update)
 
-> 一句话:用户点「检查更新」→ 从 Gitee 拉最新版 `version.json` → 逐文件从 **git raw URL** 下载到 staging →
-> sha256 校验 → **提权的独立 updater** 覆盖安装目录 → 重启新版。
+> 一句话:用户点「检查更新」→ 从 **多源 raw version.json** 拉最新 manifest（Gitee/GitHub/自建）→
+> 验签 → 逐文件从 **download_base** 下载到 staging → sha256 校验 → **提权的独立 updater** 覆盖安装目录 → 重启新版。
 >
-> 首次端到端跑通:**0.3.12 → 0.3.13**(2026-07-12)。
+> 首次端到端跑通:**0.3.12 → 0.3.13**(2026-07-12)。schema v3 多源：**0.3.32**。
 
 ---
 
@@ -13,14 +13,15 @@
 ┌─ 用户点 Check Update ─────────────────────────────────────────────┐
 │                                                                    │
 │  ① check_update (commands.cpp / cmd_check_update)                 │
-│     GET gitee.com/api/v5/.../releases/latest  → tag "v0.3.13"      │
-│     版本串比:latest != current(APP_VERSION)  → hasUpdate           │
-│     GET raw/<tag>/release/GameAgentMonitor/version.json (manifest) │
-│     逐文件比 sha256 → diff 列表(21 files)                          │
+│     候选 URL = settings.updateSources ∪ bootstrap[]               │
+│        bootstrap: Gitee main raw → GitHub raw (出厂)               │
+│     逐源 GET version.json；签名无效则换下一源                      │
+│     读 app 字段 → latest；persist sources 供下次优先               │
+│     逐文件比 sha256 → diff 列表                                    │
 │                                                                    │
 │  ② download_update (后台 std::thread / download_thread_func)       │
 │     每个 diff 文件:download_base + path  → git raw URL            │
-│        → 302 → raw.giteeusercontent.com → 下载                    │
+│        → 302 → raw CDN → 下载                                      │
 │     每文件 sha256 校验 → 写 %LOCALAPPDATA%\...\staging\            │
 │     全过 → g_up.succeeded = true                                   │
 │     (节流 WM_UPDATE_PROGRESS → 前端进度条)                         │
@@ -40,7 +41,7 @@
 │     ShellExecute "open" install\bin\monitor_app.exe  (启新版)      │
 │     remove_tree(staging)  (清理)                                   │
 │                                                                    │
-│  ⑤ 新 monitor_app.exe 启动 → 版本 0.3.13 ✓                        │
+│  ⑤ 新 monitor_app.exe 启动 → 新版本 ✓                             │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,34 +53,48 @@
 |------|--------|
 | **增量货从 git raw URL 下,不是 Release 附件** | Release 附件只放一个 setup.exe(给新用户全新装)。逐文件下载走 `raw/<tag>/release/GameAgentMonitor/<path>`,读的是 git 仓库里 commit 的文件。**所以 `release/GameAgentMonitor/` 必须 commit 进 git —— 它本身就是更新货。** |
 | **独立 updater 进程干覆盖,主程序不提权** | 覆盖 `Program Files` 需管理员;但主程序日常不该提权(UAC 骚扰 + 安全)。所以主程序 asInvoker,只在更新时 `runas` 拉起提权的 updater 去覆盖。updater 是唯一 `requireAdministrator` 的。 |
-| **manifest (`version.json`) 在 git 里 = 服务端可控** | schema v2 加了 `download_base`(换下载源不用重编客户端)、`min_version`(强制全装跨破坏性变更)、`mandatory`/`message`(服务端指挥 UI)。改这些字段 = 改更新行为,不用发新客户端。 |
+| **manifest (`version.json`) 在 git 里 = 服务端可控** | schema v2 加了 `download_base`；schema v3 加了 `sources`（发现 URL 列表）+ 扩展验签覆盖 `download_base`/`sources`。换 host/CDN = 改 manifest，不重编客户端。 |
+| **查更新不依赖 Gitee releases API** | 只拉静态 `version.json`（任意 nginx/OSS/CDN/GitHub raw 均可）。Gitee API 挂了仍可从 GitHub 兜底发现更新。 |
 | **updater 用 exe-relative 定位 install** | 早期发现注册表 `InstallPath` 可能缺;exe-relative(updater 在 `<install>\bin\`)自包含更稳,注册表兜底。 |
 | **失败大声报错,不当「无更新」(铁律 5)** | 拉取 manifest 失败必须返回 `{ok:false,error}`,绝不返回空 diff 让前端显示「已是最新」—— 那是 0.3.5 卡死的根源。 |
 
 ---
 
-## 3. manifest 结构 (`version.json`, schema v2)
+## 3. manifest 结构 (`version.json`, schema v3)
 
 由 `scripts/New-VersionJson.ps1` 在发布时生成,commit 进 git,raw URL 供给。
 
 ```jsonc
 {
-  "schema": 2,                 // 客户端懂的版本;更高 → 提示下完整包 (needs_full_installer)
-  "app": "0.3.13",
-  "channel": "stable",         // 预留 beta/stable
-  "min_version": "0.3.13",     // 低于此的客户端 → 强制 full(下全部文件)
-  "mandatory": false,          // true → 前端不许「稍后」
-  "message": "",               // 服务端给用户的话
+  "schema": 3,                 // 客户端懂的版本;更高 → 提示下完整包 (needs_full_installer)
+  "app": "0.3.32",
+  "channel": "stable",
+  "min_version": "0.3.24",
+  "mandatory": false,
+  "message": "",
   "full_update": false,
-  "download_base": "https://gitee.com/Andyqwe44/tictactoe/raw/v0.3.13/release/GameAgentMonitor/",
+  "download_base": "https://gitee.com/Andyqwe44/mimic/raw/v0.3.32/release/GameAgentMonitor/",
+  "sources": [                 // 发现「最新」manifest 的 URL 列表（主分支 tip）
+    "https://gitee.com/Andyqwe44/mimic/raw/main/release/GameAgentMonitor/version.json",
+    "https://raw.githubusercontent.com/Andyqwe44/Mimic/main/release/GameAgentMonitor/version.json"
+  ],
   "updater": { "path": "bin/updater.exe" },
-  "sig": "",                   // 预留 Ed25519 签名(未实装)
-  "files": {                   // 每文件 sha256 = 增量比对依据
-    "bin/monitor_app.exe": { "v": "0.3.13", "sha256": "…", "size": 444416 },
-    ...
+  "sig": "<ECDSA P-256 base64>",  // 签 schema+app+download_base+sources+files
+  "files": {
+    "bin/monitor_app.exe": { "v": "0.3.32", "sha256": "…", "size": 444416 }
   }
 }
 ```
+
+**验签 canonical（schema ≥3）**：
+```
+schema=3\n
+app=<ver>\n
+download_base=<url>\n
+source=<url>\n   # sources 按字典序
+<path>\n<sha256>\n ...
+```
+schema ≤2 仍用 files-only digest（读旧包兼容）。
 
 ---
 
@@ -87,13 +102,13 @@
 
 | 文件 | 角色 |
 |------|------|
-| `monitor_app/src/commands.cpp` | `cmd_check_update`(检测+diff)、`download_thread_func`(下载+校验)、`update_launch_updater`(提权拉 updater)、`winhttp_get`(HTTP,非2xx 报错) |
-| `monitor_app/src/main.cpp` | `WndProc` / `WM_UPDATE_PROGRESS`(下载完 → 启 updater + 退出) |
-| `updater/updater.cpp` | 独立提权 updater:等 pid、定位 install、`copy_staging` 覆盖、启新 exe、清 staging;`--self-install`(破自替换死循环) |
-| `monitor_web/src/App.tsx` | `checkForUpdate` / `startDownload`(前端调度,`{ diff }` 不双重编码) |
-| `monitor_web/src/components/UpdateModal.tsx` | 更新弹窗(版本/message/进度条/mandatory) |
-| `scripts/New-VersionJson.ps1` | 生成 `version.json`(schema v2, `Get-FileHash` 每文件 sha256) |
-| `scripts/Release.ps1` | 一键发布:npm build → 编译 → 组装 → version.json → installer → 隔离验证 → git push → Gitee → 验 raw |
+| `monitor_app/src/commands.cpp` | `cmd_check_update`(多源发现+diff)、`download_thread_func`、`update_launch_updater` |
+| `monitor_app/src/update_verify.cpp` | ECDSA 验签（v3 扩展 digest） |
+| `monitor_app/src/main.cpp` | `WndProc` / `WM_UPDATE_PROGRESS` |
+| `updater/updater.cpp` | 独立提权覆盖 |
+| `monitor_web/src/App.tsx` | `checkForUpdate` / `startDownload` |
+| `scripts/New-VersionJson.ps1` | 生成 schema v3 + sources + 扩展签名 |
+| `scripts/Release.ps1` | 发版；origin 必推，github best-effort |
 
 ---
 

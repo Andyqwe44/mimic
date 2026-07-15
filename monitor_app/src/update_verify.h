@@ -4,8 +4,16 @@
 // Update-manifest signature verification (ECDSA P-256, CNG/BCrypt).
 //
 // The manifest (version.json) carries a base64 "sig" field: an ECDSA P-256
-// signature over SHA256 of a canonical digest of the files map. The canonical
-// digest is, for each file ordinal-sorted by path: "<path>\n<sha256>\n".
+// signature over SHA256 of a canonical digest.
+//
+// schema ≤2: digest = ordinal-sorted "<path>\n<sha256>\n" for each file.
+// schema ≥3: digest = header lines then files:
+//   schema=<n>\n
+//   app=<ver>\n
+//   download_base=<url>\n
+//   source=<url>\n   (each source, ordinal-sorted)
+//   <path>\n<sha256>\n ...
+//
 // New-VersionJson.ps1 produces it with the private key; the embedded public key
 // (update_pubkey.h) verifies it here before any file is downloaded.
 
