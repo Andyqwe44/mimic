@@ -43,10 +43,37 @@ foreach ($sub in 'bin', 'frontend', 'config') {
 }
 Write-Ok 'release\GameAgentMonitor'
 
+# 3b. Normalize text files to LF before hashing. Gitee/GitHub raw serve git blobs
+#     as LF; a CRLF checkout would make version.json sha256 disagree with downloads
+#     (seen on config/settings.default.json: 451 CRLF vs 432 LF → update fails).
+Write-Step 'normalize release EOL (LF)'
+$textExt = @('.json', '.html', '.css', '.js', '.mjs', '.cjs', '.map', '.txt', '.md', '.svg', '.xml')
+$nFix = 0
+Get-ChildItem -Path $rel -Recurse -File | Where-Object {
+    $textExt -contains $_.Extension.ToLowerInvariant()
+} | ForEach-Object {
+    $bytes = [IO.File]::ReadAllBytes($_.FullName)
+    $hasCr = $false
+    foreach ($b in $bytes) { if ($b -eq 13) { $hasCr = $true; break } }
+    if ($hasCr) {
+        $out = New-Object System.Collections.Generic.List[byte] ($bytes.Length)
+        foreach ($b in $bytes) { if ($b -ne 13) { [void]$out.Add($b) } }
+        [IO.File]::WriteAllBytes($_.FullName, $out.ToArray())
+        $script:nFix++
+    }
+}
+Write-Ok "LF-normalized $nFix file(s)"
+
 # 4. version.json (SHA256 manifest).
 # Schema 2 (default): 0.3.31 jump-pad clients (KNOWN_SCHEMA=2) can still incremental-update.
-# Flip to -Schema 3 only after the fleet is on ≥0.3.32 (otherwise they get needs_full_installer).
-& "$PSScriptRoot\New-VersionJson.ps1" -ReleaseDir $rel -Version $ver -Schema 2
+# Flip to -Schema 3 only after the fleet is on >=0.3.32 (otherwise they get needs_full_installer).
+$migMsg = 'Repo migrated to mimic. After install, click Check Update again. Multi-round manual updates are required.'
+if ($ver -eq '0.3.32' -or $ver -eq '0.3.31') {
+    # UTF-8 via Base64 so the script stays ASCII-safe under Windows PowerShell 5.1.
+    $migMsg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(
+        '5LuT5bqT5bey6L+B56e75YiwIG1pbWlj44CC5pys5qyh5Y+v6IO95piv6Lez5p2/5Y2H57qn55qE5LiA5q2l77ya5a6J6KOF5a6M5oiQ5ZCO6K+35YaN5qyh54K55Ye744CM5qOA5p+l5pu05paw44CN44CC6ZyA6KaB5aSa6L2u5omL5Yqo5pON5L2c5omN6IO95Y2H5Yiw5pyA5paw54mI77yM5Y+q5pu05paw5LiA5qyh5LiN562J5LqO5bey5Yiw5pyA5paw44CC'))
+}
+& "$PSScriptRoot\New-VersionJson.ps1" -ReleaseDir $rel -Version $ver -Schema 2 -JumpPad '0.3.31' -Message $migMsg
 
 # 5. Installer (Inno Setup).
 Write-Step 'installer (ISCC)'
@@ -55,15 +82,15 @@ if (Test-Path $iscc) {
     & $iscc "/DMyAppVersion=$ver" (Join-Path $root 'installer\setup.iss') | Out-Null
     if ($LASTEXITCODE) { Write-Warn2 'ISCC failed' } else { Write-Ok "GameAgentMonitor_Setup_v$ver.exe" }
 }
-else { Write-Warn2 'Inno Setup 6 not found — installer skipped' }
+else { Write-Warn2 'Inno Setup 6 not found - installer skipped' }
 
-# 6. Isolated verify gate — run as a CHILD process so its `exit` code is isolated
-#    (a bare `exit` in the same runspace would kill this script).
+# 6. Isolated verify gate - run as a CHILD process so its exit code is isolated
+#    (a bare exit in the same runspace would kill this script).
 Write-Step 'isolated verify (gate)'
 $vArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$PSScriptRoot\Verify.ps1", '-Version', $ver)
 if ($Interactive) { $vArgs += '-Interactive' }
 & powershell.exe @vArgs
-if ($LASTEXITCODE -ne 0) { throw 'isolated verification failed — nothing pushed, nothing published' }
+if ($LASTEXITCODE -ne 0) { throw 'isolated verification failed - nothing pushed, nothing published' }
 
 if ($DryRun) {
     Write-Host "`n==================== dry-run $ver OK (built + verified; not published) ====================" -ForegroundColor Green

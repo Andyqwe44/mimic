@@ -19,7 +19,8 @@ param(
                                          # Bump ONLY when the update mechanism itself becomes incompatible — NOT per release.
     [string]$Channel    = 'stable',      # release channel (future beta/stable split)
     [switch]$Mandatory,                  # force the update (client hides "Later")
-    [string]$Message    = ''             # optional user-facing note shown in the update modal
+    [string]$Message    = '',            # optional user-facing note shown in the update modal
+    [string]$JumpPad    = '0.3.31'       # migration bridge version (empty = none); clients show multi-hop UI
 )
 
 Set-StrictMode -Version Latest
@@ -107,6 +108,10 @@ $manifest = [ordered]@{
     updater       = [ordered]@{ path = 'bin/updater.exe' }
     sig           = $sig
     files         = $files
+}
+# Migration bridge — clients ≥0.3.32 show 老版本→跳板→最新; older clients still show message.
+if (-not [string]::IsNullOrWhiteSpace($JumpPad)) {
+    $manifest['jump_pad'] = $JumpPad
 }
 
 $json = $manifest | ConvertTo-Json -Depth 6

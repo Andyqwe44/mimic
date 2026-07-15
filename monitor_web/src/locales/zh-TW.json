@@ -239,6 +239,12 @@
     "unknown_error": "未知錯誤",
 
     "full_package_hint": "本次為完整更新（下載全部檔案）",
+    "role_old": "舊版本",
+    "role_jump": "跳板版本",
+    "role_latest": "新版本",
+    "role_latest_placeholder": "再檢查",
+    "jump_pad_first_hop": "倉庫已遷移到 mimic：本次先升到跳板版 v{jump}。安裝完成後請再點一次「檢查更新」，才能繼續升到最新。需要多輪手動更新，只更新一次不等於已到最新。",
+    "jump_pad_second_hop": "這是遷移第二步（跳板 v{jump} → v{latest}）。完成後即到目前最新版。",
     "this_update": "本次更新",
     "files": "{n} 個檔案",
     "completed_n": "（已完成 {n} 個）",

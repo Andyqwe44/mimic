@@ -6,6 +6,7 @@ import { ActionBtn } from './Toolkit'
 import { addLog, type UpdateProgressMsg } from '../lib/bridge'
 import { useScrollLock } from '../lib/useScrollLock'
 import { MODAL_CARD, DIFF_CONTAINER, DIFF_COL, H } from '../lib/design'
+import { UPDATE_JUMP_PAD, versionCmp } from '../lib/constants'
 
 // 弹窗状态: 检查中 / 有更新 / 已最新 / 出错. 缺省视为 'update' (向后兼容).
 export type UpdateStatus = 'checking' | 'update' | 'latest' | 'error'
@@ -19,6 +20,7 @@ export interface UpdateInfo {
   status?: UpdateStatus  // 缺省 = 'update'
   error?: string         // status==='error' 时的错误文案
   message?: string      // server-supplied note (manifest "message")
+  jump_pad?: string     // migration bridge version (e.g. 0.3.31)
   mandatory?: boolean   // manifest "mandatory" → hide "Later"
   mode?: string         // 'incremental' | 'full'
   /** DevTools UI demo — must not persist after leaving Dev mode */
@@ -71,6 +73,27 @@ function headerFor(status: UpdateStatus, t: (key: string) => string) {
     case 'error':    return { title: t('update.error'), icon: <AlertTriangle className="w-5 h-5 text-error" /> }
     default:         return { title: t('update.update_available'), icon: <Download className="w-5 h-5 text-accent" /> }
   }
+}
+
+function VersionChip({
+  version, label, accent,
+}: { version: string; label?: string; accent?: boolean }) {
+  return (
+    <div className="flex flex-col items-center gap-1 min-w-0">
+      <span className={
+        accent
+          ? 'px-3 py-1.5 rounded-lg bg-accent/10 ring-1 ring-inset ring-accent/30 text-sm font-mono font-semibold text-accent'
+          : 'px-3 py-1.5 rounded-lg bg-bg-tertiary text-sm font-mono text-text-muted'
+      }>
+        v{version}
+      </span>
+      {label && (
+        <span className={`text-[10px] leading-none ${accent ? 'text-accent' : 'text-text-muted'}`}>
+          {label}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function UpdateModal({
@@ -168,16 +191,70 @@ export function UpdateModal({
         {/* ── Update state: 完整更新 UI ── */}
         {isUpdate && (
           <div className="flex-1 min-h-0 px-5 py-4 space-y-3 overflow-y-auto">
-            {/* Version comparison */}
-            <div className="flex items-center justify-center gap-3 py-1">
-              <span className="px-3 py-1.5 rounded-lg bg-bg-tertiary text-sm font-mono text-text-muted">
-                v{info.current}
-              </span>
-              <ArrowRight className="w-4 h-4 text-accent" />
-              <span className="px-3 py-1.5 rounded-lg bg-accent/10 ring-1 ring-inset ring-accent/30 text-sm font-mono font-semibold text-accent">
-                v{info.latest}
-              </span>
-            </div>
+            {/* Version comparison — jump-pad migration shows 老版本 → 跳板 → 最新 */}
+            {(() => {
+              const jump = (info.jump_pad || UPDATE_JUMP_PAD || '').replace(/^v/i, '')
+              const cur = info.current.replace(/^v/i, '')
+              const lat = info.latest.replace(/^v/i, '')
+              const hasJump = !!jump
+              const belowJump = hasJump && versionCmp(cur, jump) < 0
+              const onJump = hasJump && versionCmp(cur, jump) === 0
+              // First hop: installing the jump-pad itself
+              const firstHop = belowJump && versionCmp(lat, jump) <= 0
+              // Second hop: already on jump-pad, going to real latest
+              const secondHop = onJump && versionCmp(lat, jump) > 0
+              // Rare: client sees a latest beyond jump while still below it
+              const longHop = belowJump && versionCmp(lat, jump) > 0
+
+              if (firstHop || longHop) {
+                return (
+                  <>
+                    <div className="flex items-center justify-center gap-2 py-1 flex-wrap">
+                      <VersionChip version={cur} label={t('update.role_old')} />
+                      <ArrowRight className="w-4 h-4 text-accent shrink-0" />
+                      <VersionChip version={jump} label={t('update.role_jump')} accent={firstHop} />
+                      <ArrowRight className="w-4 h-4 text-accent shrink-0" />
+                      {longHop ? (
+                        <VersionChip version={lat} label={t('update.role_latest')} accent />
+                      ) : (
+                        <div className="flex flex-col items-center gap-1 min-w-0">
+                          <span className="px-3 py-1.5 rounded-lg bg-bg-tertiary text-sm font-mono text-text-muted">
+                            {t('update.role_latest_placeholder')}
+                          </span>
+                          <span className="text-[10px] leading-none text-text-muted">
+                            {t('update.role_latest')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="bg-amber-500/10 ring-1 ring-inset ring-amber-500/30 rounded-lg p-3 text-xs text-text-primary leading-relaxed">
+                      {t('update.jump_pad_first_hop', { jump })}
+                    </div>
+                  </>
+                )
+              }
+              if (secondHop) {
+                return (
+                  <>
+                    <div className="flex items-center justify-center gap-2 py-1 flex-wrap">
+                      <VersionChip version={cur} label={t('update.role_jump')} />
+                      <ArrowRight className="w-4 h-4 text-accent shrink-0" />
+                      <VersionChip version={lat} label={t('update.role_latest')} accent />
+                    </div>
+                    <div className="bg-amber-500/10 ring-1 ring-inset ring-amber-500/30 rounded-lg p-3 text-xs text-text-primary leading-relaxed">
+                      {t('update.jump_pad_second_hop', { jump, latest: lat })}
+                    </div>
+                  </>
+                )
+              }
+              return (
+                <div className="flex items-center justify-center gap-3 py-1">
+                  <VersionChip version={cur} />
+                  <ArrowRight className="w-4 h-4 text-accent" />
+                  <VersionChip version={lat} accent />
+                </div>
+              )
+            })()}
 
             {/* Server message (manifest "message") */}
             {info.message && (

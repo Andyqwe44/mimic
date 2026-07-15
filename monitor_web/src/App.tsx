@@ -316,6 +316,7 @@ export default function App() {
           url: '', // Phase 2: multi-file diff replaces single URL
           diff: info.diff || [],
           message: info.message || '',
+          jump_pad: info.jump_pad || '',
           mandatory: !!info.mandatory,
           mode: info.mode || 'incremental',
           staging_state: info.staging_state || undefined,
@@ -397,7 +398,7 @@ export default function App() {
           current: info.current, latest: info.latest,
           name: info.name || '', body: info.body || '', url: '',
           diff: info.diff || [],
-          message: info.message || '', mandatory: !!info.mandatory, mode: info.mode || 'full',
+          message: info.message || '', jump_pad: info.jump_pad || '', mandatory: !!info.mandatory, mode: info.mode || 'full',
         } as any)
         startDownload(info.diff || [])
       } else {
