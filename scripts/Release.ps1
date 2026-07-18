@@ -34,7 +34,14 @@ $serverSetup = Join-Path $root "release\MimicServer_Setup_v$serverVer.exe"
 if ($doClient) {
     Write-Step 'frontend (npm run build)'
     Push-Location (Join-Path $root 'shared\web')
-    try { npm run build; if ($LASTEXITCODE) { throw 'npm build failed' } } finally { Pop-Location }
+    try {
+        # npm warns on stderr; do not let $ErrorActionPreference=Stop abort the release
+        $eap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        npm run build
+        $ErrorActionPreference = $eap
+        if ($LASTEXITCODE) { throw 'npm build failed' }
+    } finally { Pop-Location }
     Write-Ok 'dist'
 
     & "$PSScriptRoot\Build.ps1" -Module all
