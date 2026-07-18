@@ -6,7 +6,7 @@ import { ActionBtn } from './Toolkit'
 import { addLog, type UpdateProgressMsg } from '../lib/bridge'
 import { useScrollLock } from '../lib/useScrollLock'
 import { MODAL_CARD, DIFF_CONTAINER, DIFF_COL, H } from '../lib/design'
-import { UPDATE_JUMP_PAD, versionCmp } from '../lib/constants'
+import { versionCmp } from '../lib/constants'
 
 // 弹窗状态: 检查中 / 有更新 / 已最新 / 出错. 缺省视为 'update' (向后兼容).
 export type UpdateStatus = 'checking' | 'update' | 'latest' | 'error'
@@ -191,12 +191,15 @@ export function UpdateModal({
         {/* ── Update state: 完整更新 UI ── */}
         {isUpdate && (
           <div className="flex-1 min-h-0 px-5 py-4 space-y-3 overflow-y-auto">
-            {/* Version comparison — jump-pad migration shows 老版本 → 跳板 → 最新 */}
+            {/* Version comparison — jump-pad ONLY when host/manifest sets jump_pad.
+                Never fall back to PC UPDATE_JUMP_PAD (0.3.31): Android 0.1.x would be
+                mis-routed onto the Windows migration ladder (铁律 5 / platform SSOT). */}
             {(() => {
-              const jump = (info.jump_pad || UPDATE_JUMP_PAD || '').replace(/^v/i, '')
-              const cur = info.current.replace(/^v/i, '')
-              const lat = info.latest.replace(/^v/i, '')
-              const hasJump = !!jump
+              const jump = (info.jump_pad || '').replace(/^v/i, '')
+              const cur = (info.current || '').replace(/^v/i, '')
+              const lat = (info.latest || '').replace(/^v/i, '')
+              // Explicit non-empty jump_pad from this platform's manifest only
+              const hasJump = jump.length > 0
               const belowJump = hasJump && versionCmp(cur, jump) < 0
               const onJump = hasJump && versionCmp(cur, jump) === 0
               // First hop: installing the jump-pad itself

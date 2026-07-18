@@ -261,16 +261,20 @@ class AndroidHost(
         val remote = manifest.optString("app", "")
         val apkName = manifest.optString("client_apk", manifest.optString("apk", ""))
         val base = manifest.optString("download_base", CDN_BASE).trimEnd('/') + "/"
-        val has = compareSemver(remote, local) > 0
+        val has = remote.isNotBlank() && compareSemver(remote, local) > 0
+        // Platform-scoped update SSOT — never emit PC jump_pad / Windows versions.
         val o = JSONObject()
             .put("ok", true)
+            .put("platform", "android")
             .put("current", local)
             .put("latest", if (remote.isNotBlank()) remote else local)
             .put("has_update", has)
             .put("mode", "full")
+            .put("jump_pad", "") // empty: UpdateModal must not apply PC 0.3.31 ladder
             .put("message", manifest.optString("message", ""))
             .put("name", "Mimic Android $remote")
-            .put("body", "APK update from CDN (same package overwrite — not OS A/B slots)")
+            .put("body", "APK update from CDN android/ (not mimic/client)")
+            .put("download_base", base)
         if (has && apkName.isNotBlank()) {
             val size = tryHeadSize(base + apkName)
             val diff = JSONArray().put(

@@ -134,7 +134,12 @@ export function codeToName(code: string): string {
   return m[code] || code
 }
 
-/** Mimic migration bridge — clients below this must hop via the jump-pad release. */
+/**
+ * Windows-only migration bridge (repo rename / update-framework cutover).
+ * Used by DevTools demos and docs — NOT as UpdateModal fallback.
+ * Android/Server must never inherit this; jump UI requires host `jump_pad` from
+ * that platform's own CDN manifest (PC: mimic/client/version.json).
+ */
 export const UPDATE_JUMP_PAD = '0.3.31'
 
 /** Compare dotted versions; return <0 / 0 / >0. Non-numeric tails sort as 0. */

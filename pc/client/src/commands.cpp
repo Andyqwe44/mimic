@@ -2429,6 +2429,7 @@ static std::string cmd_check_update(bool forceFull) {
     }
 
     return "{\"ok\":true"
+        ",\"platform\":\"windows\""
         ",\"current\":\"" + json_escape(current) + "\""
         ",\"latest\":\"" + json_escape(latest) + "\""
         ",\"name\":\"" + json_escape(name.empty() ? tag : name) + "\""
