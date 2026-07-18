@@ -89,71 +89,67 @@ export function ControlView({
 
   return (
     <div className={`flex-1 overflow-y-auto ${SHELL_PAD.page} space-y-3 min-h-0`}>
-      <div className="grid grid-cols-1 min-[960px]:grid-cols-2 gap-3">
-        <ConnectionPanel
-          onSelect={(w) => setSelWin(w)}
-          onDisconnect={() => {
-            setSelWin({ title: DESKTOP_TITLE, category: 'desktop', hwnd: 0 })
-            setExpectedCaptureState('desktop')
-            addLog('[Connection] disconnected, back to desktop')
-          }}
-          snapMethod={snapMethod}
-          setSnapMethod={setSnapMethod}
-          streamMethod={streamMethod}
-          setStreamMethod={setStreamMethod}
-          selWin={selWin}
-          winState={winState}
-          expectedCaptureState={expectedCaptureState}
-          setExpectedCaptureState={setExpectedCaptureState}
-          expanded={connExpanded}
-          onToggle={() => setConnExpanded((v) => !v)}
-        />
+      <ConnectionPanel
+        onSelect={(w) => setSelWin(w)}
+        onDisconnect={() => {
+          setSelWin({ title: DESKTOP_TITLE, category: 'desktop', hwnd: 0 })
+          setExpectedCaptureState('desktop')
+          addLog('[Connection] disconnected, back to desktop')
+        }}
+        snapMethod={snapMethod}
+        setSnapMethod={setSnapMethod}
+        streamMethod={streamMethod}
+        setStreamMethod={setStreamMethod}
+        selWin={selWin}
+        winState={winState}
+        expectedCaptureState={expectedCaptureState}
+        setExpectedCaptureState={setExpectedCaptureState}
+        expanded={connExpanded}
+        onToggle={() => setConnExpanded((v) => !v)}
+      />
 
-        <div className="space-y-3 min-w-0">
-          <PeerPanel
-            expanded={peerExpanded}
-            onToggle={() => setPeerExpanded((v) => !v)}
-            controlMode={peerControlMode}
-            onControlMode={setPeerControlMode}
-            onRole={setPeerRole}
-            onTransport={setPeerTransport}
-            onRemoteWindows={(wins) => {
-              setRemotePeerWindows(wins)
-              addLog(`[Peer] remote windows: ${wins.length}`)
-            }}
-          />
-          <PeerRemoteView
-            active={peerRole === 'controller' && peerTransport !== 'none'}
-            humanControl={peerControlMode === 'human'}
-          />
-          {peerControlMode === 'ai' && peerTransport !== 'none' && (
-            <div className={`${TEXT.smallMono} text-amber-500 bg-amber-500/10 ${RADIUS.lg} px-2 py-1.5`}>
-              {t('peer.ai_mode_hint')}
-            </div>
-          )}
-          {remotePeerWindows.length > 0 && (
-            <div className={`${RADIUS.xl} bg-bg-secondary ${RING} p-2 space-y-1 max-h-40 overflow-y-auto min-w-0`}>
-              <div className={`${TEXT.smallMono} font-medium text-text-secondary px-1`}>
-                {t('peer.remote_windows')}
-              </div>
-              {remotePeerWindows.map((w) => (
-                <button
-                  key={w.hwnd}
-                  type="button"
-                  className={`w-full text-left ${TEXT.xs} px-2 py-2 min-h-11 ${RADIUS.md} hover:bg-bg-hover truncate`}
-                  onClick={() => {
-                    hostCall('peer_set_target', { hwnd: w.hwnd, title: w.title })
-                      .then(() => addLog(`[Peer] set_target ${w.title}`))
-                      .catch((e) => addLog(`[Peer] set_target failed: ${e}`))
-                  }}
-                >
-                  {w.title || `(hwnd ${w.hwnd})`}
-                </button>
-              ))}
-            </div>
-          )}
+      <PeerPanel
+        expanded={peerExpanded}
+        onToggle={() => setPeerExpanded((v) => !v)}
+        controlMode={peerControlMode}
+        onControlMode={setPeerControlMode}
+        onRole={setPeerRole}
+        onTransport={setPeerTransport}
+        onRemoteWindows={(wins) => {
+          setRemotePeerWindows(wins)
+          addLog(`[Peer] remote windows: ${wins.length}`)
+        }}
+      />
+      <PeerRemoteView
+        active={peerRole === 'controller' && peerTransport !== 'none'}
+        humanControl={peerControlMode === 'human'}
+      />
+      {peerControlMode === 'ai' && peerTransport !== 'none' && (
+        <div className={`${TEXT.smallMono} text-amber-500 bg-amber-500/10 ${RADIUS.lg} px-2 py-1.5`}>
+          {t('peer.ai_mode_hint')}
         </div>
-      </div>
+      )}
+      {remotePeerWindows.length > 0 && (
+        <div className={`${RADIUS.xl} bg-bg-secondary ${RING} p-2 space-y-1 max-h-40 overflow-y-auto min-w-0`}>
+          <div className={`${TEXT.smallMono} font-medium text-text-secondary px-1`}>
+            {t('peer.remote_windows')}
+          </div>
+          {remotePeerWindows.map((w) => (
+            <button
+              key={w.hwnd}
+              type="button"
+              className={`w-full text-left ${TEXT.xs} px-2 py-2 min-h-11 ${RADIUS.md} hover:bg-bg-hover truncate`}
+              onClick={() => {
+                hostCall('peer_set_target', { hwnd: w.hwnd, title: w.title })
+                  .then(() => addLog(`[Peer] set_target ${w.title}`))
+                  .catch((e) => addLog(`[Peer] set_target failed: ${e}`))
+              }}
+            >
+              {w.title || `(hwnd ${w.hwnd})`}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="min-w-0">
         {THIN_CLIENT ? (

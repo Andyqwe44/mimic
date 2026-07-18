@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { BP } from '../lib/design'
 
-export type ShellMode = 'side' | 'side-icon' | 'bottom'
+/** Layout chrome: side rail (≥ tablet) or bottom tabs (< tablet). Label density is user-toggled. */
+export type ShellMode = 'side' | 'bottom'
 
 export function useViewport() {
   const [width, setWidth] = useState(
@@ -21,8 +22,7 @@ export function useViewport() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const shellMode: ShellMode =
-    width >= BP.desktop ? 'side' : width >= BP.tablet ? 'side-icon' : 'bottom'
+  const shellMode: ShellMode = width >= BP.tablet ? 'side' : 'bottom'
   const isNarrow = width < BP.narrow
   const isShort = height < BP.short
 

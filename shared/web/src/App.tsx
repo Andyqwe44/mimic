@@ -7,6 +7,7 @@ import { ArrowLeft } from 'lucide-react'
 import { AppShell } from './components/AppShell'
 import { BottomBar } from './components/BottomBar'
 import { ControlView } from './components/ControlView'
+import { PagePager } from './components/PagePager'
 import { DevToolsView } from './components/DevToolsView'
 import { HeaderActions } from './components/HeaderActions'
 import { LoadingScreen } from './components/LoadingScreen'
@@ -37,9 +38,14 @@ const SPLASH_TEST_MS = 0
 export default function App() {
   const { t, i18n } = useTranslation()
   const { shellMode, isNarrow, isShort } = useViewport()
+  // Boot snapshot from C++ (pre-paint) — avoids default-blue flash on startup.
+  const boot = readBootSettings()
 
   // ═══ UI state ═══
   const [page, setPage] = useState<AppPage>('Control')
+  const [navExpanded, setNavExpanded] = useState(
+    () => (typeof boot.navExpanded === 'boolean' ? boot.navExpanded : true),
+  )
   // Initialised from the compile-time version (version.h via Vite) so the splash
   // shows it instantly; get_version overwrites it at runtime (they match).
   const [appVersion, setAppVersion] = useState(`v${__APP_VERSION__}`)
@@ -60,8 +66,6 @@ export default function App() {
   const [sessionError, setSessionError] = useState(false)
 
   // ═══ Theme ═══
-  // Boot snapshot from C++ (pre-paint) — avoids default-blue flash on startup.
-  const boot = readBootSettings()
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(
     () => (boot.theme === 'light' || boot.theme === 'dark' || boot.theme === 'system' ? boot.theme : 'light'),
   )
@@ -343,6 +347,7 @@ export default function App() {
         }
         if (typeof s.serverHost === 'string' && s.serverHost) setServerHost(s.serverHost)
         if (typeof s.serverPort === 'string' && s.serverPort) setServerPort(s.serverPort)
+        if (typeof s.navExpanded === 'boolean') setNavExpanded(s.navExpanded)
         addLog('[settings] loaded')
       }
     }).catch(() => {
@@ -484,6 +489,7 @@ export default function App() {
           locale,
           serverHost,
           serverPort,
+          navExpanded,
         },
       }).catch(() => {})
     }, 1000)
@@ -491,7 +497,7 @@ export default function App() {
   }, [settingsReady, theme, mouseMode, keyMode, mappingHotkey, devMode, selfTargetMode,
       keepFiles, autoSnap, autoStream, snapMethod, streamMethod, renderMethod,
       normalAccent, normalSecondaryAccent, devAccent, devSecondaryAccent, locale,
-      serverHost, serverPort])
+      serverHost, serverPort, navExpanded])
 
   // ── Load screen info for aspect ratio + self-target detection ──
   useEffect(() => {
@@ -922,6 +928,8 @@ export default function App() {
           page={page}
           setPage={setPage}
           shellMode={shellMode}
+          navExpanded={navExpanded}
+          onToggleNavExpand={() => setNavExpanded((v) => !v)}
           pageTitle={pageTitle}
           device={capsuleDevice}
           connected={sessionConnected}
@@ -980,170 +988,210 @@ export default function App() {
             ) : undefined
           }
         >
-          {/* Keep Monitor/Control mounted so peer listeners + preview handlers stay alive */}
-          <div className={page === 'Monitor' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
-            <MonitorView
-              selWin={selWindow}
-              winState={winState}
-              capMethod={capMethod}
-              snapMethod={snapMethod}
-              streamMethod={streamMethod}
-              previewing={previewing}
-              acceptControl={acceptControl}
-              snapshotLatency={snapshotLatency}
-              onTakeSnapshot={takeSnapshot}
-              onTogglePreview={togglePreview}
-              onToggleAcceptControl={toggleAcceptControl}
-              mouseMode={mouseMode}
-              keyMode={keyMode}
-              mappingEnabled={mappingEnabled}
-              setMappingEnabled={setMappingEnabled}
-              mappingHotkey={mappingHotkey}
-              targetDims={targetDims}
-              selfRect={selfRect}
-              screenRect={screenRect}
-              selfTargetMode={selfTargetMode}
-              apiRef={monitorApiRef}
-            >
-              {!THIN_CLIENT && (
-                <ScreenshotPanel
+          {(() => {
+            const monitorPane = (
+              <div className="flex-1 flex flex-col min-h-0 h-full">
+                <MonitorView
                   selWin={selWindow}
-                  screenRatio={screenRatio}
+                  winState={winState}
+                  capMethod={capMethod}
                   snapMethod={snapMethod}
                   streamMethod={streamMethod}
-                  renderMethod={renderMethod}
-                  winState={winState}
-                  expanded={true}
-                  onToggle={() => {}}
                   previewing={previewing}
+                  acceptControl={acceptControl}
+                  snapshotLatency={snapshotLatency}
+                  onTakeSnapshot={takeSnapshot}
+                  onTogglePreview={togglePreview}
+                  onToggleAcceptControl={toggleAcceptControl}
+                  mouseMode={mouseMode}
+                  keyMode={keyMode}
+                  mappingEnabled={mappingEnabled}
+                  setMappingEnabled={setMappingEnabled}
+                  mappingHotkey={mappingHotkey}
+                  targetDims={targetDims}
+                  selfRect={selfRect}
+                  screenRect={screenRect}
+                  selfTargetMode={selfTargetMode}
+                  apiRef={monitorApiRef}
+                >
+                  {!THIN_CLIENT && (
+                    <ScreenshotPanel
+                      selWin={selWindow}
+                      screenRatio={screenRatio}
+                      snapMethod={snapMethod}
+                      streamMethod={streamMethod}
+                      renderMethod={renderMethod}
+                      winState={winState}
+                      expanded={true}
+                      onToggle={() => {}}
+                      previewing={previewing}
+                      previewingRef={previewingRef}
+                      snapshotRef={snapshotRef}
+                      snapshotStartRef={snapshotStartRef}
+                      capMethod={capMethod}
+                      onTakeSnapshot={takeSnapshot}
+                      onTogglePreview={togglePreview}
+                      pinned={false}
+                      onTogglePin={() => {}}
+                      showPin={false}
+                      hasContentRef={ssHasContentRef}
+                      bare
+                      onFps={setStreamFps}
+                      onDims={(w, h) => setTargetDims({ w, h })}
+                    />
+                  )}
+                </MonitorView>
+              </div>
+            )
+            const controlPane = (
+              <div className="flex-1 flex flex-col min-h-0 h-full">
+                <ControlView
+                  selWin={selWindow}
+                  setSelWin={(w) => {
+                    if (opStateRef.current === 'streaming') stopStream()
+                    setSelWindow(w)
+                  }}
+                  winState={winState}
+                  expectedCaptureState={expectedCaptureState}
+                  setExpectedCaptureState={setExpectedCaptureState}
+                  snapMethod={snapMethod}
+                  setSnapMethod={setSnapMethod}
+                  streamMethod={streamMethod}
+                  setStreamMethod={setStreamMethod}
+                  renderMethod={renderMethod}
+                  screenRatio={screenRatio}
+                  previewing={previewing}
+                  acceptControl={acceptControl}
+                  onTogglePreview={togglePreview}
+                  onToggleAcceptControl={toggleAcceptControl}
+                  takeSnapshot={takeSnapshot}
                   previewingRef={previewingRef}
                   snapshotRef={snapshotRef}
                   snapshotStartRef={snapshotStartRef}
                   capMethod={capMethod}
-                  onTakeSnapshot={takeSnapshot}
-                  onTogglePreview={togglePreview}
-                  pinned={false}
-                  onTogglePin={() => {}}
-                  showPin={false}
-                  hasContentRef={ssHasContentRef}
-                  bare
+                  ssHasContentRef={ssHasContentRef}
                   onFps={setStreamFps}
                   onDims={(w, h) => setTargetDims({ w, h })}
+                  serverConnected={serverConnected}
+                  peerControlMode={peerControlMode}
+                  setPeerControlMode={setPeerControlMode}
+                  peerRole={peerRole}
+                  setPeerRole={setPeerRole}
+                  peerTransport={peerTransport}
+                  setPeerTransport={setPeerTransport}
+                  remotePeerWindows={remotePeerWindows}
+                  setRemotePeerWindows={setRemotePeerWindows}
+                  linkReady={peerLinked}
                 />
-              )}
-            </MonitorView>
-          </div>
-          <div className={page === 'Control' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
-            <ControlView
-              selWin={selWindow}
-              setSelWin={(w) => {
-                if (opStateRef.current === 'streaming') stopStream()
-                setSelWindow(w)
-              }}
-              winState={winState}
-              expectedCaptureState={expectedCaptureState}
-              setExpectedCaptureState={setExpectedCaptureState}
-              snapMethod={snapMethod}
-              setSnapMethod={setSnapMethod}
-              streamMethod={streamMethod}
-              setStreamMethod={setStreamMethod}
-              renderMethod={renderMethod}
-              screenRatio={screenRatio}
-              previewing={previewing}
-              acceptControl={acceptControl}
-              onTogglePreview={togglePreview}
-              onToggleAcceptControl={toggleAcceptControl}
-              takeSnapshot={takeSnapshot}
-              previewingRef={previewingRef}
-              snapshotRef={snapshotRef}
-              snapshotStartRef={snapshotStartRef}
-              capMethod={capMethod}
-              ssHasContentRef={ssHasContentRef}
-              onFps={setStreamFps}
-              onDims={(w, h) => setTargetDims({ w, h })}
-              serverConnected={serverConnected}
-              peerControlMode={peerControlMode}
-              setPeerControlMode={setPeerControlMode}
-              peerRole={peerRole}
-              setPeerRole={setPeerRole}
-              peerTransport={peerTransport}
-              setPeerTransport={setPeerTransport}
-              remotePeerWindows={remotePeerWindows}
-              setRemotePeerWindows={setRemotePeerWindows}
-              linkReady={peerLinked}
-            />
-          </div>
-          {page === 'Log' && (
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <LogPanel keepFiles={keepFiles} />
-            </div>
-          )}
-          {page === 'Settings' && (
-            <SettingsView
-              snapMethod={snapMethod}
-              setSnapMethod={setSnapMethod}
-              streamMethod={streamMethod}
-              setStreamMethod={setStreamMethod}
-              renderMethod={renderMethod}
-              setRenderMethod={setRenderMethod}
-              autoSnap={autoSnap}
-              setAutoSnap={setAutoSnap}
-              autoStream={autoStream}
-              setAutoStream={setAutoStream}
-              normalAccent={normalAccent}
-              setNormalAccentState={setNormalAccentState}
-              normalSecondaryAccent={normalSecondaryAccent}
-              setNormalSecondaryAccentState={setNormalSecondaryAccentState}
-              devAccent={devAccent}
-              setDevAccentState={setDevAccentState}
-              devSecondaryAccent={devSecondaryAccent}
-              setDevSecondaryAccentState={setDevSecondaryAccentState}
-              accent={accent}
-              secondaryAccent={secondaryAccent}
-              locale={locale}
-              setLocale={setLocale}
-              selWin={selWindow}
-              winState={winState}
-              keepFiles={keepFiles}
-              setKeepFiles={setKeepFiles}
-              appVersion={appVersion}
-              theme={theme}
-              setTheme={setTheme}
-              devMode={devMode}
-              setDevMode={setDevModeSafe}
-              mouseMode={mouseMode}
-              setMouseMode={setMouseMode}
-              keyMode={keyMode}
-              setKeyMode={setKeyMode}
-              mappingHotkey={mappingHotkey}
-              setMappingHotkey={setMappingHotkey}
-              selfTargetMode={selfTargetMode}
-              setSelfTargetMode={setSelfTargetMode}
-              onCheckUpdate={checkForUpdate}
-              hasUpdate={displayHasUpdate}
-              isAdmin={isAdmin}
-              onSwitchPermission={switchPermission}
-              onOpenDevTools={() => setPage('DevTools')}
-            />
-          )}
-          {page === 'DevTools' && (
-            <DevToolsView
-              appVersion={appVersion}
-              saveCaptureFrames={saveCaptureFrames}
-              setSaveCaptureFrames={setSaveCaptureFrames}
-              saveStreamFrames={saveStreamFrames}
-              setSaveStreamFrames={setSaveStreamFrames}
-              frameDumpDir={frameDumpDir}
-              setFrameDumpDir={setFrameDumpDir}
-              onRunSelfTest={runSelfTestFlow}
-              selfTestRunning={selfTest.phase === 'running'}
-              onPreviewSkeleton={previewSkeletonScreen}
-              onDevInjectUpdate={devInjectUpdate}
-              onDevInjectDownload={devInjectDownload}
-              onDevInjectSelfTest={devInjectSelfTest}
-              onDevInjectAgent={devInjectAgent}
-            />
-          )}
+              </div>
+            )
+            const logPane = (
+              <div className="flex-1 min-h-0 overflow-hidden h-full">
+                <LogPanel keepFiles={keepFiles} />
+              </div>
+            )
+            const settingsPane = (
+              <div className="flex-1 min-h-0 overflow-hidden h-full">
+                <SettingsView
+                  snapMethod={snapMethod}
+                  setSnapMethod={setSnapMethod}
+                  streamMethod={streamMethod}
+                  setStreamMethod={setStreamMethod}
+                  renderMethod={renderMethod}
+                  setRenderMethod={setRenderMethod}
+                  autoSnap={autoSnap}
+                  setAutoSnap={setAutoSnap}
+                  autoStream={autoStream}
+                  setAutoStream={setAutoStream}
+                  normalAccent={normalAccent}
+                  setNormalAccentState={setNormalAccentState}
+                  normalSecondaryAccent={normalSecondaryAccent}
+                  setNormalSecondaryAccentState={setNormalSecondaryAccentState}
+                  devAccent={devAccent}
+                  setDevAccentState={setDevAccentState}
+                  devSecondaryAccent={devSecondaryAccent}
+                  setDevSecondaryAccentState={setDevSecondaryAccentState}
+                  accent={accent}
+                  secondaryAccent={secondaryAccent}
+                  locale={locale}
+                  setLocale={setLocale}
+                  selWin={selWindow}
+                  winState={winState}
+                  keepFiles={keepFiles}
+                  setKeepFiles={setKeepFiles}
+                  appVersion={appVersion}
+                  theme={theme}
+                  setTheme={setTheme}
+                  devMode={devMode}
+                  setDevMode={setDevModeSafe}
+                  mouseMode={mouseMode}
+                  setMouseMode={setMouseMode}
+                  keyMode={keyMode}
+                  setKeyMode={setKeyMode}
+                  mappingHotkey={mappingHotkey}
+                  setMappingHotkey={setMappingHotkey}
+                  selfTargetMode={selfTargetMode}
+                  setSelfTargetMode={setSelfTargetMode}
+                  onCheckUpdate={checkForUpdate}
+                  hasUpdate={displayHasUpdate}
+                  isAdmin={isAdmin}
+                  onSwitchPermission={switchPermission}
+                  onOpenDevTools={() => setPage('DevTools')}
+                />
+              </div>
+            )
+            const devToolsPane = (
+              <DevToolsView
+                appVersion={appVersion}
+                saveCaptureFrames={saveCaptureFrames}
+                setSaveCaptureFrames={setSaveCaptureFrames}
+                saveStreamFrames={saveStreamFrames}
+                setSaveStreamFrames={setSaveStreamFrames}
+                frameDumpDir={frameDumpDir}
+                setFrameDumpDir={setFrameDumpDir}
+                onRunSelfTest={runSelfTestFlow}
+                selfTestRunning={selfTest.phase === 'running'}
+                onPreviewSkeleton={previewSkeletonScreen}
+                onDevInjectUpdate={devInjectUpdate}
+                onDevInjectDownload={devInjectDownload}
+                onDevInjectSelfTest={devInjectSelfTest}
+                onDevInjectAgent={devInjectAgent}
+              />
+            )
+
+            // Phone: four pages on a horizontal track with swipe animation.
+            // DevTools is a secondary overlay page (not in the track).
+            if (shellMode === 'bottom') {
+              if (page === 'DevTools') {
+                return <div className="flex-1 flex flex-col min-h-0">{devToolsPane}</div>
+              }
+              return (
+                <PagePager page={page} onPageChange={setPage}>
+                  {monitorPane}
+                  {controlPane}
+                  {logPane}
+                  {settingsPane}
+                </PagePager>
+              )
+            }
+
+            // Desktop: keep Monitor/Control mounted; Log/Settings/DevTools on demand.
+            return (
+              <>
+                <div className={page === 'Monitor' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
+                  {monitorPane}
+                </div>
+                <div className={page === 'Control' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
+                  {controlPane}
+                </div>
+                {page === 'Log' && logPane}
+                {page === 'Settings' && settingsPane}
+                {page === 'DevTools' && (
+                  <div className="flex-1 flex flex-col min-h-0">{devToolsPane}</div>
+                )}
+              </>
+            )
+          })()}
         </AppShell>
       </div>
 

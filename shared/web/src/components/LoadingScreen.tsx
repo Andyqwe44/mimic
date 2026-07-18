@@ -27,7 +27,7 @@ export function LoadingScreen() {
   return (
     <div className="absolute inset-0 z-50 flex bg-bg-primary select-none max-[599px]:flex-col">
       {/* Side nav skeleton — desktop/tablet */}
-      <div className="hidden min-[600px]:flex w-20 min-[600px]:max-[959px]:w-14 shrink-0 flex-col border-r border-border bg-bg-secondary p-2 gap-2">
+      <div className="hidden min-[600px]:flex w-20 shrink-0 flex-col border-r border-border bg-bg-secondary p-2 gap-2">
         <Bar className="h-4 w-12 mx-auto mt-2" />
         {[0, 1, 2, 3].map((i) => (
           <Bar key={i} className="h-10 w-full rounded-lg" />

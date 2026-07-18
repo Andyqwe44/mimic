@@ -4,12 +4,13 @@ import { PrimaryNav } from './PrimaryNav'
 import { PageHeader } from './PageHeader'
 import type { AppPage } from '../lib/pages'
 import type { ShellMode } from '../hooks/useViewport'
-import { usePageSwipe } from '../hooks/usePageSwipe'
 
 export function AppShell({
   page,
   setPage,
   shellMode,
+  navExpanded,
+  onToggleNavExpand,
   pageTitle,
   device,
   connected,
@@ -27,6 +28,8 @@ export function AppShell({
   page: AppPage
   setPage: (p: AppPage) => void
   shellMode: ShellMode
+  navExpanded?: boolean
+  onToggleNavExpand?: () => void
   pageTitle: string
   device: string
   connected: boolean
@@ -42,7 +45,6 @@ export function AppShell({
   children: ReactNode
 }) {
   const bottom = shellMode === 'bottom'
-  const pageSwipeRef = usePageSwipe(bottom, page, setPage)
 
   return (
     <div
@@ -52,9 +54,16 @@ export function AppShell({
           : ''}`}
     >
       {!bottom && (
-        <PrimaryNav page={page} setPage={setPage} mode={shellMode} appVersion={appVersion} />
+        <PrimaryNav
+          page={page}
+          setPage={setPage}
+          mode="side"
+          expanded={navExpanded}
+          onToggleExpand={onToggleNavExpand}
+          appVersion={appVersion}
+        />
       )}
-      <div ref={pageSwipeRef} className="flex-1 flex flex-col min-w-0 min-h-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <PageHeader
           page={page}
           title={pageTitle}

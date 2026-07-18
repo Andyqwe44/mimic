@@ -22,7 +22,9 @@
     "devtools": "DevTools",
     "devtools_tip": "Test Target, Self-Test, Frame Dump, UI demos",
     "back_settings": "Back to Settings",
-    "back_settings_short": "Back"
+    "back_settings_short": "Back",
+    "expand": "Expand nav (show labels)",
+    "collapse": "Collapse nav (icons only)"
   },
 
   "capsule": {

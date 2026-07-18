@@ -23,6 +23,8 @@ export type BootSettings = {
   locale?: string
   serverHost?: string
   serverPort?: string
+  /** Side nav labels visible (user toggle; default true) */
+  navExpanded?: boolean
 }
 
 declare global {

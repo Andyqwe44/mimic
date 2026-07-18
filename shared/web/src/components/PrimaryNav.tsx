@@ -1,6 +1,6 @@
-// PrimaryNav — side rail (desktop/tablet) or bottom bar (phone). Same IA.
+// PrimaryNav — side rail (desktop) or bottom bar (phone). Same IA.
 import type { ReactNode } from 'react'
-import { Monitor, SlidersHorizontal, FileText, Settings } from 'lucide-react'
+import { Monitor, SlidersHorizontal, FileText, Settings, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Tooltip } from './Toolkit'
 import { H, NAV, RADIUS, SHELL_PAD, TEXT } from '../lib/design'
@@ -19,11 +19,16 @@ export function PrimaryNav({
   page,
   setPage,
   mode,
+  expanded = true,
+  onToggleExpand,
   appVersion,
 }: {
   page: AppPage
   setPage: (p: AppPage) => void
   mode: ShellMode
+  /** Side rail: show labels when true */
+  expanded?: boolean
+  onToggleExpand?: () => void
   appVersion?: string
 }) {
   const { t } = useTranslation()
@@ -75,19 +80,34 @@ export function PrimaryNav({
     )
   }
 
-  const wide = mode === 'side'
+  const wide = expanded
   return (
     <nav
       aria-label={t('nav.aria')}
-      className={`shrink-0 flex flex-col border-r border-border bg-bg-secondary
+      className={`shrink-0 flex flex-col border-r border-border bg-bg-secondary transition-[width] duration-200
         ${wide ? NAV.sideWide : NAV.sideCompact} ${SHELL_PAD.safeTop}`}
     >
-      <div
-        className={`px-2 py-3 ${TEXT.xs} font-bold tracking-wide truncate
-          ${wide ? 'text-text-primary' : 'text-center text-accent'}`}
-      >
-        {wide ? 'MIMIC' : 'M'}
-      </div>
+      <Tooltip text={wide ? t('nav.collapse') : t('nav.expand')}>
+        <button
+          type="button"
+          onClick={() => {
+            onToggleExpand?.()
+            addLog(`[Nav] rail ${wide ? 'collapse' : 'expand'}`)
+          }}
+          className={`mx-1.5 mt-2 mb-1 flex items-center justify-center gap-1 h-9 ${RADIUS.lg}
+            text-text-primary hover:bg-bg-hover transition-colors`}
+        >
+          {wide ? (
+            <>
+              <span className={`${TEXT.xs} font-bold tracking-wide`}>MIMIC</span>
+              <ChevronsLeft className={`${H.iconSm} text-text-muted shrink-0`} />
+            </>
+          ) : (
+            <ChevronsRight className={`${H.icon} text-accent`} />
+          )}
+        </button>
+      </Tooltip>
+
       <div className="flex-1 flex flex-col gap-1 px-1.5">
         {items.map((it) => {
           const active = isActive(it.id)

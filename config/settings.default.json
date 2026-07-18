@@ -17,5 +17,6 @@
   "devSecondaryAccent": "#22C55E",
   "locale": "en",
   "serverHost": "127.0.0.1",
-  "serverPort": "9997"
+  "serverPort": "9997",
+  "navExpanded": true
 }

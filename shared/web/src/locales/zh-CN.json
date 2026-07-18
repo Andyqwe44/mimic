@@ -22,7 +22,9 @@
     "devtools": "开发工具",
     "devtools_tip": "测试目标 · 自检 · 帧保存 · 界面预览",
     "back_settings": "返回设置",
-    "back_settings_short": "返回"
+    "back_settings_short": "返回",
+    "expand": "展开导航（显示文字）",
+    "collapse": "折叠导航（仅图标）"
   },
 
   "capsule": {
