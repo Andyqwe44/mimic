@@ -562,6 +562,8 @@
 
   "app": {
     "resize_expand": "向右拖曳展開面板",
-    "resize_drag": "拖曳調整面板寬度，向右拖到底可摺疊"
+    "resize_drag": "拖曳調整面板寬度，向右拖到底可摺疊",
+    "shell_open_controls": "控制欄（左滑）",
+    "shell_back_workspace": "返回主區（右滑）"
   }
 }

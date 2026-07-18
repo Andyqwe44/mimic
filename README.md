@@ -66,19 +66,22 @@ powershell -File scripts\Build.ps1                    # all native under pc/
 powershell -File scripts\Build.ps1 -Module mimic_client
 
 powershell -File scripts\Release.ps1 -DryRun
-powershell -File scripts\Release.ps1 -ClientOnly      # pc/client/src/version.h
+powershell -File scripts\Release.ps1 -ClientOnly      # pc/client/src/version.h (+ Android CDN)
 powershell -File scripts\Release.ps1 -ServerOnly      # server/package.json
+powershell -File scripts\Release.ps1 -PublishGitee    # optional: attach thin Setups on Gitee
 ```
+
+默认只发 **CDN**（旧 Setup 安装后应用内更新即可）。`-PublishGitee` 才会上传 thin Setup 附件。
 
 | Version truth | File |
 |---------------|------|
 | PC client | `pc/client/src/version.h` → `APP_VERSION` |
 | Server | `server/package.json` → `version` |
-| Android | `android/package.json` + `android/version.json` |
+| Android | `android/version.json`（+ gradle `versionName`） |
 
 CDN: `http://47.107.43.5/mimic/client/` · `.../server/` · `.../android/`。
 
-Gitee Release 附件：`MimicClient_Setup_*.exe` · `MimicServer_Setup_*.exe` · **`MimicAndroid_Setup_*.apk`**（薄安装器，对齐 PC Setup：安装后从 CDN 拉 Client APK）。
+Gitee Release 附件（可选）：`MimicClient_Setup_*.exe` · `MimicServer_Setup_*.exe` · **`MimicAndroid_Setup_*.apk`**。
 
 Android 分发（与 PC 同构）：
 

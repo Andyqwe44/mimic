@@ -64,10 +64,10 @@ export function LoadingScreen() {
         </div>
       </div>
 
-      {/* Body — left settings column + divider + right panel stack */}
+      {/* Body — wide: left + divider + right; narrow (<708): workspace only */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: settings column */}
-        <div className="flex-1 space-y-3 overflow-hidden p-6" style={{ minWidth: 360 }}>
+        <div className="min-w-0 flex-1 space-y-3 overflow-hidden p-6 min-[708px]:min-w-[360px]">
           {/* StatusBar strip */}
           <div className="flex items-center gap-4 rounded-xl bg-bg-secondary px-4 py-2.5 ring-1 ring-inset ring-border">
             <Bar className="h-3.5 w-24" />
@@ -84,13 +84,11 @@ export function LoadingScreen() {
           <Card rows={2} />
         </div>
 
-        {/* Resize divider */}
-        <div className="flex w-1 shrink-0 items-center justify-center">
+        {/* Resize divider + right rail — hide when narrow (matches live shell) */}
+        <div className="hidden min-[708px]:flex w-1 shrink-0 items-center justify-center">
           <div className="h-8 w-[2px] rounded-full bg-border" />
         </div>
-
-        {/* Right: panel stack (Connection / Screenshot / Log) */}
-        <div className="flex shrink-0 flex-col gap-3 p-3" style={{ width: 324 }}>
+        <div className="hidden min-[708px]:flex shrink-0 flex-col gap-3 p-3" style={{ width: 324 }}>
           <Card rows={3} />
           <Card rows={2} />
           <Card rows={4} />

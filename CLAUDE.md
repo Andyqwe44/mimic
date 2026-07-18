@@ -194,13 +194,14 @@ Exit code `2` = already running.
 ```powershell
 # PC: bump pc/client/src/version.h
 # Server: bump server/package.json
-powershell -File scripts\Release.ps1
-powershell -File scripts\Release.ps1 -ClientOnly
+powershell -File scripts\Release.ps1              # CDN only（默认）
+powershell -File scripts\Release.ps1 -ClientOnly  # PC + Android CDN
 powershell -File scripts\Release.ps1 -ServerOnly
 powershell -File scripts\Release.ps1 -DryRun
+powershell -File scripts\Release.ps1 -PublishGitee  # 可选：薄 Setup → Gitee
 ```
 
-货架 CDN：`http://47.107.43.5/mimic/{client,server,android}/`。Gitee 只挂 thin Setup。
+货架 CDN：`http://47.107.43.5/mimic/{client,server,android}/`。默认不传 Gitee Setup（旧 Setup + 应用内更新）；`-PublishGitee` 才挂 thin Setup。
 
 **仓库迁移（2026-07，v0.3.31）**：发布仓 `gitee.com/Andyqwe44/mimic`；旧 `tictactoe` 仓冻结于 v0.3.31 跳板，勿删。
 

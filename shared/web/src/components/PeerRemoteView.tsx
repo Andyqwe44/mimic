@@ -175,7 +175,10 @@ export function PeerRemoteView({
         <span className="tabular-nums">{fps} fps</span>
         <span className="ml-auto truncate">{status}{!humanControl ? ' · AI mode' : ''}</span>
       </div>
-      <div className="bg-black flex items-center justify-center min-h-[160px] max-h-[280px]">
+      <div
+        className="bg-black flex items-center justify-center min-h-[160px] max-h-[280px]"
+        data-no-shell-swipe
+      >
         <canvas
           ref={canvasRef}
           width={640}

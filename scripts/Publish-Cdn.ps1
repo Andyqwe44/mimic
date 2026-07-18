@@ -22,9 +22,10 @@ if (($ClientOnly -and $ServerOnly) -or ($ClientOnly -and $AndroidOnly) -or ($Ser
 . "$PSScriptRoot\lib\Common.ps1"
 $ErrorActionPreference = 'Stop'
 $root = Get-RepoRoot
+# ClientOnly ships client + android (shared UI). ServerOnly = server only.
 $doClient = -not $ServerOnly -and -not $AndroidOnly
 $doServer = -not $ClientOnly -and -not $AndroidOnly
-$doAndroid = -not $SkipAndroid -and (-not $ClientOnly) -and (-not $ServerOnly)
+$doAndroid = -not $SkipAndroid -and -not $ServerOnly
 if ($AndroidOnly) { $doClient = $false; $doServer = $false; $doAndroid = $true }
 if (-not $Version) {
     $Version = if ($doClient) { Get-AppVersion } elseif ($doServer) { Get-ServerVersion } else { '0.1.0' }

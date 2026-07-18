@@ -1,6 +1,6 @@
 // ═══ TopBar — MXU-style tab bar with Start/Stop + locale/perm/theme shortcuts ═══
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Monitor, Settings, Cpu, Play, Square, User, Shield } from 'lucide-react'
+import { FileText, Monitor, Settings, Cpu, Play, Square, User, Shield, PanelRight, ArrowLeft } from 'lucide-react'
 import { ActionBtn, ThemeBtn, Tooltip } from './Toolkit'
 import { addLog } from '../lib/bridge'
 import { useTranslation } from 'react-i18next'
@@ -33,6 +33,9 @@ export function TopBar({
   setLocale,
   isAdmin,
   onSwitchPermission,
+  narrowLayout = false,
+  shellView = 'workspace',
+  onToggleShell,
 }: {
   tab: string
   setTab: (t: 'Monitor' | 'Log' | 'Settings' | 'DevTools') => void
@@ -46,6 +49,9 @@ export function TopBar({
   setLocale: (l: string) => void
   isAdmin: boolean
   onSwitchPermission: (toAdmin: boolean) => void
+  narrowLayout?: boolean
+  shellView?: 'workspace' | 'controls'
+  onToggleShell?: () => void
 }) {
   const { t } = useTranslation()
   const [langOpen, setLangOpen] = useState(false)
@@ -106,8 +112,35 @@ export function TopBar({
         ))}
       </div>
 
-      {/* Right: Start/Stop | Lang · Perm · Theme (one divider only) */}
+      {/* Right: [shell] | Start/Stop | Lang · Perm · Theme */}
       <div className={`flex items-center ${GAP.xs} px-2`}>
+        {narrowLayout && onToggleShell && (
+          <>
+            <Tooltip
+              text={
+                shellView === 'workspace'
+                  ? t('app.shell_open_controls')
+                  : t('app.shell_back_workspace')
+              }
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleShell()
+                  addLog(`[Layout] shell toggle → ${shellView === 'workspace' ? 'controls' : 'workspace'}`)
+                }}
+                className={ICON_CELL}
+              >
+                {shellView === 'workspace' ? (
+                  <PanelRight className={H.icon} />
+                ) : (
+                  <ArrowLeft className={H.icon} />
+                )}
+              </button>
+            </Tooltip>
+            <div className="mx-1 h-4 w-px bg-border shrink-0" />
+          </>
+        )}
         {running ? (
           <ActionBtn
             icon={<Square className={H.iconSm} />}

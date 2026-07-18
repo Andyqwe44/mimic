@@ -1,11 +1,14 @@
-# Release.ps1 ??build ??CDN shelf ??thin Setups ??verify ??git (source only) ??Gitee.
+# Release.ps1 — build → CDN shelf → thin Setups (local) → verify → git.
+# Gitee Setup upload is OFF by default (old Setup + in-app update is enough).
+# Opt in with -PublishGitee when a new thin installer must be attached on Gitee.
 #
 #   powershell -File scripts\Release.ps1
 #   powershell -File scripts\Release.ps1 -DryRun
 #   powershell -File scripts\Release.ps1 -ClientOnly
 #   powershell -File scripts\Release.ps1 -ServerOnly
+#   powershell -File scripts\Release.ps1 -PublishGitee
 #
-# Binaries live on http://47.107.43.5/mimic/ ??NOT in git.
+# Binaries live on http://47.107.43.5/mimic/ — NOT in git.
 
 [CmdletBinding()]
 param(
@@ -13,7 +16,8 @@ param(
     [switch]$Interactive,
     [switch]$SkipVerify,
     [switch]$ClientOnly,
-    [switch]$ServerOnly
+    [switch]$ServerOnly,
+    [switch]$PublishGitee
 )
 
 if ($ClientOnly -and $ServerOnly) { throw 'Use only one of -ClientOnly / -ServerOnly (or neither for both)' }
@@ -86,6 +90,9 @@ if (Test-Path $ajPath) {
     $androidVer = [string](Get-Content -Raw $ajPath | ConvertFrom-Json).app
 }
 if ($doClient) {
+    Write-Step 'build MimicAndroid APKs'
+    & "$PSScriptRoot\Build-Android.ps1"
+    $androidVer = [string](Get-Content -Raw $ajPath | ConvertFrom-Json).app
     Write-Step 'pack MimicAndroid'
     & "$PSScriptRoot\Pack-MimicAndroid.ps1" -Version $androidVer
 }
@@ -127,14 +134,14 @@ if ($doClient -and -not $SkipVerify) {
 }
 
 if ($DryRun) {
-    Write-Host "`n==================== dry-run OK (CDN + setups; not published) ====================" -ForegroundColor Green
-    if ($doClient) { Write-Host "  Client: $clientSetup" }
-    if ($doServer) { Write-Host "  Server: $serverSetup" }
+    Write-Host "`n==================== dry-run OK (CDN published; git/Gitee skipped) ====================" -ForegroundColor Green
+    if ($doClient) { Write-Host "  Client setup (local): $clientSetup" }
+    if ($doServer) { Write-Host "  Server setup (local): $serverSetup" }
     Write-Host "  CDN:    $cdnBase/"
     return
 }
 
-# Git ??source only (release/ is gitignored)
+# Git — source only (release/ is gitignored)
 Write-Step 'git commit + tag + push (source only)'
 $tagName = if ($doClient) { "v$ver" } else { "server-v$serverVer" }
 $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -142,11 +149,11 @@ try {
     git add -A
     git add -u
     $msg = if ($doClient -and $doServer) {
-        "release: client v$ver + server v$serverVer (CDN shelf; thin setups)"
+        "release: client v$ver + server v$serverVer (CDN)"
     } elseif ($doClient) {
-        "release: client v$ver (CDN shelf; thin setup)"
+        "release: client v$ver (CDN)"
     } else {
-        "release: server v$serverVer (CDN shelf; thin setup)"
+        "release: server v$serverVer (CDN)"
     }
     $commitOut = git commit -m $msg 2>&1 | Out-String
     Write-Host $commitOut
@@ -165,25 +172,30 @@ try {
 
     git push github main 2>&1 | Write-Host
     if ($LASTEXITCODE) {
-        Write-Warn2 "git push github main failed (exit $LASTEXITCODE) ??Gitee release continues"
+        Write-Warn2 "git push github main failed (exit $LASTEXITCODE)"
     } else { Write-Ok 'pushed github main' }
     if ($doClient) {
         git push -f github "refs/tags/v${ver}" 2>&1 | Write-Host
         if ($LASTEXITCODE) {
-            Write-Warn2 "git push github tag failed (exit $LASTEXITCODE) ??Gitee release continues"
+            Write-Warn2 "git push github tag failed (exit $LASTEXITCODE)"
         } else { Write-Ok "pushed github v$ver" }
     }
 }
 finally { $ErrorActionPreference = $eap }
 Write-Ok "pushed origin main"
 
-# Gitee Release
-if ($doClient -and $doServer) {
-    & "$PSScriptRoot\Publish.ps1" -Version $ver -ServerVersion $serverVer
-} elseif ($doClient) {
-    & "$PSScriptRoot\Publish.ps1" -Version $ver -ClientOnly
+# Gitee thin Setup — opt-in only (old Setup + CDN in-app update is the default path)
+if ($PublishGitee) {
+    Write-Step 'publish Gitee thin Setups (-PublishGitee)'
+    if ($doClient -and $doServer) {
+        & "$PSScriptRoot\Publish.ps1" -Version $ver -ServerVersion $serverVer
+    } elseif ($doClient) {
+        & "$PSScriptRoot\Publish.ps1" -Version $ver -ClientOnly
+    } else {
+        & "$PSScriptRoot\Publish.ps1" -Version $serverVer -ServerOnly -ServerVersion $serverVer
+    }
 } else {
-    & "$PSScriptRoot\Publish.ps1" -Version $serverVer -ServerOnly -ServerVersion $serverVer
+    Write-Note 'Gitee Setup skipped (default). Use -PublishGitee to attach thin installers.'
 }
 
 if ($doClient) {
@@ -196,16 +208,28 @@ if ($doClient) {
         }
     }
     catch { Write-Warn2 "CDN URL check failed: $_" }
+    try {
+        $ar = Invoke-RestMethod -Uri "$cdnBase/android/version.json" -Method Get -TimeoutSec 30
+        Write-Ok "CDN android app=$($ar.app)"
+    }
+    catch { Write-Warn2 "CDN android check failed: $_" }
 }
 
 Write-Host "`n==================== release DONE ====================" -ForegroundColor Green
-Write-Host "  CDN:    $cdnBase/"
+Write-Host "  CDN client:  $cdnBase/client/"
+Write-Host "  CDN server:  $cdnBase/server/"
+Write-Host "  CDN android: $cdnBase/android/"
 if ($doClient) {
-    Write-Host "  Client:  https://gitee.com/Andyqwe44/mimic/releases/download/v$ver/MimicClient_Setup_v$ver.exe"
+    Write-Host "  Update path: old Setup → install → in-app update to v$ver / android v$androidVer"
 }
-if ($doServer) {
-    Write-Host "  Server:  https://gitee.com/Andyqwe44/mimic/releases/download/v$ver/MimicServer_Setup_v$serverVer.exe"
-}
-if ($doClient) {
-    Write-Host "  Android: https://gitee.com/Andyqwe44/mimic/releases/download/v$ver/MimicAndroid_Setup_v$androidVer.zip"
+if ($PublishGitee) {
+    if ($doClient) {
+        Write-Host "  Gitee Client:  https://gitee.com/Andyqwe44/mimic/releases/download/v$ver/MimicClient_Setup_v$ver.exe"
+    }
+    if ($doServer) {
+        Write-Host "  Gitee Server:  https://gitee.com/Andyqwe44/mimic/releases/download/v$ver/MimicServer_Setup_v$serverVer.exe"
+    }
+    if ($doClient) {
+        Write-Host "  Gitee Android: https://gitee.com/Andyqwe44/mimic/releases/download/v$ver/MimicAndroid_Setup_v$androidVer.zip"
+    }
 }

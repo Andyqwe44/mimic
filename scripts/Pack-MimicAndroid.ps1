@@ -40,9 +40,17 @@ if (-not $setupSrc -or -not $clientSrc) {
     throw 'MimicAndroid APKs not built'
 }
 
-Copy-Item $setupSrc.FullName (Join-Path $outRoot $setupName) -Force
-Copy-Item $clientSrc.FullName (Join-Path $outRoot $clientName) -Force
-Copy-Item $setupSrc.FullName $setupApkOut -Force
+$setupDest = Join-Path $outRoot $setupName
+$clientDest = Join-Path $outRoot $clientName
+if ($setupSrc.FullName -ne $setupDest) {
+    Copy-Item $setupSrc.FullName $setupDest -Force
+}
+if ($clientSrc.FullName -ne $clientDest) {
+    Copy-Item $clientSrc.FullName $clientDest -Force
+}
+if ($setupSrc.FullName -ne $setupApkOut) {
+    Copy-Item $setupSrc.FullName $setupApkOut -Force
+}
 
 $manifest = [ordered]@{
     schema         = '1'

@@ -27,13 +27,16 @@ powershell -File scripts\Build.ps1 -Module mimic_client
 ## 一键发布
 
 ```powershell
-# bump version.h 和/或 server/package.json 后:
-powershell -File scripts\Release.ps1
-powershell -File scripts\Release.ps1 -ClientOnly
+# bump version.h 和/或 server/package.json / android 后:
+powershell -File scripts\Release.ps1              # → CDN（默认不传 Gitee Setup）
+powershell -File scripts\Release.ps1 -ClientOnly  # PC + Android CDN
 powershell -File scripts\Release.ps1 -ServerOnly
 powershell -File scripts\Release.ps1 -DryRun
+powershell -File scripts\Release.ps1 -PublishGitee  # 可选：薄 Setup 挂 Gitee
 ```
 
-Android APK 通道：上传到 CDN `http://47.107.43.5/mimic/android/`（`version.json` + apk）；详见 `android/README.md`。
+默认路径：CDN 货架 + 旧 Setup 应用内更新。Gitee Setup 附件需显式 `-PublishGitee`。
 
-CDN client/server：`scripts/Publish-Cdn.ps1`。
+Android APK：`Build-Android.ps1` → CDN `http://47.107.43.5/mimic/android/`；详见 `android/README.md`。
+
+CDN：`scripts/Publish-Cdn.ps1`（`-ClientOnly` 含 android）。

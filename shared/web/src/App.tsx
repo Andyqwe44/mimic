@@ -1,6 +1,7 @@
 // ═══ App — Game Agent Monitor root ═══
-// Orchestrates: tab routing, right-panel layout, capture state machine,
+// Orchestrates: tab routing, dual-pane / narrow shell layout, capture state machine,
 // theme, pin lock, window polling, and resize handling.
+// Narrow (<708px): workspace ↔ controls via swipe (touch or mouse drag). Wide: dual-pane.
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TopBar } from './components/TopBar'
@@ -30,6 +31,10 @@ import type { WindowInfo, Rect } from './lib/types'
 // ── Layout constants ──
 const MIN_LEFT_WIDTH = 360
 const DEFAULT_RIGHT_WIDTH = 324
+/** Below this width: single-pane shell (workspace ↔ controls). Above: dual-pane. */
+const H_COLLAPSE_THRESHOLD = MIN_LEFT_WIDTH + DEFAULT_RIGHT_WIDTH + 24 // 708
+const SHELL_SWIPE_PX = 56
+const SHELL_SWIPE_RATIO = 1.25 // |dx| must exceed |dy| * ratio
 
 // DELIBERATE test delay so the startup skeleton screen stays visible long enough
 // to observe during development. Real startup needs NO artificial wait — the
@@ -60,6 +65,19 @@ export default function App() {
   const [demoSelfTest, setDemoSelfTest] = useState<SelfTestState | null>(null)
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT_WIDTH)
   const [rightCollapsed, setRightCollapsed] = useState(false)
+  // Narrow window (= phone): one full-screen page at a time; wide = dual-pane.
+  const [narrowLayout, setNarrowLayout] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < H_COLLAPSE_THRESHOLD,
+  )
+  const [shellView, setShellView] = useState<'workspace' | 'controls'>('workspace')
+  const narrowLayoutRef = useRef(narrowLayout)
+  narrowLayoutRef.current = narrowLayout
+  const shellSwipeRef = useRef<{
+    pointerId: number
+    x: number
+    y: number
+    armed: boolean
+  } | null>(null)
 
   // ── Right panel expanded/collapsed state + refs (used in layout callbacks) ──
   const [connectionExpanded, setConnectionExpanded] = useState(true)
@@ -513,6 +531,7 @@ export default function App() {
   useEffect(() => {
     const check = () => {
       measureLayout()
+      if (narrowLayoutRef.current) return // narrow: scroll the rail instead of collapsing cards
       const el = rightPanelRef.current
       if (!el) return
       const kids = el.querySelectorAll(':scope > div')
@@ -556,6 +575,7 @@ export default function App() {
   // ── Window resize → auto-collapse/expand panels ──
   useEffect(() => {
     const onResize = () => {
+      if (narrowLayoutRef.current) return
       const el = rightPanelRef.current
       if (!el) return
       const ch = el.clientHeight
@@ -670,6 +690,7 @@ export default function App() {
 
   // ── Drag-end overflow check — same logic as resize but called after divider drag ──
   const checkVerticalLayout = useCallback(() => {
+    if (narrowLayoutRef.current) return
     const el = rightPanelRef.current
     if (!el) return
     const kids = el.querySelectorAll(':scope > div')
@@ -748,27 +769,67 @@ export default function App() {
     }
   }, [])
 
-  // ── Horizontal auto-collapse — when window too narrow for both panels ──
-  const H_COLLAPSE_THRESHOLD = MIN_LEFT_WIDTH + DEFAULT_RIGHT_WIDTH + 24
+  // ── Narrow shell ↔ dual-pane (width only; phone = narrow desktop) ──
   const autoCollapsedByWidth = useRef(false)
 
   useEffect(() => {
     const onResize = () => {
-      const w = window.innerWidth
-      if (w < H_COLLAPSE_THRESHOLD && !rightCollapsed) {
-        autoCollapsedByWidth.current = true
-        setRightCollapsed(true)
-        addLog('[Layout] window too narrow → auto-collapse right panel')
-      } else if (w >= H_COLLAPSE_THRESHOLD && rightCollapsed && autoCollapsedByWidth.current) {
-        autoCollapsedByWidth.current = false
-        setRightCollapsed(false)
-        addLog('[Layout] window wide enough → auto-expand right panel')
-      }
+      const narrow = window.innerWidth < H_COLLAPSE_THRESHOLD
+      setNarrowLayout((prev) => {
+        if (narrow && !prev) {
+          setShellView('workspace')
+          addLog('[Layout] narrow shell → workspace ↔ controls (swipe)')
+        } else if (!narrow && prev) {
+          setShellView('workspace')
+          if (autoCollapsedByWidth.current) {
+            autoCollapsedByWidth.current = false
+            setRightCollapsed(false)
+          }
+          addLog('[Layout] wide shell → dual-pane')
+        }
+        return narrow
+      })
     }
     window.addEventListener('resize', onResize)
     onResize()
     return () => window.removeEventListener('resize', onResize)
-  }, [rightCollapsed])
+  }, [])
+
+  const goShellView = useCallback((view: 'workspace' | 'controls') => {
+    setShellView((prev) => {
+      if (prev === view) return prev
+      addLog(`[Layout] shell → ${view}`)
+      return view
+    })
+  }, [])
+
+  const onShellPointerDown = useCallback((e: React.PointerEvent) => {
+    if (!narrowLayout) return
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    const el = e.target as HTMLElement | null
+    if (el?.closest?.('[data-no-shell-swipe], canvas, input, textarea, select')) return
+    const pointerId = e.pointerId
+    const x0 = e.clientX
+    const y0 = e.clientY
+    shellSwipeRef.current = { pointerId, x: x0, y: y0, armed: true }
+
+    const finish = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      const s = shellSwipeRef.current
+      if (!s?.armed || s.pointerId !== pointerId) return
+      shellSwipeRef.current = null
+      const dx = ev.clientX - s.x
+      const dy = ev.clientY - s.y
+      if (Math.abs(dx) < SHELL_SWIPE_PX) return
+      if (Math.abs(dx) < Math.abs(dy) * SHELL_SWIPE_RATIO) return
+      if (dx < 0) goShellView('controls')
+      else goShellView('workspace')
+    }
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+  }, [narrowLayout, goShellView])
 
   // ═══ Capture state ═══
   const isResizing = useRef(false)
@@ -1384,7 +1445,10 @@ export default function App() {
       {/* ── Top bar: tabs + Start/Stop + theme ── */}
       <TopBar
         tab={tab}
-        setTab={setTab}
+        setTab={(t) => {
+          goShellView('workspace')
+          setTab(t)
+        }}
         running={running}
         onStart={() => setRunning(true)}
         onStop={() => setRunning(false)}
@@ -1395,13 +1459,38 @@ export default function App() {
         setLocale={setLocale}
         isAdmin={isAdmin}
         onSwitchPermission={switchPermission}
+        narrowLayout={narrowLayout}
+        shellView={shellView}
+        onToggleShell={() => goShellView(shellView === 'workspace' ? 'controls' : 'workspace')}
       />
-      {/* ── Main content area: left (tab content) + resize divider + right (panels) ── */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* ── Left: tab content (Settings / Monitor / Log) ── */}
+      {/* ── Main: wide = dual-pane; narrow = swipe workspace ↔ controls ── */}
+      <div
+        className={`flex-1 overflow-hidden ${narrowLayout ? '' : 'flex'}`}
+        onPointerDown={narrowLayout ? onShellPointerDown : undefined}
+      >
         <div
-          className="flex-1 flex flex-col overflow-hidden border-r border-border"
-          style={{ minWidth: MIN_LEFT_WIDTH }}
+          className={
+            narrowLayout
+              ? 'flex h-full transition-transform duration-300 ease-out will-change-transform'
+              : 'contents'
+          }
+          style={
+            narrowLayout
+              ? {
+                  width: '200%',
+                  transform: shellView === 'controls' ? 'translateX(-50%)' : 'translateX(0)',
+                }
+              : undefined
+          }
+        >
+        {/* ── Left / workspace: tab content (Settings / Monitor / Log) ── */}
+        <div
+          className={
+            narrowLayout
+              ? 'flex h-full w-1/2 flex-col overflow-hidden border-r border-border'
+              : 'flex-1 flex flex-col overflow-hidden border-r border-border'
+          }
+          style={{ minWidth: narrowLayout ? 0 : MIN_LEFT_WIDTH }}
         >
           {/* Settings tab */}
           {tab === 'Settings' && (
@@ -1525,25 +1614,35 @@ export default function App() {
             onCheckUpdate={checkForUpdate}
           />
         </div>
-        {/* ── Resize divider ── */}
-        <Tooltip
-          text={
-            rightCollapsed ? t('app.resize_expand') : t('app.resize_drag')
-          }
-        >
-          <div
-            onMouseDown={handleResizeStart}
-            className={`${rightCollapsed ? 'w-4' : 'w-1'} hover:bg-accent/50 cursor-col-resize flex items-center justify-center group shrink-0 transition-all select-none bg-transparent`}
+        {/* ── Resize divider (wide shell only) ── */}
+        {!narrowLayout && (
+          <Tooltip
+            text={
+              rightCollapsed ? t('app.resize_expand') : t('app.resize_drag')
+            }
           >
-            <div className="w-[2px] h-8 rounded-full transition-colors bg-border group-hover:bg-accent" />
-          </div>
-        </Tooltip>
-        {/* ── Right panel stack: Connection → Screenshot → Log → spacer ── */}
-        {!rightCollapsed && (
+            <div
+              onMouseDown={handleResizeStart}
+              className={`${rightCollapsed ? 'w-4' : 'w-1'} hover:bg-accent/50 cursor-col-resize flex items-center justify-center group shrink-0 transition-all select-none bg-transparent`}
+            >
+              <div className="w-[2px] h-8 rounded-full transition-colors bg-border group-hover:bg-accent" />
+            </div>
+          </Tooltip>
+        )}
+        {/* ── Right / controls: Connection → Peer → Gates/Screenshot → Log ── */}
+        {(narrowLayout || !rightCollapsed) && (
           <div
             ref={rightPanelRef}
-            className="flex flex-col p-3 gap-3 overflow-hidden min-h-0"
-            style={{ width: rightWidth, minWidth: 324, maxWidth: 400 }}
+            className={
+              narrowLayout
+                ? 'flex h-full w-1/2 flex-col p-3 gap-3 overflow-y-auto min-h-0'
+                : 'flex flex-col p-3 gap-3 overflow-hidden min-h-0'
+            }
+            style={
+              narrowLayout
+                ? undefined
+                : { width: rightWidth, minWidth: 324, maxWidth: 400 }
+            }
           >
             {/* Connection panel */}
             <div className="shrink-0">
@@ -1660,10 +1759,11 @@ export default function App() {
                 pinned={logPinned} onTogglePin={toggleLogPin}
               />
             </div>
-            {/* Flexible spacer to absorb leftover vertical space */}
-            <div className="flex-1" />
+            {/* Flexible spacer to absorb leftover vertical space (wide rail only) */}
+            {!narrowLayout && <div className="flex-1" />}
           </div>
         )}
+        </div>
       </div>
 
       {/* ── Self-Test report overlay ── */}

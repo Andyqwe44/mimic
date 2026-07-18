@@ -562,6 +562,8 @@
 
   "app": {
     "resize_expand": "Drag right to expand the panel",
-    "resize_drag": "Drag to resize; drag all the way right to collapse"
+    "resize_drag": "Drag to resize; drag all the way right to collapse",
+    "shell_open_controls": "Controls (swipe left)",
+    "shell_back_workspace": "Back to workspace (swipe right)"
   }
 }
