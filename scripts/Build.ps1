@@ -212,8 +212,8 @@ function Build-ControllerServer {
         Write-Step 'controller_web (vite build)'
         Push-Location $ctrlSrc
         try {
-            if (-not (Test-Path 'node_modules')) { npm install }
-            npm run build
+            if (-not (Test-Path 'node_modules')) { cmd /c "npm install" }
+            cmd /c "npm run build"
             if ($LASTEXITCODE) { throw 'controller_web: vite build failed' }
         }
         finally { Pop-Location }

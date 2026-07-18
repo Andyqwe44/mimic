@@ -35,16 +35,14 @@ if ($doClient) {
     Write-Step 'frontend (npm run build)'
     Push-Location (Join-Path $root 'shared\web')
     try {
-        # npm warns on stderr; do not let $ErrorActionPreference=Stop abort the release
-        $eap = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        npm run build
-        $ErrorActionPreference = $eap
+        # Route through cmd so npm stderr warnings do not become PS terminating errors
+        cmd /c "npm run build"
         if ($LASTEXITCODE) { throw 'npm build failed' }
     } finally { Pop-Location }
     Write-Ok 'dist'
 
-    & "$PSScriptRoot\Build.ps1" -Module all
+    # Product modules only (skip legacy controller_server / h264_bench in release path)
+    & "$PSScriptRoot\Build.ps1" -Module logger,capture,input,updater,test_target,mimic_client
 
     Write-Step 'assemble release\MimicClient'
     $rel = Join-Path $root 'release\MimicClient'
