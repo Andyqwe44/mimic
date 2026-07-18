@@ -9,12 +9,15 @@ declare global {
       getPlatform?: () => string
       Plugins?: Record<string, any>
     }
+    MimicAndroid?: { post: (msg: string) => void }
+    __mimicOnNativePush?: (msg: any) => void
   }
 }
 
 export function getHostPlatform(): HostPlatform {
   const cap = typeof window !== 'undefined' ? window.Capacitor : undefined
   if (cap?.isNativePlatform?.() || cap?.getPlatform?.() === 'android') return 'android'
+  if (typeof window !== 'undefined' && window.MimicAndroid) return 'android'
   if (typeof window !== 'undefined' && (window as any).chrome?.webview) return 'windows'
   return 'browser'
 }

@@ -34,12 +34,30 @@ powershell -File scripts\Build-Android.ps1
 
 需要本机已装 **Android Studio（SDK）**；日常可用命令行 Gradle，不必每次开 Studio。
 
+## Setup 会不会重复下载？
+
+会检测。`<queries>` 声明 `com.mimic.client` 后，Setup 可用 `PackageManager` 读已装版本（**不需要** `QUERY_ALL_PACKAGES`）。
+
+- 已装且 **≥ CDN `app`** → 跳过下载，直接打开 Mimic  
+- 已装但更旧 → 下载并覆盖安装  
+- 按钮「Re-download」可强制重下  
+
+## 应用内更新（不是系统 A/B）
+
+安卓**第三方 App** 一般不是 A/B 双分区（那是系统 OTA）。我们的逻辑与多数应用商店相同：
+
+1. 下载新 APK 到缓存  
+2. `PackageInstaller` / 系统安装器 **同 `applicationId` 覆盖安装**（签名需一致）  
+3. 进程重启后即新版本  
+
+Settings → Check Update 走 `check_update` / `download_update`（shared/web 同一套 UI）。
+
 ## 手机测试
 
-1. 把 `MimicAndroid_Setup_v0.1.0.apk` 传到手机（Gitee / CDN / 数据线）。
-2. 允许「未知来源」安装 Setup。
-3. 打开 **Mimic Setup** → 允许「安装未知应用」→ 自动从 CDN 拉 Client → 确认安装。
-4. 打开 **Mimic** → 点 Probe Bootstrap，应能访问 `http://47.107.43.5:8443`。
+1. 装 `MimicAndroid_Setup_v*.apk`（Gitee / CDN）。  
+2. 打开 Setup → 从 CDN 装 Client（或已最新则直接打开）。  
+3. Client 应显示与 PC 相同的 React UI（shared/web）。  
+4. 测：**日志面板**、**Settings → Check Update**、Peer Probe Bootstrap。
 
 ## Cursor / Android Studio
 

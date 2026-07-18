@@ -1,6 +1,7 @@
 package com.mimic.setup
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,10 +19,9 @@ import java.net.URL
 import java.util.concurrent.Executors
 
 /**
- * Thin installer (PC Setup.exe analogue):
- *   1) GET CDN version.json
- *   2) Download client APK from download_base
- *   3) Prompt PackageInstaller / ACTION_VIEW
+ * Thin installer (PC Setup.exe analogue).
+ * Skips download when com.mimic.client is already installed at >= CDN version
+ * (declared via &lt;queries&gt; — no QUERY_ALL_PACKAGES needed).
  */
 class MainActivity : AppCompatActivity() {
 
@@ -39,11 +39,11 @@ class MainActivity : AppCompatActivity() {
         progress = findViewById(R.id.progress)
         btn = findViewById(R.id.btnInstall)
 
-        btn.setOnClickListener { startInstall() }
-        startInstall()
+        btn.setOnClickListener { startInstall(force = true) }
+        startInstall(force = false)
     }
 
-    private fun startInstall() {
+    private fun startInstall(force: Boolean) {
         btn.isEnabled = false
         progress.isIndeterminate = true
         setUi("Connecting to CDN…", CDN_VERSION)
@@ -68,12 +68,41 @@ class MainActivity : AppCompatActivity() {
             try {
                 val manifest = httpGetJson(CDN_VERSION)
                     ?: throw Exception("Cannot reach $CDN_VERSION")
+                val remoteVer = manifest.optString("app", "")
+                val installed = installedClientVersion()
+
+                if (!force && installed != null && remoteVer.isNotBlank() &&
+                    compareSemver(installed, remoteVer) >= 0
+                ) {
+                    runOnUiThread {
+                        setUi(
+                            "Already up to date",
+                            "Mimic Client v$installed ≥ CDN v$remoteVer — opening app."
+                        )
+                        progress.isIndeterminate = false
+                        progress.progress = 100
+                        launchClient()
+                        btn.isEnabled = true
+                        btn.text = getString(R.string.reinstall)
+                    }
+                    return@execute
+                }
+
+                if (!force && installed != null && remoteVer.isNotBlank() &&
+                    compareSemver(installed, remoteVer) < 0
+                ) {
+                    runOnUiThread {
+                        setUi(
+                            "Update available",
+                            "Installed v$installed → CDN v$remoteVer — downloading…"
+                        )
+                    }
+                }
+
                 val base = manifest.optString("download_base", CDN_BASE).trimEnd('/') + "/"
                 val apkName = when {
-                    manifest.has("client_apk") && manifest.getString("client_apk").isNotBlank() ->
-                        manifest.getString("client_apk")
-                    manifest.has("apk") && manifest.getString("apk").isNotBlank() ->
-                        manifest.getString("apk")
+                    manifest.optString("client_apk").isNotBlank() -> manifest.getString("client_apk")
+                    manifest.optString("apk").isNotBlank() -> manifest.getString("apk")
                     else -> throw Exception("version.json missing client_apk / apk")
                 }
                 val url = base + apkName
@@ -108,6 +137,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun installedClientVersion(): String? {
+        return try {
+            val pi = if (Build.VERSION.SDK_INT >= 33) {
+                packageManager.getPackageInfo(CLIENT_PKG, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(CLIENT_PKG, 0)
+            }
+            pi.versionName
+        } catch (_: PackageManager.NameNotFoundException) {
+            null
+        }
+    }
+
+    private fun launchClient() {
+        val launch = packageManager.getLaunchIntentForPackage(CLIENT_PKG)
+        if (launch != null) {
+            startActivity(launch)
+            finish()
+        } else {
+            setUi("Client installed but no launcher", CLIENT_PKG)
+        }
+    }
+
     private fun promptInstall(apk: File) {
         val uri = FileProvider.getUriForFile(
             this,
@@ -135,8 +188,7 @@ class MainActivity : AppCompatActivity() {
         }
         return try {
             if (conn.responseCode !in 200..299) return null
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            JSONObject(body)
+            JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
         } finally {
             conn.disconnect()
         }
@@ -175,7 +227,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val CLIENT_PKG = "com.mimic.client"
         const val CDN_BASE = "http://47.107.43.5/mimic/android/"
         const val CDN_VERSION = "http://47.107.43.5/mimic/android/version.json"
+
+        fun compareSemver(a: String, b: String): Int {
+            fun parts(s: String) =
+                s.trim().removePrefix("v").split('.').map { it.toIntOrNull() ?: 0 }
+            val pa = parts(a)
+            val pb = parts(b)
+            val n = maxOf(pa.size, pb.size)
+            for (i in 0 until n) {
+                val x = pa.getOrElse(i) { 0 }
+                val y = pb.getOrElse(i) { 0 }
+                if (x != y) return x - y
+            }
+            return 0
+        }
     }
 }

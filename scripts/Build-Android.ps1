@@ -1,13 +1,13 @@
-# Build thin MimicAndroid Setup + Client APKs (PC-style CDN install).
+# Build thin MimicAndroid Setup + Client (shared/web embedded).
 #
 #   powershell -File scripts\Build-Android.ps1
 #
-# Requires: Android SDK + JDK (Android Studio JBR recommended).
-# Output: release\MimicAndroid\*.apk + version.json
+# Client APK embeds shared/web dist (same UI as Windows). Setup skips CDN
+# download when com.mimic.client is already >= CDN version.
 
 [CmdletBinding()]
 param(
-    [string]$Configuration = 'debug'  # debug | release
+    [string]$Configuration = 'debug'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,18 +24,43 @@ if (Test-Path $jbr) { $env:JAVA_HOME = $jbr }
 $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk
 
+$ver = '0.1.1'
+$aj = Join-Path $root 'android\version.json'
+if (Test-Path $aj) {
+    $jv = Get-Content -Raw $aj | ConvertFrom-Json
+    if ($jv.app) { $ver = [string]$jv.app }
+}
+
+# ── shared/web → android assets ──
+Write-Step "frontend (shared/web → assets/www) v$ver"
+$web = Join-Path $root 'shared\web'
+Push-Location $web
+try {
+    $env:VITE_APP_VERSION = $ver
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    cmd /c "npm run build"
+    $ErrorActionPreference = $eap
+    if ($LASTEXITCODE) { throw 'npm build failed' }
+} finally { Pop-Location }
+
+$www = Join-Path $proj 'client\src\main\assets\www'
+if (Test-Path $www) { Remove-Item $www -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $www | Out-Null
+Copy-Item (Join-Path $web 'dist\*') $www -Recurse -Force
+Write-Ok "assets/www ($((Get-ChildItem $www -Recurse -File).Count) files)"
+
 $lp = Join-Path $proj 'local.properties'
-$sdkProp = ($sdk -replace '\\', '\\')
 Set-Content -Path $lp -Value "sdk.dir=$($sdk -replace '\\','\\')" -Encoding ascii
 
 $gradleBat = Get-ChildItem "$env:USERPROFILE\.gradle\wrapper\dists\gradle-8.7-bin" -Recurse -Filter 'gradle.bat' -ErrorAction SilentlyContinue |
     Select-Object -First 1 -ExpandProperty FullName
-if (-not $gradleBat) { throw 'Gradle 8.7 not found under ~/.gradle/wrapper/dists — open Android Studio once or install Gradle.' }
+if (-not $gradleBat) { throw 'Gradle 8.7 not found under ~/.gradle/wrapper/dists' }
 
 $taskSetup = if ($Configuration -eq 'release') { ':setup:assembleRelease' } else { ':setup:assembleDebug' }
 $taskClient = if ($Configuration -eq 'release') { ':client:assembleRelease' } else { ':client:assembleDebug' }
 
-Write-Step "Build Android ($Configuration)"
+Write-Step "gradle $Configuration"
 Push-Location $proj
 try {
     & $gradleBat $taskSetup $taskClient --no-daemon
@@ -46,10 +71,6 @@ $setupApk = Get-ChildItem (Join-Path $proj "setup\build\outputs\apk\$Configurati
 $clientApk = Get-ChildItem (Join-Path $proj "client\build\outputs\apk\$Configuration\*.apk") | Select-Object -First 1
 if (-not $setupApk -or -not $clientApk) { throw 'APK outputs missing' }
 
-$ver = '0.1.0'
-$aj = Join-Path $root 'android\version.json'
-if (Test-Path $aj) { $ver = [string](Get-Content -Raw $aj | ConvertFrom-Json).app }
-
 $out = Join-Path $root 'release\MimicAndroid'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $setupName = "MimicAndroid_Setup_v$ver.apk"
@@ -59,18 +80,18 @@ Copy-Item $clientApk.FullName (Join-Path $out $clientName) -Force
 Copy-Item $setupApk.FullName (Join-Path $root "release\$setupName") -Force
 
 $manifest = [ordered]@{
-    schema           = '1'
-    app              = $ver
-    platform         = 'android'
-    channel          = 'stable'
-    full_update      = $true
-    download_base    = 'http://47.107.43.5/mimic/android/'
-    setup_apk        = $setupName
-    client_apk       = $clientName
-    apk              = $clientName
-    has_apk          = $true
-    has_client_apk   = $true
-    message          = 'Thin Setup APK downloads Client APK from CDN (PC-style)'
+    schema         = '1'
+    app            = $ver
+    platform       = 'android'
+    channel        = 'stable'
+    full_update    = $true
+    download_base  = 'http://47.107.43.5/mimic/android/'
+    setup_apk      = $setupName
+    client_apk     = $clientName
+    apk            = $clientName
+    has_apk        = $true
+    has_client_apk = $true
+    message        = 'Thin Setup → CDN Client; shared/web UI; in-app APK update'
 }
 $utf8 = New-Object System.Text.UTF8Encoding $false
 $jsonText = ($manifest | ConvertTo-Json -Depth 6) + "`n"
@@ -79,5 +100,5 @@ $jsonText = ($manifest | ConvertTo-Json -Depth 6) + "`n"
 
 Write-Ok $setupName
 Write-Ok $clientName
-Write-Note "CDN publish: scp release\MimicAndroid\* aliyun:C:/mimic/cdn/android/"
-Write-Note "Gitee attach: release\$setupName  (thin setup — like PC Setup.exe)"
+Write-Note 'Publish CDN: scp release\MimicAndroid\* aliyun:C:/mimic/cdn/android/'
+Write-Note "Gitee: release\$setupName"

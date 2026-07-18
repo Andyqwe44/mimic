@@ -1,78 +1,160 @@
 package com.mimic.client
 
+import android.annotation.SuppressLint
 import android.os.Bundle
-import android.widget.Button
-import android.widget.TextView
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.Executors
 
 /**
- * Temporary thin client until Capacitor shared/web shell is wired.
- * Proves CDN → Setup → install → run, and Bootstrap reachability.
+ * Hosts shared/web (same React UI as Windows WebView2).
+ * JS hostCall → MimicAndroid.post → AndroidHost → __mimicResolve.
  */
 class MainActivity : AppCompatActivity() {
 
-    private val io = Executors.newSingleThreadExecutor()
+    private lateinit var webView: WebView
+    private lateinit var host: AndroidHost
+    private val io = Executors.newCachedThreadPool()
 
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        val status = findViewById<TextView>(R.id.status)
-        val detail = findViewById<TextView>(R.id.detail)
-        val btn = findViewById<Button>(R.id.btnProbe)
+        webView = WebView(this)
+        setContentView(webView)
 
-        status.text = getString(R.string.hello, BuildConfig.VERSION_NAME)
-        detail.text = getString(R.string.stub_hint)
+        host = AndroidHost(this) { msg ->
+            val payload = JSONObject.quote(msg.toString())
+            webView.evaluateJavascript("window.__mimicPush && window.__mimicPush($payload)", null)
+        }
 
-        btn.setOnClickListener {
-            btn.isEnabled = false
-            detail.text = "Probing $BOOTSTRAP …"
+        val s = webView.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.allowFileAccess = true
+        s.allowContentAccess = true
+        s.mediaPlaybackRequiresUserGesture = false
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        s.cacheMode = WebSettings.LOAD_DEFAULT
+
+        WebView.setWebContentsDebuggingEnabled(true)
+        webView.webChromeClient = WebChromeClient()
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                return false
+            }
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                injectBridgeShim()
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                injectBridgeShim()
+            }
+        }
+
+        webView.addJavascriptInterface(JsBridge(), "MimicAndroid")
+        webView.loadUrl("file:///android_asset/www/index.html")
+    }
+
+    private fun injectBridgeShim() {
+        val js = """
+            (function(){
+              if (window.__mimicBridgeReady) return;
+              window.__mimicBridgeReady = true;
+              window.__mimicId = 0;
+              window.__mimicPending = {};
+              window.__mimicResolve = function(id, result) {
+                var p = window.__mimicPending[id];
+                if (!p) return;
+                delete window.__mimicPending[id];
+                p.resolve({ result: result });
+              };
+              window.__mimicReject = function(id, err) {
+                var p = window.__mimicPending[id];
+                if (!p) return;
+                delete window.__mimicPending[id];
+                p.reject(new Error(err || 'native error'));
+              };
+              window.__mimicPush = function(raw) {
+                try {
+                  var msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                  if (window.__mimicOnNativePush) window.__mimicOnNativePush(msg);
+                } catch (e) {}
+              };
+              window.Capacitor = {
+                isNativePlatform: function(){ return true; },
+                getPlatform: function(){ return 'android'; },
+                Plugins: {
+                  MimicHost: {
+                    call: function(opts) {
+                      return new Promise(function(resolve, reject) {
+                        var id = ++window.__mimicId;
+                        window.__mimicPending[id] = { resolve: resolve, reject: reject };
+                        window.MimicAndroid.post(JSON.stringify({
+                          id: id,
+                          cmd: opts.cmd,
+                          args: opts.args || {}
+                        }));
+                      });
+                    }
+                  }
+                }
+              };
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
+    }
+
+    inner class JsBridge {
+        @JavascriptInterface
+        fun post(msg: String) {
             io.execute {
                 try {
-                    val health = httpGetJson("$BOOTSTRAP/health")
-                    val cluster = try {
-                        httpGetJson("$BOOTSTRAP/api/cluster")
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val role = health?.optString("role", "?") ?: "?"
-                    val nodes = when {
-                        cluster?.has("nodeCount") == true -> cluster.getInt("nodeCount")
-                        cluster?.optJSONArray("nodes") != null -> cluster.getJSONArray("nodes").length()
-                        else -> health?.optInt("nodeCount", 0) ?: 0
+                    val o = JSONObject(msg)
+                    val id = o.getInt("id")
+                    val cmd = o.getString("cmd")
+                    val args = o.optJSONObject("args") ?: JSONObject()
+                    val result = host.dispatch(cmd, args)
+                    val resultJson = when (result) {
+                        is JSONObject -> result.toString()
+                        is org.json.JSONArray -> result.toString()
+                        is String -> JSONObject.quote(result)
+                        is Boolean -> if (result) "true" else "false"
+                        is Number -> result.toString()
+                        else -> JSONObject.quote(result.toString())
                     }
                     runOnUiThread {
-                        detail.text = "OK role=$role nodes=$nodes\n$BOOTSTRAP"
-                        btn.isEnabled = true
+                        webView.evaluateJavascript(
+                            "window.__mimicResolve($id, $resultJson)",
+                            null
+                        )
                     }
                 } catch (e: Exception) {
-                    runOnUiThread {
-                        detail.text = "Unreachable: ${e.message}"
-                        btn.isEnabled = true
+                    try {
+                        val id = JSONObject(msg).optInt("id", -1)
+                        if (id >= 0) {
+                            runOnUiThread {
+                                webView.evaluateJavascript(
+                                    "window.__mimicReject($id, ${JSONObject.quote(e.message ?: "error")})",
+                                    null
+                                )
+                            }
+                        }
+                    } catch (_: Exception) {
                     }
                 }
             }
         }
     }
 
-    private fun httpGetJson(url: String): JSONObject? {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8000
-            readTimeout = 8000
-            requestMethod = "GET"
-        }
-        return try {
-            if (conn.responseCode !in 200..299) return null
-            JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-        } finally {
-            conn.disconnect()
-        }
-    }
-
-    companion object {
-        const val BOOTSTRAP = "http://47.107.43.5:8443"
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 }

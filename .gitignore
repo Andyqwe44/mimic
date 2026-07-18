@@ -36,6 +36,7 @@ android/setup/.gradle/
 android/setup/local.properties
 android/setup/**/*.iml
 android/setup/.idea/
+android/setup/client/src/main/assets/www/
 
 # === Dependencies ===
 **/node_modules/

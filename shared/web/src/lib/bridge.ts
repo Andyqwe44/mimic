@@ -276,34 +276,38 @@ export function onUpdateProgress(fn: (m: UpdateProgressMsg) => void): () => void
   return () => { _updateProgressListeners.delete(fn) }
 }
 
-// ── C++ → JS message listener (responses + remote log push) ──
+// ── Native → JS push (Windows WebView2 message + Android __mimicPush) ──
+function handleNativePush(msg: any) {
+  try {
+    if (msg.type === 'log') {
+      logMgr.addRemote(msg.ts, msg.tag, msg.msg, msg.count || 1, msg.firstTs || '')
+      return
+    }
+    if (msg.type === 'selftest') {
+      _selfTestListeners.forEach((f) => f(msg.data))
+      return
+    }
+    if (msg.type === 'update_progress') {
+      _updateProgressListeners.forEach((f) => f(msg))
+      return
+    }
+    const pending = _pending.get(msg.id)
+    if (pending) {
+      clearTimeout(pending.timer)
+      _pending.delete(msg.id)
+      pending.resolve(msg.result)
+    }
+  } catch { /* ignore malformed push */ }
+}
+
 if (typeof (window as any).chrome?.webview !== 'undefined') {
   ;(window as any).chrome.webview.addEventListener('message', (e: any) => {
-    try {
-      const msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
-      // Log push: C++ capture_log_write_msg → notify callback → PostWebMessage.
-      // count > 1 → C++ already collapsed consecutive duplicates (file + ring).
-      if (msg.type === 'log') {
-        logMgr.addRemote(msg.ts, msg.tag, msg.msg, msg.count || 1, msg.firstTs || '')
-        return
-      }
-      // Self-test report push: C++ selftest client → {type:'selftest', data:{...}}
-      if (msg.type === 'selftest') {
-        _selfTestListeners.forEach((f) => f(msg.data))
-        return
-      }
-      // Update-progress push: C++ download thread → {type:'update_progress',...}
-      if (msg.type === 'update_progress') {
-        _updateProgressListeners.forEach((f) => f(msg))
-        return
-      }
-      // Command response: {id, result} envelope → resolve matching pending call
-      const pending = _pending.get(msg.id)
-      if (pending) {
-        clearTimeout(pending.timer)
-        _pending.delete(msg.id)
-        pending.resolve(msg.result)
-      }
-    } catch {}
+    const msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
+    handleNativePush(msg)
   })
+}
+
+// Android WebView injects Capacitor shim + calls __mimicOnNativePush for logs/progress
+if (typeof window !== 'undefined') {
+  window.__mimicOnNativePush = handleNativePush
 }

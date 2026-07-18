@@ -3,4 +3,5 @@
     <string name="app_name">Mimic Setup</string>
     <string name="install">Install from CDN</string>
     <string name="retry">Retry</string>
+    <string name="reinstall">Re-download / reinstall</string>
 </resources>

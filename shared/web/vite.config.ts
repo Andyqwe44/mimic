@@ -5,19 +5,23 @@ import tailwindcss from '@tailwindcss/vite'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-// Single source of truth (铁律 8): parse APP_VERSION from version.h
+// PC: version.h. Android APK build may pass VITE_APP_VERSION=0.1.x
 const versionHeader = readFileSync(
   fileURLToPath(new URL('../../pc/client/src/version.h', import.meta.url)),
   'utf8',
 )
-const appVersion = versionHeader.match(/APP_VERSION\s+"([^"]+)"/)?.[1] ?? '0.0.0'
+const appVersion =
+  process.env.VITE_APP_VERSION ||
+  versionHeader.match(/APP_VERSION\s+"([^"]+)"/)?.[1] ||
+  '0.0.0'
 
 export default defineConfig({
+  // Relative base so file:///android_asset/www/ and gam.local both resolve assets
+  base: './',
   plugins: [react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
-  // Local preview only (optional). Release uses `npm run build` → dist/.
   server: {
     port: 1420,
     strictPort: true,
