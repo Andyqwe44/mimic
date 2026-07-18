@@ -1,7 +1,11 @@
 package com.mimic.client
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.util.Log
 import android.view.ViewGroup
@@ -15,6 +19,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
@@ -34,6 +39,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var errBanner: TextView
     private val io = Executors.newCachedThreadPool()
     private val tag = "MimicWeb"
+
+    private val projectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            host.onProjectionResult(result.resultCode, result.data)
+        } else {
+            host.onProjectionResult(0, null)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,6 +83,12 @@ class MainActivity : AppCompatActivity() {
         host = AndroidHost(this) { msg ->
             val payload = JSONObject.quote(msg.toString())
             webView.evaluateJavascript("window.__mimicPush && window.__mimicPush($payload)", null)
+        }
+        host.requestProjection = {
+            runOnUiThread {
+                val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                projectionLauncher.launch(mgr.createScreenCaptureIntent())
+            }
         }
 
         val assetLoader = WebViewAssetLoader.Builder()

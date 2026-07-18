@@ -131,8 +131,21 @@ export const BP = {
 export const NAV = {
   sideWide: 'w-20',       // 80px — desktop side rail
   sideCompact: 'w-14',    // 56px — tablet icon rail
-  bottomH: 'h-14',        // 56px — bottom tab bar
+  /** Bottom tab bar content height (safe-area applied outside) */
+  bottomH: 'h-14',        // 56px
   touchMin: 'min-h-11',   // 44px touch target
+  /** Sliding focus pill — shorter than touch target so it sits higher */
+  pillH: 'h-9',           // 36px
+  pillTop: 'top-1.5',     // 6px from content top
+  /** Thin accent ring (finer than ring-1) */
+  pillRing: 'ring-[0.5px] ring-inset ring-accent/40',
+  pillBg: 'bg-accent/12',
+  /** Shared settle duration for page track + nav pill (ms) */
+  settleMs: 300,
+  settleEase: 'cubic-bezier(0.25, 0.85, 0.3, 1)',
+  /** grid gap-1 between bottom tabs */
+  bottomGap: 'gap-1',
+  bottomGapRem: 0.25,
 } as const
 
 export const SHELL_PAD = {

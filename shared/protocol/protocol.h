@@ -34,9 +34,17 @@ typedef enum {
     PAYLOAD_TYPE_BGRA_FRAME   = 1,   // BGRA: [w:4][h:4][ch:4][reserved:4][pixels...] (fallback only)
     PAYLOAD_TYPE_H264_STREAM  = 2,   // H.264 Annex-B: [w:4][h:4][flags:4][reserved:4][nal...]
                                      // flags bit0 = keyframe. Preferred remote video path.
-    PAYLOAD_TYPE_CONTROL_MSG  = 3,   // JSON action (mousedown/up/move/key/text…). Agent fills hwnd/method.
-    PAYLOAD_TYPE_CAPABILITIES = 4,   // capability bitmask (future)
+    PAYLOAD_TYPE_CONTROL_MSG  = 3,   // JSON action (mousedown/up/move/key/text…).
+                                     // Controlled host injects active target id/method.
+    PAYLOAD_TYPE_CAPABILITIES = 4,   // JSON capability summary (platform, peer_proto, backends)
 } PayloadType;
+
+// Peer LAN JSON control protocol version (type=2 frames).
+// v1: list_windows / set_target{hwnd} (Windows).
+// v2: list_targets / set_target{id,platform,kind,...} + capabilities; hwnd optional Windows alias.
+#define PROTOCOL_PEER_JSON_V1  1u
+#define PROTOCOL_PEER_JSON_V2  2u
+#define PROTOCOL_PEER_JSON_VER PROTOCOL_PEER_JSON_V2
 
 // ═══════════════════════════════════════════════════════════
 // Network / pipe defaults

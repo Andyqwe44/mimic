@@ -276,27 +276,42 @@ export function onUpdateProgress(fn: (m: UpdateProgressMsg) => void): () => void
   return () => { _updateProgressListeners.delete(fn) }
 }
 
-// ── Native → JS push (Windows WebView2 message + Android __mimicPush) ──
+// ── Native → JS push bus (Windows WebView2 + Android __mimicPush) ──
+// PeerPanel / ControlView subscribe here — do NOT listen to chrome.webview alone.
+const _nativePushListeners = new Set<(msg: any) => void>()
+
+export function onNativePush(fn: (msg: any) => void): () => void {
+  _nativePushListeners.add(fn)
+  return () => { _nativePushListeners.delete(fn) }
+}
+
 function handleNativePush(msg: any) {
   try {
     if (msg.type === 'log') {
       logMgr.addRemote(msg.ts, msg.tag, msg.msg, msg.count || 1, msg.firstTs || '')
+      _nativePushListeners.forEach((f) => f(msg))
       return
     }
     if (msg.type === 'selftest') {
       _selfTestListeners.forEach((f) => f(msg.data))
+      _nativePushListeners.forEach((f) => f(msg))
       return
     }
     if (msg.type === 'update_progress') {
       _updateProgressListeners.forEach((f) => f(msg))
+      _nativePushListeners.forEach((f) => f(msg))
       return
     }
-    const pending = _pending.get(msg.id)
-    if (pending) {
+    // hostCall reply envelope {id, result}
+    if (msg && typeof msg === 'object' && 'id' in msg && _pending.has(msg.id)) {
+      const pending = _pending.get(msg.id)!
       clearTimeout(pending.timer)
       _pending.delete(msg.id)
       pending.resolve(msg.result)
+      return
     }
+    // peer / gate / generic UI events
+    _nativePushListeners.forEach((f) => f(msg))
   } catch { /* ignore malformed push */ }
 }
 
@@ -307,7 +322,7 @@ if (typeof (window as any).chrome?.webview !== 'undefined') {
   })
 }
 
-// Android WebView injects Capacitor shim + calls __mimicOnNativePush for logs/progress
+// Android WebView injects Capacitor shim + calls __mimicOnNativePush for logs/progress/peer
 if (typeof window !== 'undefined') {
   window.__mimicOnNativePush = handleNativePush
 }

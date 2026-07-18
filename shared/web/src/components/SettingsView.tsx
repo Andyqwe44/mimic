@@ -12,6 +12,8 @@ import {
   MOUSE_MODES, KEYBOARD_MODES, codeToName,
 } from '../lib/constants'
 import { THIN_CLIENT } from '../lib/features'
+import { isAndroidHost } from '../lib/platform'
+import { SHELL_PAD } from '../lib/design'
 import type { WindowInfo } from '../lib/types'
 
 // ── Darken hex color by percentage (0–100) for hover state ──
@@ -41,12 +43,14 @@ export function SettingsCard({
       <div
         role="button"
         tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => {
           setExpanded(!expanded)
           addLog(`[Settings] ${title} ${!expanded ? 'expanded' : 'collapsed'}`)
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
             ;(e.currentTarget as HTMLElement).click()
           }
         }}
@@ -94,6 +98,90 @@ function StatusBar({ screen, appVersion }: { screen: string; appVersion: string 
       </span>
       <span className="flex-1" />
       <span className="text-text-muted hidden sm:inline">{t('settings.game_agent_monitor')}</span>
+    </div>
+  )
+}
+
+/** Android privilege backend cards — fail-closed via hostCall (铁律 5). */
+function AndroidCapabilityCards() {
+  const { t } = useTranslation()
+  const [backend, setBackend] = useState('normal')
+  const [available, setAvailable] = useState<string[]>(['normal'])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const st = await hostCall('get_capability_backend')
+        if (cancelled || !st) return
+        if (typeof st.backend === 'string') setBackend(st.backend)
+        if (Array.isArray(st.available)) setAvailable(st.available.map(String))
+      } catch {
+        /* keep defaults */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const pick = async (id: string) => {
+    try {
+      const res = await hostCall('set_capability_backend', { backend: id })
+      if (res?.ok === false) {
+        addLog(`[Perm] ${id} refused: ${res.error || 'error'}`)
+        return
+      }
+      setBackend(res?.backend || id)
+      addLog(`[Perm] capability backend = ${res?.backend || id}`)
+    } catch (e: any) {
+      addLog(`[Perm] ${id} failed: ${e?.message || e}`)
+    }
+  }
+
+  const levelKey =
+    backend === 'shizuku'
+      ? 'settings.capability_shizuku'
+      : backend === 'root'
+        ? 'settings.capability_root'
+        : 'settings.capability_normal'
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="text-sm text-text-secondary w-24 shrink-0">{t('settings.capability')}</label>
+        <span className="text-[10px] px-1.5 py-0.5 rounded text-text-muted bg-bg-tertiary">
+          {t('settings.capability_current', { level: t(levelKey) })}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 min-[480px]:grid-cols-3 gap-2" role="radiogroup" aria-label={t('settings.capability')}>
+        {([
+          ['normal', 'settings.capability_normal', 'settings.capability_normal_tip'],
+          ['shizuku', 'settings.capability_shizuku', 'settings.capability_shizuku_tip'],
+          ['root', 'settings.capability_root', 'settings.capability_root_tip'],
+        ] as const).map(([id, nameKey, tipKey]) => {
+          const selected = backend === id
+          const enabled = id === 'normal' || available.includes(id)
+          return (
+            <Tooltip key={id} text={t(tipKey)}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={!enabled}
+                onClick={() => pick(id)}
+                className={`text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors border
+                  ${selected
+                    ? 'border-accent bg-accent/10 text-accent'
+                    : enabled
+                      ? 'border-border bg-bg-primary text-text-secondary hover:bg-bg-hover'
+                      : 'border-border bg-bg-primary text-text-secondary opacity-60 cursor-not-allowed'}`}
+              >
+                <div className="font-medium">{t(nameKey)}</div>
+                <div className="text-[10px] text-text-muted mt-0.5 leading-snug">{t(tipKey)}</div>
+              </button>
+            </Tooltip>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -150,6 +238,7 @@ export function SettingsView({
   onOpenDevTools?: () => void
 }) {
   const { t } = useTranslation()
+  const androidHost = isAndroidHost()
   const themePairs = [
     ['#3B82F6', '#F97316'], // Ocean — blue + orange
     ['#6366F1', '#EAB308'], // Twilight — indigo + yellow
@@ -278,7 +367,10 @@ export function SettingsView({
   }, [])
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 max-[359px]:p-2 space-y-3">
+    <div
+      className={`flex-1 min-h-0 overflow-y-auto ${SHELL_PAD.page} space-y-3 max-w-3xl w-full mx-auto`}
+      data-no-page-swipe
+    >
       <StatusBar screen={screenRes} appVersion={appVersion} />
 
       <p className="text-[11px] text-text-muted px-0.5">
@@ -702,26 +794,33 @@ export function SettingsView({
 
       <SettingsCard icon={<Sun className="w-4 h-4 text-text-secondary" />} title={t('settings.general')}>
         <div className="space-y-3">
-          {/* 运行权限 */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-text-secondary w-24 shrink-0">{t('settings.permission')}</label>
-            <div className="flex gap-1 items-center">
-              {([[t('settings.permission_normal'), false], [t('settings.permission_admin'), true]] as [string, boolean][]).map(([l, v]) => (
-                <Tooltip key={String(v)} text={v ? t('settings.permission_admin_tip') : t('settings.permission_normal_tip')}>
-                  <button
-                    onClick={() => onSwitchPermission?.(v)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${!!isAdmin === v ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'}`}
-                  >
-                    {l}
-                  </button>
-                </Tooltip>
-              ))}
-              <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded ${isAdmin ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'}`}>
-                {t('settings.permission_current', { level: isAdmin ? t('settings.permission_current_admin') : t('settings.permission_current_normal') })}
-              </span>
+          {/* 运行权限：Windows = 普通/管理员；Android = 普通/Shizuku/root 能力档 */}
+          {androidHost ? (
+            <AndroidCapabilityCards />
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="text-sm text-text-secondary w-24 shrink-0">{t('settings.permission')}</label>
+              <div className="flex gap-1 items-center flex-wrap" role="radiogroup" aria-label={t('settings.permission')}>
+                {([[t('settings.permission_normal'), false], [t('settings.permission_admin'), true]] as [string, boolean][]).map(([l, v]) => (
+                  <Tooltip key={String(v)} text={v ? t('settings.permission_admin_tip') : t('settings.permission_normal_tip')}>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={!!isAdmin === v}
+                      onClick={() => onSwitchPermission?.(v)}
+                      className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${!!isAdmin === v ? 'bg-accent text-white' : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'}`}
+                    >
+                      {l}
+                    </button>
+                  </Tooltip>
+                ))}
+                <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded ${isAdmin ? 'text-accent bg-accent/10' : 'text-text-muted bg-bg-tertiary'}`}>
+                  {t('settings.permission_current', { level: isAdmin ? t('settings.permission_current_admin') : t('settings.permission_current_normal') })}
+                </span>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
+          )}
+          <div className="flex items-center gap-2 flex-wrap">
             <label className="text-sm text-text-secondary w-24 shrink-0">{t('settings.theme')}</label>
             <div className="flex gap-1">
               {[
@@ -743,9 +842,9 @@ export function SettingsView({
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <label className="text-sm text-text-secondary w-24 shrink-0">{t('settings.accent')}</label>
-            <div className="flex gap-1.5">
+            <div className="flex gap-1.5 flex-wrap">
               {themePairs.map(([c1, c2], i) => {
                 const isDev = i === themePairs.length - 1
                 const disabled = isDev ? !devMode : devMode

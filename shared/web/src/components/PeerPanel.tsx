@@ -2,11 +2,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Cable, Monitor, Phone, PhoneOff, Bot, User, Radar } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { hostCall, addLog } from '../lib/bridge'
+import { hostCall, addLog, onNativePush } from '../lib/bridge'
+import { getHostPlatform } from '../lib/platform'
 import { Tooltip, ActionBtn } from './Toolkit'
 import { RailCard, type RailBadgeTone } from './RailCard'
 
-type Device = { deviceId: string; deviceName: string; lanIps?: string[]; online?: boolean }
+type Device = {
+  deviceId: string
+  deviceName: string
+  lanIps?: string[]
+  online?: boolean
+  platform?: string
+  peerProto?: number
+}
 type ProbeState = 'idle' | 'probing' | 'ok' | 'missing'
 
 const inputCls =
@@ -27,7 +35,7 @@ export function PeerPanel({
   onToggle: () => void
   pinned?: boolean
   onTogglePin?: () => void
-  onRemoteWindows?: (wins: Array<{ title: string; hwnd: number }>) => void
+  onRemoteWindows?: (wins: Array<{ title: string; hwnd: number; id?: string }>) => void
   onTransport?: (mode: string) => void
   onRole?: (role: string) => void
   controlMode: 'human' | 'ai'
@@ -38,9 +46,14 @@ export function PeerPanel({
   const [url, setUrl] = useState('http://47.107.43.5:8443')
   const [user, setUser] = useState('demo')
   const [password, setPassword] = useState('demo')
-  const [deviceName, setDeviceName] = useState(
-    () => 'PC-' + (typeof navigator !== 'undefined' ? navigator.platform.slice(0, 8) : 'win'),
-  )
+  const [deviceName, setDeviceName] = useState(() => {
+    const plat = getHostPlatform()
+    const prefix = plat === 'android' ? 'Android' : plat === 'windows' ? 'PC' : 'Web'
+    const hint = typeof navigator !== 'undefined'
+      ? (navigator.platform || navigator.userAgent || 'dev').slice(0, 10).replace(/\s+/g, '')
+      : 'dev'
+    return `${prefix}-${hint}`
+  })
   const [online, setOnline] = useState(false)
   const [role, setRole] = useState('idle')
   const [devices, setDevices] = useState<Device[]>([])
@@ -108,8 +121,7 @@ export function PeerPanel({
   }, [url, t])
 
   useEffect(() => {
-    const onMsg = (e: { data: unknown }) => {
-      const d = e.data as Record<string, unknown> | null
+    return onNativePush((d: Record<string, unknown>) => {
       if (!d || typeof d !== 'object') return
       if (d.type === 'devices' && Array.isArray(d.devices)) {
         setDevices(d.devices as Device[])
@@ -149,12 +161,17 @@ export function PeerPanel({
           window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
         }).catch(() => {})
       } else if (d.type === 'peer_msg') {
-        const payload = d.payload as { type?: string; windows?: Array<{ title?: string; hwnd?: number }> } | undefined
-        if (payload?.type === 'list_windows') {
-          const wins = payload.windows || []
+        const payload = d.payload as {
+          type?: string
+          windows?: Array<{ title?: string; hwnd?: number; id?: string }>
+          targets?: Array<{ title?: string; hwnd?: number; id?: string }>
+        } | undefined
+        if (payload?.type === 'list_windows' || payload?.type === 'list_targets') {
+          const wins = payload.targets?.length ? payload.targets : (payload.windows || [])
           onRemoteWindows?.(wins.map((w) => ({
             title: w.title || '',
             hwnd: w.hwnd || 0,
+            id: w.id,
           })))
         }
       } else if (d.type === 'peer_error') {
@@ -164,9 +181,7 @@ export function PeerPanel({
         setOnline(false)
         setRole('idle')
       }
-    }
-    window.chrome?.webview?.addEventListener('message', onMsg as (e: { data: unknown }) => void)
-    return () => window.chrome?.webview?.removeEventListener('message', onMsg as (e: { data: unknown }) => void)
+    })
   }, [onRemoteWindows, onTransport, onRole, refreshStatus, t])
 
   useEffect(() => {
@@ -388,7 +403,10 @@ export function PeerPanel({
                 <Monitor className="w-3.5 h-3.5 text-text-muted shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="text-xs text-text-primary truncate">{d.deviceName}</div>
-                  <div className="text-[10px] text-text-tertiary truncate">{d.deviceId}</div>
+                  <div className="text-[10px] text-text-tertiary truncate">
+                    {d.platform ? `${d.platform} · ` : ''}{d.deviceId}
+                    {d.peerProto ? ` · v${d.peerProto}` : ''}
+                  </div>
                 </div>
                 {role === 'idle' && (
                   <button type="button"

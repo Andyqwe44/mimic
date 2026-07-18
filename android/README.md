@@ -22,8 +22,17 @@
 ```
 android/setup/     # Gradle 双模块
   setup/           # com.mimic.setup — 薄安装器
-  client/          # com.mimic.client — 客户端（当前为 stub，后续接 Capacitor+shared/web）
+  client/          # com.mimic.client — WebView + shared/web + native host
+    …/AndroidHost.kt          # hostCall 分发（gate / target / peer / capture）
+    …/capability/              # normal | shizuku | root（显式，无静默回退）
+    …/target/                  # list_targets / AppEnumerator / AppLauncher
+    …/capture/                 # MediaProjection + MediaCodec H.264 Annex-B
+    …/input/                   # AccessibilityService（普通档）
+    …/peer/                    # HTTP/WS 信令 + LAN type=1/2 帧
 ```
+
+**能力档：** 普通 = MediaProjection + 无障碍；Shizuku/root 依赖与特权服务尚未打包（fail-closed）。
+**Peer：** 登录/邀请/LAN offer 已接线；与 PC 共用 peer proto v2（`list_targets` / `id`）。
 
 ## 构建
 

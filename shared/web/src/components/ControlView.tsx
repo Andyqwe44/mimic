@@ -77,8 +77,8 @@ export function ControlView({
   setPeerRole: (r: string) => void
   peerTransport: string
   setPeerTransport: (m: string) => void
-  remotePeerWindows: Array<{ title: string; hwnd: number }>
-  setRemotePeerWindows: (w: Array<{ title: string; hwnd: number }>) => void
+  remotePeerWindows: Array<{ title: string; hwnd: number; id?: string }>
+  setRemotePeerWindows: (w: Array<{ title: string; hwnd: number; id?: string }>) => void
   linkReady: boolean
 }) {
   const { t } = useTranslation()
@@ -136,16 +136,20 @@ export function ControlView({
           </div>
           {remotePeerWindows.map((w) => (
             <button
-              key={w.hwnd}
+              key={w.id || String(w.hwnd)}
               type="button"
               className={`w-full text-left ${TEXT.xs} px-2 py-2 min-h-11 ${RADIUS.md} hover:bg-bg-hover truncate`}
               onClick={() => {
-                hostCall('peer_set_target', { hwnd: w.hwnd, title: w.title })
-                  .then(() => addLog(`[Peer] set_target ${w.title}`))
+                hostCall('peer_set_target', {
+                  hwnd: w.hwnd,
+                  title: w.title,
+                  id: w.id || undefined,
+                })
+                  .then(() => addLog(`[Peer] set_target ${w.title}${w.id ? ` (${w.id})` : ''}`))
                   .catch((e) => addLog(`[Peer] set_target failed: ${e}`))
               }}
             >
-              {w.title || `(hwnd ${w.hwnd})`}
+              {w.title || w.id || `(hwnd ${w.hwnd})`}
             </button>
           ))}
         </div>

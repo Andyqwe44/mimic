@@ -85,6 +85,7 @@ tmp/
 *.tmp
 *.bak
 *.original.md
+.cursor/plans/
 
 # === Test artifacts ===
 test/frames/*.bgra

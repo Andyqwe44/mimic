@@ -28,8 +28,8 @@ struct PeerSessionInfo {
 using PeerEventFn = std::function<void(const std::string& json)>; // push to WebView UI
 using PeerControlFn = std::function<void(const std::string& actionJson)>;
 using PeerNeedKeyFn = std::function<void()>;
-using PeerListWindowsFn = std::function<std::string()>; // JSON array
-using PeerSetTargetFn = std::function<std::string(uint64_t hwnd)>; // result JSON
+using PeerListWindowsFn = std::function<std::string()>; // JSON array (v1 windows / v2 targets)
+using PeerSetTargetFn = std::function<std::string(uint64_t hwnd, const std::string& target_id)>; // result JSON
 
 struct PeerCallbacks {
     PeerEventFn on_ui_event;
@@ -65,9 +65,10 @@ std::string peer_accept(const std::string& from_device_id);
 std::string peer_reject(const std::string& from_device_id);
 std::string peer_hangup();
 
-/// Controller: request remote window list / set target / send control / human|ai mode
+/// Controller: request remote window/target list / set target / send control / human|ai mode
 std::string peer_request_windows();
-std::string peer_set_remote_target(uint64_t hwnd, const std::string& title);
+std::string peer_set_remote_target(uint64_t hwnd, const std::string& title,
+                                   const std::string& target_id = "");
 std::string peer_send_control(const std::string& action_json);
 std::string peer_request_keyframe(); // controller → controlled need_key
 std::string peer_set_control_mode(const std::string& mode); // human|ai

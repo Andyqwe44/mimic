@@ -175,16 +175,21 @@
     "filter_all": "Filter: All",
     "filter_desktop": "Filter: Desktop",
     "filter_window": "Filter: Window",
+    "filter_display": "Filter: Display",
+    "filter_app": "Filter: Apps",
     "all": "All",
     "desktop": "Desktop",
+    "display": "Display",
     "windows": "Windows",
+    "apps": "Apps",
     "refresh": "Refresh window list",
     "self_window_tip": "Self window — capture disabled",
     "select_tip": "Select: {title}",
     "select_remote_tip": "Select: {title} (will switch to Desktop {n})",
     "back_tip": "Back to window selection",
     "mode_description": "Select the current state of the target window. The system will recommend the optimal capture method:",
-    "footer_summary": "{items} items — {desks} desktops, {wins} windows"
+    "footer_summary": "{items} items — {desks} desktops, {wins} windows",
+    "footer_android": "{items} items — {displays} displays, {apps} apps"
   },
 
   "settings": {
@@ -234,6 +239,14 @@
     "permission_current": "Current: {level}",
     "permission_current_normal": "Normal",
     "permission_current_admin": "Admin",
+    "capability": "Capability backend",
+    "capability_normal": "Normal",
+    "capability_shizuku": "Shizuku",
+    "capability_root": "Root",
+    "capability_normal_tip": "No privilege — MediaProjection fullscreen capture + Accessibility input; no isolated virtual display",
+    "capability_shizuku_tip": "Via Shizuku/ADB — can mirror the main display, create a virtual display, and inject input",
+    "capability_root_tip": "Device is rooted — full Display/Input privileged APIs",
+    "capability_current": "Current: {level}",
 
     "theme": "Theme",
     "theme_light": "Light",

@@ -381,10 +381,17 @@ void handle_lan_payload(uint8_t type, const std::vector<uint8_t>& payload) {
             if (g_cb.on_need_key) g_cb.on_need_key();
             return;
         }
-        if (json.find("\"type\":\"list_windows\"") != std::string::npos &&
-            json.find("\"windows\"") == std::string::npos) {
+        const bool ask_windows = json.find("\"type\":\"list_windows\"") != std::string::npos &&
+                                 json.find("\"windows\"") == std::string::npos;
+        const bool ask_targets = json.find("\"type\":\"list_targets\"") != std::string::npos &&
+                                 json.find("\"targets\"") == std::string::npos;
+        if (ask_windows || ask_targets) {
             std::string arr = g_cb.on_list_windows ? g_cb.on_list_windows() : "[]";
-            std::string resp = std::string("{\"type\":\"list_windows\",\"windows\":") + arr + "}";
+            // Dual-shape reply: v1 clients read windows[]; v2 also accept targets[].
+            std::string resp = std::string("{\"type\":\"")
+                + (ask_targets ? "list_targets" : "list_windows")
+                + "\",\"peer_proto\":2,\"windows\":" + arr
+                + ",\"targets\":" + arr + "}";
             lan_send_frame(2, (const uint8_t*)resp.data(), resp.size());
             return;
         }
@@ -396,7 +403,9 @@ void handle_lan_payload(uint8_t type, const std::vector<uint8_t>& payload) {
                 size_t p = json.find("\"hwnd\":");
                 if (p != std::string::npos) hwnd = _strtoui64(json.c_str() + p + 7, nullptr, 10);
             }
-            std::string r = g_cb.on_set_target ? g_cb.on_set_target(hwnd) : R"({"ok":false})";
+            std::string tid = json_get_str_simple(json, "id");
+            if (tid.empty()) tid = json_get_str_simple(json, "target_id");
+            std::string r = g_cb.on_set_target ? g_cb.on_set_target(hwnd, tid) : R"({"ok":false})";
             std::string resp = std::string("{\"type\":\"set_target_ack\",") + r.substr(1);
             lan_send_frame(2, (const uint8_t*)resp.data(), resp.size());
             return;
@@ -897,7 +906,8 @@ std::string peer_login(const std::string& signaling_url,
     ips += "]";
     char body[1024];
     snprintf(body, sizeof(body),
-             "{\"user\":\"%s\",\"password\":\"%s\",\"deviceId\":\"%s\",\"deviceName\":\"%s\",\"lanIps\":%s}",
+             "{\"user\":\"%s\",\"password\":\"%s\",\"deviceId\":\"%s\",\"deviceName\":\"%s\","
+             "\"lanIps\":%s,\"platform\":\"windows\",\"peerProto\":2}",
              user.c_str(), password.c_str(), g_device_id.c_str(), g_device_name.c_str(), ips.c_str());
     std::string resp = http_post_json(g_signaling_http, "/api/login", body);
     if (resp.empty() || !json_get_bool_simple(resp, "ok")) {
@@ -987,17 +997,27 @@ std::string peer_hangup() {
 
 std::string peer_request_windows() {
     if (g_role != PeerRole::Controller) return R"({"ok":false,"error":"not controller"})";
-    const char* req = "{\"type\":\"list_windows\"}";
+    // Prefer v2 list_targets; controlled peers that only know v1 still answer list_windows.
+    const char* req = "{\"type\":\"list_targets\",\"peer_proto\":2}";
     lan_send_frame(2, (const uint8_t*)req, strlen(req));
+    const char* req_v1 = "{\"type\":\"list_windows\"}";
+    lan_send_frame(2, (const uint8_t*)req_v1, strlen(req_v1));
     return R"({"ok":true})";
 }
 
-std::string peer_set_remote_target(uint64_t hwnd, const std::string& title) {
+std::string peer_set_remote_target(uint64_t hwnd, const std::string& title,
+                                   const std::string& target_id) {
     if (g_role != PeerRole::Controller) return R"({"ok":false,"error":"not controller"})";
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-             "{\"type\":\"set_target\",\"hwnd\":%llu,\"title\":\"%s\"}",
-             (unsigned long long)hwnd, title.c_str());
+    char buf[768];
+    if (!target_id.empty()) {
+        snprintf(buf, sizeof(buf),
+                 "{\"type\":\"set_target\",\"peer_proto\":2,\"id\":\"%s\",\"hwnd\":%llu,\"title\":\"%s\"}",
+                 target_id.c_str(), (unsigned long long)hwnd, title.c_str());
+    } else {
+        snprintf(buf, sizeof(buf),
+                 "{\"type\":\"set_target\",\"hwnd\":%llu,\"title\":\"%s\"}",
+                 (unsigned long long)hwnd, title.c_str());
+    }
     lan_send_frame(2, (const uint8_t*)buf, strlen(buf));
     return R"({"ok":true})";
 }

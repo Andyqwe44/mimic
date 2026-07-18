@@ -1,12 +1,13 @@
 // PrimaryNav — side rail (desktop) or bottom bar (phone). Same IA.
-import type { ReactNode } from 'react'
+import { useLayoutEffect, type ReactNode, type RefObject } from 'react'
 import { Monitor, SlidersHorizontal, FileText, Settings, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Tooltip } from './Toolkit'
 import { H, NAV, RADIUS, SHELL_PAD, TEXT } from '../lib/design'
-import { PRIMARY_PAGES, type AppPage } from '../lib/pages'
+import { PRIMARY_PAGES, pageIndex, type AppPage } from '../lib/pages'
 import type { ShellMode } from '../hooks/useViewport'
 import { addLog } from '../lib/bridge'
+import { writeNavProgress } from './PagePager'
 
 const ICONS: Record<string, ReactNode> = {
   Monitor: <Monitor className={H.icon} />,
@@ -22,6 +23,7 @@ export function PrimaryNav({
   expanded = true,
   onToggleExpand,
   appVersion,
+  progressHostRef,
 }: {
   page: AppPage
   setPage: (p: AppPage) => void
@@ -30,6 +32,8 @@ export function PrimaryNav({
   expanded?: boolean
   onToggleExpand?: () => void
   appVersion?: string
+  /** Shared CSS-var host for sliding pill (bottom mode). */
+  progressHostRef?: RefObject<HTMLElement | null>
 }) {
   const { t } = useTranslation()
   const items = PRIMARY_PAGES.map((id) => ({
@@ -47,35 +51,61 @@ export function PrimaryNav({
   const isActive = (id: AppPage) =>
     page === id || (page === 'DevTools' && id === 'Settings')
 
+  // When pager is not mounted (DevTools overlay / tab click before pager paints),
+  // keep pill aligned to the discrete page index.
+  useLayoutEffect(() => {
+    if (mode !== 'bottom' || !progressHostRef?.current) return
+    const host = progressHostRef.current
+    if (host.classList.contains('nav-dragging')) return
+    writeNavProgress(host, pageIndex(page), false)
+  }, [mode, page, progressHostRef])
+
   if (mode === 'bottom') {
+    const gapRem = NAV.bottomGapRem
+    const n = PRIMARY_PAGES.length
     return (
       <nav
         aria-label={t('nav.aria')}
-        className={`shrink-0 grid grid-cols-4 gap-1 px-1.5 pt-1 border-t border-border bg-bg-secondary
-          ${NAV.bottomH} ${SHELL_PAD.safeBottom}
+        className={`shrink-0 border-t border-border bg-bg-secondary/95 backdrop-blur-sm
+          ${SHELL_PAD.safeBottom}
           pl-[max(0.375rem,env(safe-area-inset-left,0px))]
           pr-[max(0.375rem,env(safe-area-inset-right,0px))]`}
       >
-        {items.map((it) => {
-          const active = isActive(it.id)
-          return (
-            <Tooltip key={it.id} text={it.tip} className="w-full min-w-0">
-              <button
-                type="button"
-                aria-current={active ? 'page' : undefined}
-                onClick={() => select(it.id)}
-                className={`w-full ${NAV.touchMin} flex flex-col items-center justify-center gap-0.5 px-1
-                  ${RADIUS.lg} transition-colors
-                  ${active
-                    ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/30'
-                    : 'text-text-secondary active:bg-bg-hover'}`}
-              >
-                {it.icon}
-                <span className={`${TEXT.tiny} font-medium truncate max-w-full`}>{it.label}</span>
-              </button>
-            </Tooltip>
-          )
-        })}
+        {/* Content row: fixed height; safe-area padding is outside so pill isn't pushed down */}
+        <div
+          className={`relative grid grid-cols-4 ${NAV.bottomGap} px-1.5 ${NAV.bottomH}`}
+        >
+          <div
+            aria-hidden
+            className={`nav-pill pointer-events-none absolute ${NAV.pillTop} ${NAV.pillH}
+              ${RADIUS.lg} ${NAV.pillBg} ${NAV.pillRing} will-change-transform`}
+            style={{
+              width: `calc((100% - ${(n - 1) * gapRem}rem) / ${n})`,
+              // translateX % is relative to pill width → slot pitch = width + gap
+              transform: `translateX(calc(var(--nav-fraction, ${pageIndex(page)}) * (100% + ${gapRem}rem)))`,
+            }}
+          />
+          {items.map((it) => {
+            const active = isActive(it.id)
+            return (
+              <Tooltip key={it.id} text={it.tip} className="w-full min-w-0 relative z-[1]">
+                <button
+                  type="button"
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => select(it.id)}
+                  className={`w-full ${NAV.touchMin} flex flex-col items-center justify-center gap-0.5 px-1
+                    ${RADIUS.lg} transition-colors
+                    ${active
+                      ? 'text-accent'
+                      : 'text-text-secondary active:bg-bg-hover/60'}`}
+                >
+                  {it.icon}
+                  <span className={`${TEXT.tiny} font-medium truncate max-w-full`}>{it.label}</span>
+                </button>
+              </Tooltip>
+            )
+          })}
+        </div>
       </nav>
     )
   }

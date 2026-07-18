@@ -1,8 +1,8 @@
 // AppShell — unified responsive chrome: side or bottom PrimaryNav + page column.
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode, type RefObject } from 'react'
 import { PrimaryNav } from './PrimaryNav'
 import { PageHeader } from './PageHeader'
-import type { AppPage } from '../lib/pages'
+import { pageIndex, type AppPage } from '../lib/pages'
 import type { ShellMode } from '../hooks/useViewport'
 
 export function AppShell({
@@ -23,6 +23,7 @@ export function AppShell({
   appVersion,
   headerTrailing,
   statusBar,
+  shellRef: shellRefOut,
   children,
 }: {
   page: AppPage
@@ -42,16 +43,25 @@ export function AppShell({
   appVersion?: string
   headerTrailing?: ReactNode
   statusBar?: ReactNode
+  /** Optional external ref for CSS nav-progress vars (PagePager writes here). */
+  shellRef?: RefObject<HTMLDivElement | null>
   children: ReactNode
 }) {
   const bottom = shellMode === 'bottom'
+  const localRef = useRef<HTMLDivElement>(null)
+  const progressHostRef = shellRefOut ?? localRef
 
   return (
     <div
+      ref={progressHostRef}
       className={`h-full flex bg-bg-primary ${bottom ? 'flex-col' : 'flex-row'}
         ${bottom
           ? 'pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]'
           : ''}`}
+      style={bottom ? {
+        // Initial pill position before PagePager mounts
+        ['--nav-fraction' as string]: String(pageIndex(page)),
+      } : undefined}
     >
       {!bottom && (
         <PrimaryNav
@@ -80,7 +90,13 @@ export function AppShell({
         <main className="flex-1 flex flex-col min-h-0 overflow-hidden">{children}</main>
         {statusBar}
         {bottom && (
-          <PrimaryNav page={page} setPage={setPage} mode="bottom" appVersion={appVersion} />
+          <PrimaryNav
+            page={page}
+            setPage={setPage}
+            mode="bottom"
+            appVersion={appVersion}
+            progressHostRef={progressHostRef}
+          />
         )}
       </div>
     </div>

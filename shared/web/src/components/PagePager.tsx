@@ -7,18 +7,13 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from 'react'
-import { PRIMARY_PAGES, type AppPage } from '../lib/pages'
+import { NAV } from '../lib/design'
+import { PRIMARY_PAGES, fractionalPageIndex, pageIndex, type AppPage } from '../lib/pages'
 
 const MIN_DX = 48
 const MAX_SLOPE = 0.7
-const SETTLE_MS = 300
-
-function pageIndex(page: AppPage): number {
-  if (page === 'DevTools') return PRIMARY_PAGES.indexOf('Settings')
-  const i = PRIMARY_PAGES.indexOf(page)
-  return i < 0 ? 0 : i
-}
 
 function blockedTarget(t: EventTarget | null): boolean {
   if (!(t instanceof Element)) return false
@@ -27,13 +22,32 @@ function blockedTarget(t: EventTarget | null): boolean {
   )
 }
 
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/** Write CSS vars on a host so bottom-nav pill can follow without React re-renders. */
+export function writeNavProgress(
+  host: HTMLElement | null,
+  fractional: number,
+  dragging: boolean,
+) {
+  if (!host) return
+  host.style.setProperty('--nav-fraction', String(fractional))
+  host.classList.toggle('nav-dragging', dragging)
+}
+
 export function PagePager({
   page,
   onPageChange,
+  progressHostRef,
   children,
 }: {
   page: AppPage
   onPageChange: (p: AppPage) => void
+  /** Element that receives --nav-fraction / --nav-dragging (AppShell root). */
+  progressHostRef?: RefObject<HTMLElement | null>
   children: ReactNode
 }) {
   const panels = Children.toArray(children)
@@ -55,6 +69,7 @@ export function PagePager({
   widthRef.current = width
   const onPageChangeRef = useRef(onPageChange)
   onPageChangeRef.current = onPageChange
+  const reduceMotion = useRef(prefersReducedMotion())
 
   useLayoutEffect(() => {
     const el = viewportRef.current
@@ -66,10 +81,24 @@ export function PagePager({
     return () => ro.disconnect()
   }, [])
 
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => { reduceMotion.current = mq.matches }
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
   // Snap drag offset when page changes from tabs (not mid-drag)
   useEffect(() => {
     if (!dragging) setDragPx(0)
   }, [index, dragging])
+
+  // Keep nav pill in sync (CSS vars — no App re-render during drag)
+  useLayoutEffect(() => {
+    const frac = fractionalPageIndex(index, dragPx, width)
+    writeNavProgress(progressHostRef?.current ?? null, frac, dragging)
+  }, [index, dragPx, width, dragging, progressHostRef])
 
   const settleTo = useCallback((nextIdx: number) => {
     const cur = indexRef.current
@@ -173,14 +202,15 @@ export function PagePager({
   }, [width, settleTo])
 
   const tx = width > 0 ? -index * width + dragPx : 0
+  const settleMs = reduceMotion.current ? 0 : NAV.settleMs
 
   return (
     <div ref={viewportRef} className="flex-1 min-h-0 overflow-hidden relative touch-pan-y">
       <div
-        className="flex h-full will-change-transform"
+        className="pager-track flex h-full will-change-transform"
         style={{
           transform: `translate3d(${tx}px, 0, 0)`,
-          transition: dragging ? 'none' : `transform ${SETTLE_MS}ms cubic-bezier(0.25, 0.85, 0.3, 1)`,
+          transition: dragging ? 'none' : `transform ${settleMs}ms ${NAV.settleEase}`,
         }}
       >
         {panels.map((panel, i) => (

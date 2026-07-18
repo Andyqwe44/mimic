@@ -1,11 +1,45 @@
 // ═══ Shared types — used across all components ═══
 
+/** Platform-agnostic capture/control target (peer protocol v2). */
+export type TargetPlatform = 'windows' | 'android'
+export type TargetKind = 'desktop' | 'window' | 'display' | 'app' | 'process'
+
+export interface TargetCapabilities {
+  capture?: boolean
+  control?: boolean
+  launch?: boolean
+  virtualDisplay?: boolean
+}
+
+export interface TargetDescriptor {
+  id: string
+  platform: TargetPlatform
+  kind: TargetKind
+  title: string
+  /** Windows HWND when platform=windows (legacy wire alias). */
+  hwnd?: number
+  packageName?: string
+  activity?: string
+  displayId?: number
+  desktop?: number
+  capabilities?: TargetCapabilities
+}
+
 // Window/desktop entry from C++ list_windows command
+// Windows host still returns this shape; UI maps to TargetDescriptor when needed.
 export interface WindowInfo {
   title: string
   category: string       // 'desktop' | 'window' | 'process'
   hwnd: number           // window handle, or 0 for desktop, or pid for process
   desktop?: number       // virtual desktop index (D1/D2/...), from registry
+  /** Optional cross-platform fields (Android / peer v2). */
+  id?: string
+  platform?: TargetPlatform
+  kind?: TargetKind
+  packageName?: string
+  activity?: string
+  displayId?: number
+  capabilities?: TargetCapabilities
 }
 
 // Log history file metadata (content loaded on demand)

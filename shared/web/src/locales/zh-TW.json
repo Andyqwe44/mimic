@@ -175,16 +175,21 @@
     "filter_all": "篩選: 全部",
     "filter_desktop": "篩選: 桌面",
     "filter_window": "篩選: 視窗",
+    "filter_display": "篩選: 主螢幕",
+    "filter_app": "篩選: 應用",
     "all": "全部",
     "desktop": "桌面",
+    "display": "主螢幕",
     "windows": "視窗",
+    "apps": "應用",
     "refresh": "重新整理視窗列表",
     "self_window_tip": "自身視窗，禁止擷取",
     "select_tip": "選擇: {title}",
     "select_remote_tip": "選擇: {title}（將切換到 D{n}）",
     "back_tip": "返回視窗選擇",
     "mode_description": "請選擇目標視窗的目前狀態，系統將自動推薦最佳擷取方案：",
-    "footer_summary": "{items} 項 — {desks} 個桌面，{wins} 個視窗"
+    "footer_summary": "{items} 項 — {desks} 個桌面，{wins} 個視窗",
+    "footer_android": "{items} 項 — {displays} 個顯示，{apps} 個應用"
   },
 
   "settings": {
@@ -234,6 +239,14 @@
     "permission_current": "目前: {level}",
     "permission_current_normal": "一般",
     "permission_current_admin": "系統管理員",
+    "capability": "能力後端",
+    "capability_normal": "一般",
+    "capability_shizuku": "Shizuku",
+    "capability_root": "Root",
+    "capability_normal_tip": "無需特權 — MediaProjection 全螢幕錄製 + 無障礙輸入；無法獨立虛擬顯示",
+    "capability_shizuku_tip": "經 Shizuku/ADB 授權 — 可鏡像主螢幕、建立虛擬顯示、注入輸入",
+    "capability_root_tip": "裝置已 Root — 完整 Display/Input 特權能力",
+    "capability_current": "目前: {level}",
 
     "theme": "主題",
     "theme_light": "亮色",

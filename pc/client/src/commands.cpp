@@ -283,10 +283,17 @@ static std::string cmd_list_windows() {
     std::string json = "[";
     for (size_t i = 0; i < list.size(); i++) {
         if (i > 0) json += ",";
-        char buf[512];
-        snprintf(buf, sizeof(buf), R"({"title":"%s","category":"%s","hwnd":%llu,"desktop":%d})",
+        char buf[768];
+        const char* kind = (list[i].category == "desktop" || list[i].hwnd == 0) ? "desktop" : "window";
+        char idbuf[64];
+        if (list[i].hwnd == 0)
+            snprintf(idbuf, sizeof(idbuf), "desktop:%d", list[i].desktop);
+        else
+            snprintf(idbuf, sizeof(idbuf), "hwnd:%llu", (unsigned long long)list[i].hwnd);
+        snprintf(buf, sizeof(buf),
+                 R"({"title":"%s","category":"%s","hwnd":%llu,"desktop":%d,"id":"%s","platform":"windows","kind":"%s"})",
                  json_escape(list[i].title).c_str(), list[i].category.c_str(),
-                 (unsigned long long)list[i].hwnd, list[i].desktop);
+                 (unsigned long long)list[i].hwnd, list[i].desktop, idbuf, kind);
         json += buf;
     }
     json += "]";
@@ -2886,6 +2893,11 @@ std::string dispatch_command(const std::string& json) {
 
     std::string result;
     if (cmd == "list_windows") result = cmd_list_windows();
+    else if (cmd == "list_targets") {
+        // v2 envelope around the same Windows target list (id/platform/kind enriched).
+        std::string arr = cmd_list_windows();
+        result = std::string("{\"ok\":true,\"peer_proto\":2,\"targets\":") + arr + "}";
+    }
     else if (cmd == "list_processes") result = cmd_list_processes();
     else if (cmd == "capture_window") {
         result = cmd_capture_window(json_get_uint64(args, "hwnd"), json_get_str(args, "method"));
@@ -2920,7 +2932,10 @@ std::string dispatch_command(const std::string& json) {
     else if (cmd == "peer_hangup") result = peer_hangup();
     else if (cmd == "peer_request_windows") result = peer_request_windows();
     else if (cmd == "peer_set_target") {
-        result = peer_set_remote_target(json_get_uint64(args, "hwnd"), json_get_str(args, "title"));
+        std::string tid = json_get_str(args, "id");
+        if (tid.empty()) tid = json_get_str(args, "target_id");
+        result = peer_set_remote_target(json_get_uint64(args, "hwnd"),
+                                        json_get_str(args, "title"), tid);
     }
     else if (cmd == "peer_send_control") {
         // args is the action object itself or {action:{...}}
@@ -3349,7 +3364,11 @@ void backend_init() {
                 return full.substr(p, e - p + 1);
             return "[]";
         },
-        [](uint64_t hwnd) -> std::string {
+        [](uint64_t hwnd, const std::string& target_id) -> std::string {
+            // Windows controlled path still keys off HWND; target_id is logged for v2 peers.
+            if (!target_id.empty())
+                LOG("peer", "set_target id=%s hwnd=%llu", target_id.c_str(),
+                    (unsigned long long)hwnd);
             if (hwnd != 0 && !IsWindow((HWND)(uintptr_t)hwnd))
                 return R"({"ok":false,"error":"hwnd not a window"})";
             // Must appear in current enumeration (security filter)
@@ -3374,8 +3393,15 @@ void backend_init() {
             } else {
                 g_allow_stream.store(true);
             }
-            char buf[128];
-            snprintf(buf, sizeof(buf), "{\"ok\":true,\"hwnd\":%llu}", (unsigned long long)hwnd);
+            char buf[256];
+            if (!target_id.empty()) {
+                snprintf(buf, sizeof(buf),
+                         "{\"ok\":true,\"hwnd\":%llu,\"id\":\"%s\",\"peer_proto\":2}",
+                         (unsigned long long)hwnd, target_id.c_str());
+            } else {
+                snprintf(buf, sizeof(buf), "{\"ok\":true,\"hwnd\":%llu,\"peer_proto\":2}",
+                         (unsigned long long)hwnd);
+            }
             return buf;
         },
     });

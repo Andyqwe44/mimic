@@ -11,8 +11,8 @@ android {
         applicationId = "com.mimic.client"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
     }
 
     buildTypes {
@@ -43,4 +43,6 @@ dependencies {
     // Serve assets via https://appassets.androidplatform.net so Vite ES modules work
     // (file:///android_asset/ cannot load <script type="module"> → white screen)
     implementation("androidx.webkit:webkit:1.11.0")
+    // Peer signaling WebSocket + HTTP (parity with pc/client peer_session)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

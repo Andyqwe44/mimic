@@ -16,6 +16,7 @@ export const METHOD_SHORT: Record<string, string> = {
   screenbitblt: 'SBlt', GDI: 'GDI', 'GDI(GetWindowDC)': 'GDI',
   PrintWindow: 'PW', 'PrintWindow(minimized)': 'PW',
   ScreenBitBlt: 'SBlt', DesktopBlt: 'DXGI', WGC: 'WGC',
+  mediaprojection: 'MP',
 }
 
 export const METHODS_NO_MINIMIZED = ['wgc', 'gdi', 'printwindow', 'screenbitblt']

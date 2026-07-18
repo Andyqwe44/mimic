@@ -29,6 +29,7 @@ import { runSelfTest, sleep, type SelfTestState } from './lib/selftest'
 import type { WindowInfo, Rect } from './lib/types'
 import { DESKTOP_TITLE, displayTargetTitle } from './lib/windowTitle'
 import { useViewport } from './hooks/useViewport'
+import { isAndroidHost } from './lib/platform'
 
 // DELIBERATE test delay so the startup skeleton screen stays visible long enough
 // to observe during development. Real startup needs NO artificial wait — the
@@ -63,6 +64,8 @@ export default function App() {
   const [demoUpdateProgress, setDemoUpdateProgress] = useState<UpdateProgressMsg | null>(null)
   const [demoSelfTest, setDemoSelfTest] = useState<SelfTestState | null>(null)
   const ssHasContentRef = useRef(false)   // tracks whether Screenshot canvas has rendered content
+  const shellProgressRef = useRef<HTMLDivElement>(null)  // CSS --nav-fraction host for bottom pill
+  const androidHost = isAndroidHost()
   const [sessionError, setSessionError] = useState(false)
 
   // ═══ Theme ═══
@@ -445,7 +448,7 @@ export default function App() {
   const [peerControlMode, setPeerControlMode] = useState<'human' | 'ai'>('human')
   const [peerTransport, setPeerTransport] = useState('none')
   const [peerRole, setPeerRole] = useState('idle')
-  const [remotePeerWindows, setRemotePeerWindows] = useState<Array<{ title: string; hwnd: number }>>([])
+  const [remotePeerWindows, setRemotePeerWindows] = useState<Array<{ title: string; hwnd: number; id?: string }>>([])
   const snapshotRef = useRef(false)            // true while waiting for snapshot frame
   const snapshotStartRef = useRef(0)           // Date.now() when snapshot was triggered
   const [capMethod, setCapMethod] = useState('')        // actual method used (from C++ response)
@@ -554,8 +557,14 @@ export default function App() {
   }, [selWindow.hwnd])
 
   // ── Auto-select capture methods based on window state ──
-  // Desktop/minimized → DXGI; foreground/background window → WGC
+  // Windows: Desktop/minimized → DXGI; window → WGC
+  // Android: MediaProjection (no WGC/DXGI)
   useEffect(() => {
+    if (androidHost) {
+      if (autoSnap) setSnapMethod('mediaprojection')
+      if (autoStream) setStreamMethod('mediaprojection')
+      return
+    }
     const isDesktop = selWindow.hwnd === 0
     if (autoSnap) {
       setSnapMethod(isDesktop || winState === 'minimized' ? 'dxgi' : 'wgc')
@@ -563,7 +572,7 @@ export default function App() {
     if (autoStream) {
       setStreamMethod('wgc')
     }
-  }, [selWindow.hwnd, winState, autoSnap, autoStream])
+  }, [selWindow.hwnd, winState, autoSnap, autoStream, androidHost])
 
   // ═══ Capture operations ═══
   // ── Stop stream → idle ──
@@ -940,6 +949,7 @@ export default function App() {
           short={isShort}
           onCapsule={onCapsule}
           appVersion={appVersion}
+          shellRef={shellProgressRef}
           headerTrailing={
             <div className="flex items-center gap-1 shrink-0">
               {page === 'DevTools' && (
@@ -966,6 +976,7 @@ export default function App() {
                   setLocale={setLocale}
                   isAdmin={isAdmin}
                   onSwitchPermission={switchPermission}
+                  hidePermission={androidHost}
                   compact={isNarrow || isShort}
                 />
               )}
@@ -1086,12 +1097,12 @@ export default function App() {
               </div>
             )
             const logPane = (
-              <div className="flex-1 min-h-0 overflow-hidden h-full">
+              <div className="flex-1 flex flex-col min-h-0 h-full overflow-hidden">
                 <LogPanel keepFiles={keepFiles} />
               </div>
             )
             const settingsPane = (
-              <div className="flex-1 min-h-0 overflow-hidden h-full">
+              <div className="flex-1 flex flex-col min-h-0 h-full overflow-hidden">
                 <SettingsView
                   snapMethod={snapMethod}
                   setSnapMethod={setSnapMethod}
@@ -1166,7 +1177,7 @@ export default function App() {
                 return <div className="flex-1 flex flex-col min-h-0">{devToolsPane}</div>
               }
               return (
-                <PagePager page={page} onPageChange={setPage}>
+                <PagePager page={page} onPageChange={setPage} progressHostRef={shellProgressRef}>
                   {monitorPane}
                   {controlPane}
                   {logPane}

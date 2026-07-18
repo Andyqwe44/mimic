@@ -8,6 +8,14 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.FileProvider
+import com.mimic.client.capability.CapabilityManager
+import com.mimic.client.capture.CaptureController
+import com.mimic.client.input.InputController
+import com.mimic.client.input.MimicAccessibilityService
+import com.mimic.client.peer.PeerSession
+import com.mimic.client.target.AppEnumerator
+import com.mimic.client.target.AppLauncher
+import com.mimic.client.target.TargetDescriptor
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,8 +28,8 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * Native side of hostCall for shared/web — logs + APK update first;
- * PC-only commands return explicit stubs (铁律 5).
+ * Native side of hostCall for shared/web — logs + APK update + gate SSOT;
+ * capture / peer / privilege backends are filled in progressively (铁律 5: no fake ok).
  */
 class AndroidHost(
     private val context: Context,
@@ -34,12 +42,48 @@ class AndroidHost(
     private val logFile = File(context.filesDir, "live.log")
     private val ring = ArrayDeque<String>(500)
 
+    // Gate SSOT — UI may open gates, but stream/control still fail until backends exist.
+    @Volatile private var allowStream = false
+    @Volatile private var acceptControl = false
+    @Volatile private var activeTargetId: String = "display:0"
+    private val caps = CapabilityManager(context)
+    private val capture = CaptureController(context)
+    private val input = InputController(context)
+    private val peer = PeerSession(context, pushToJs)
+    /** Set by MainActivity to launch the system screen-capture consent dialog. */
+    var requestProjection: (() -> Unit)? = null
+
+    init {
+        capture.onEncodedFrame = { packed -> peer.sendH264Packed(packed) }
+        peer.onControlAction = { action ->
+            if (acceptControl) input.inject(action, caps.active)
+            else JSONObject().put("ok", false).put("error", "accept_control gate closed")
+        }
+        peer.onListTargets = { listTargets() }
+    }
+
+    fun onProjectionResult(resultCode: Int, data: Intent?) {
+        capture.setProjectionResult(resultCode, data)
+        val ok = resultCode != 0 && data != null
+        appendLog("cap", if (ok) "MediaProjection granted" else "MediaProjection denied")
+        main.post {
+            pushToJs(
+                JSONObject()
+                    .put("type", "projection_result")
+                    .put("ok", ok),
+            )
+        }
+    }
+
     fun dispatch(cmd: String, args: JSONObject): Any {
         return when (cmd) {
             "get_version" -> readVersion()
             "show_window" -> jsonOk()
             "get_elevation" -> JSONObject().put("admin", false)
-            "switch_permission" -> jsonErr("android: elevation N/A")
+            "switch_permission" -> jsonErr("android: use set_capability_backend (normal/shizuku/root)")
+            "get_capability_backend" -> caps.statusJson()
+                .put("a11y_enabled", MimicAccessibilityService.isEnabled())
+            "set_capability_backend" -> caps.setBackend(args.optString("backend", "normal"))
             "crash_log" -> {
                 appendLog("crash", "${args.optString("kind")} | ${args.optString("message")}")
                 jsonOk()
@@ -67,7 +111,6 @@ class AndroidHost(
             }
             "check_update" -> checkUpdate()
             "download_update" -> {
-                // Async — progress via push; return ok immediately
                 io.execute {
                     try {
                         downloadAndPromptInstall()
@@ -83,24 +126,130 @@ class AndroidHost(
                 jsonOk()
             }
             "peer_probe" -> peerProbe(args.optString("url", DEFAULT_BOOTSTRAP))
-            "peer_status" -> JSONObject()
-                .put("ok", true)
-                .put("logged_in", false)
-                .put("role", "idle")
-            "peer_logout" -> jsonOk()
+            "peer_status" -> peer.statusJson()
+            "peer_login", "peer_register", "peer_logout", "peer_invite", "peer_accept",
+            "peer_reject", "peer_hangup", "peer_request_windows", "peer_set_target",
+            "peer_send_control", "peer_set_control_mode", "peer_request_keyframe",
+            "peer_get_frame" -> peer.dispatch(cmd, args)
+            "request_projection" -> {
+                main.post { requestProjection?.invoke() }
+                jsonOk().put("pending", true)
+            }
             "get_gates" -> JSONObject()
-                .put("allow_stream", false)
-                .put("accept_control", false)
-            "set_stream_gate", "set_control_gate", "set_exclude_self" -> jsonOk()
+                .put("allow_stream", allowStream)
+                .put("accept_control", acceptControl)
+                .put("target_id", activeTargetId)
+                .put("a11y_enabled", MimicAccessibilityService.isEnabled())
+                .put("projection_consent", capture.hasProjectionConsent())
+            "set_stream_gate" -> {
+                allowStream = args.optBoolean("on", args.optBoolean("enabled", args.optInt("on", 0) != 0))
+                appendLog("gate", "allow_stream=$allowStream")
+                if (allowStream && !capture.hasProjectionConsent()) {
+                    appendLog("gate", "MediaProjection consent not yet granted")
+                }
+                jsonOk().put("allow_stream", allowStream)
+            }
+            "set_control_gate" -> {
+                acceptControl = args.optBoolean("on", args.optBoolean("enabled", args.optInt("on", 0) != 0))
+                appendLog("gate", "accept_control=$acceptControl")
+                if (acceptControl && !MimicAccessibilityService.isEnabled()) {
+                    appendLog("gate", "AccessibilityService not enabled")
+                }
+                jsonOk().put("accept_control", acceptControl)
+            }
+            "set_exclude_self" -> jsonOk() // N/A on Android for now
             "get_agent_status" -> JSONObject().put("connected", false)
             "get_server_status" -> JSONObject().put("connected", false)
             "screen_info" -> JSONObject()
                 .put("x", 0).put("y", 0)
                 .put("w", context.resources.displayMetrics.widthPixels)
                 .put("h", context.resources.displayMetrics.heightPixels)
-            "list_windows", "list_processes", "list_desktops" -> JSONArray()
+            "list_targets" -> listTargets()
+            "list_windows" -> listTargetsAsWindowsCompat()
+            "list_processes", "list_desktops" -> JSONArray()
+            "launch_app" -> {
+                val pkg = args.optString("packageName", args.optString("package", ""))
+                val act = args.optString("activity", "")
+                if (pkg.isBlank()) jsonErr("missing packageName")
+                else AppLauncher.launch(context, pkg, act.ifBlank { null })
+            }
+            "capture_stream_start" -> {
+                if (!allowStream) jsonErr("allow_stream gate closed")
+                else {
+                    val tid = args.optString("target_id", args.optString("id", activeTargetId))
+                    if (tid.isNotBlank()) activeTargetId = tid
+                    if (!capture.hasProjectionConsent()) {
+                        main.post { requestProjection?.invoke() }
+                        JSONObject()
+                            .put("ok", false)
+                            .put("error", "android: MediaProjection consent required")
+                            .put("need_consent", true)
+                    } else {
+                        capture.start(args, caps.active)
+                    }
+                }
+            }
+            "capture_stream_stop" -> capture.stop()
+            "capture_window" -> jsonErr("android: single-frame capture not implemented yet")
+            "send_input" -> {
+                if (!acceptControl) jsonErr("accept_control gate closed")
+                else input.inject(args, caps.active)
+            }
             else -> jsonErr("android: unsupported cmd '$cmd'")
         }
+    }
+
+    /** v2 targets: main display + installed launchable apps. */
+    private fun listTargets(): JSONObject {
+        val dm = context.resources.displayMetrics
+        val targets = JSONArray()
+        targets.put(
+            TargetDescriptor(
+                id = "display:0",
+                kind = "display",
+                title = "Main Display",
+                displayId = 0,
+                hwnd = 0,
+                capture = false,
+                control = false,
+                launch = false,
+                virtualDisplay = false,
+            ).toJson()
+                .put("w", dm.widthPixels)
+                .put("h", dm.heightPixels)
+        )
+        for (app in AppEnumerator.listLaunchable(context)) {
+            targets.put(app.toJson())
+        }
+        return JSONObject().put("ok", true).put("targets", targets).put("peer_proto", 2)
+    }
+
+    /** Temporary Windows-shaped array so existing TargetPicker does not crash. */
+    private fun listTargetsAsWindowsCompat(): JSONArray {
+        val arr = JSONArray()
+        arr.put(
+            JSONObject()
+                .put("title", " Main Display")
+                .put("category", "desktop")
+                .put("hwnd", 0)
+                .put("id", "display:0")
+                .put("platform", "android")
+                .put("kind", "display")
+        )
+        // Apps as window-like entries (hwnd = stable hash; real id in id field)
+        for (app in AppEnumerator.listLaunchable(context)) {
+            arr.put(
+                JSONObject()
+                    .put("title", app.title)
+                    .put("category", "window")
+                    .put("hwnd", app.id.hashCode().toLong() and 0x7fffffff)
+                    .put("id", app.id)
+                    .put("platform", "android")
+                    .put("kind", "app")
+                    .put("packageName", app.packageName)
+            )
+        }
+        return arr
     }
 
     private fun checkUpdate(): JSONObject {

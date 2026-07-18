@@ -11,6 +11,7 @@ import {
   cantCaptureMinimized,
 } from '../lib/constants'
 import { DESKTOP_TITLE, displayTargetTitle, isDesktopTitle } from '../lib/windowTitle'
+import { isAndroidHost } from '../lib/platform'
 import { useTranslation } from 'react-i18next'
 import type { WindowInfo } from '../lib/types'
 
@@ -46,9 +47,11 @@ export function ConnectionPanel({
   onTogglePin?: () => void
 }) {
   const { t } = useTranslation()
+  const android = isAndroidHost()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [selTitle, setSelTitle] = useState(DESKTOP_TITLE)
   const isDesktop = isDesktopTitle(selTitle) || selWin?.category === 'desktop' || selWin?.hwnd === 0
+    || selWin?.kind === 'display' || selWin?.kind === 'desktop'
 
   const handleSelectWindow = (w: WindowInfo) => {
     setSelTitle(w.title)
@@ -65,8 +68,16 @@ export function ConnectionPanel({
     if (selWin && selWin.title !== selTitle) setSelTitle(selWin.title)
   }, [selWin?.title])
 
-  const cantCapture = !isDesktop && cantCaptureMinimized(streamMethod, winState)
-  const recommendedMethod = winState === 'minimized' ? 'dxgi' : 'wgc'
+  const cantCapture = !android && !isDesktop && cantCaptureMinimized(streamMethod, winState)
+  const recommendedMethod = android
+    ? 'mediaprojection'
+    : winState === 'minimized' ? 'dxgi' : 'wgc'
+  const methodBadge = android
+    ? (METHOD_SHORT.mediaprojection || 'MP')
+    : (METHOD_SHORT[recommendedMethod] || recommendedMethod)
+  const stateBadge = android
+    ? (selWin?.kind === 'app' ? t('targetPicker.apps') : t('targetPicker.display'))
+    : t(STATE_LABEL[winState] || winState)
 
   return (
     <>
@@ -78,8 +89,8 @@ export function ConnectionPanel({
         )}
         title={t('connection.title')}
         badges={[
-          { text: t(STATE_LABEL[winState] || winState), tone: 'accent' },
-          { text: METHOD_SHORT[recommendedMethod] || recommendedMethod, tone: 'accent' },
+          { text: stateBadge, tone: 'accent' },
+          { text: methodBadge, tone: 'accent' },
         ]}
         expanded={expanded}
         onToggle={() => {

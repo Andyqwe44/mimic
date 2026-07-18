@@ -175,16 +175,21 @@
     "filter_all": "筛选: 全部",
     "filter_desktop": "筛选: 桌面",
     "filter_window": "筛选: 窗口",
+    "filter_display": "筛选: 主屏",
+    "filter_app": "筛选: 应用",
     "all": "全部",
     "desktop": "桌面",
+    "display": "主屏",
     "windows": "窗口",
+    "apps": "应用",
     "refresh": "刷新窗口列表",
     "self_window_tip": "自身窗口，禁止捕获",
     "select_tip": "选择: {title}",
     "select_remote_tip": "选择: {title}（将切换到 D{n}）",
     "back_tip": "返回窗口选择",
     "mode_description": "请选择目标窗口的当前状态，系统将自动推荐最优捕获方案：",
-    "footer_summary": "{items} 项 — {desks} 个桌面，{wins} 个窗口"
+    "footer_summary": "{items} 项 — {desks} 个桌面，{wins} 个窗口",
+    "footer_android": "{items} 项 — {displays} 个显示，{apps} 个应用"
   },
 
   "settings": {
@@ -234,6 +239,14 @@
     "permission_current": "当前: {level}",
     "permission_current_normal": "普通",
     "permission_current_admin": "管理员",
+    "capability": "能力后端",
+    "capability_normal": "普通",
+    "capability_shizuku": "Shizuku",
+    "capability_root": "Root",
+    "capability_normal_tip": "无需特权 — MediaProjection 全屏录制 + 无障碍输入；无法独立虚拟显示",
+    "capability_shizuku_tip": "经 Shizuku/ADB 授权 — 可镜像主屏、创建虚拟显示、注入输入",
+    "capability_root_tip": "设备已 Root — 完整 Display/Input 特权能力",
+    "capability_current": "当前: {level}",
 
     "theme": "主题",
     "theme_light": "亮色",

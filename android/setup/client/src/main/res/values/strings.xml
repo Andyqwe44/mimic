@@ -4,4 +4,5 @@
     <string name="hello">Mimic Client %1$s</string>
     <string name="stub_hint">Installed via Mimic Setup from CDN.\nNext: Capacitor + shared/web UI.</string>
     <string name="probe">Probe Bootstrap</string>
+    <string name="a11y_service_desc">Mimic uses Accessibility only when you enable Accept Control, to inject taps on the controlled device. No data leaves the device except via your peer session.</string>
 </resources>

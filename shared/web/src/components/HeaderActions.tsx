@@ -25,6 +25,7 @@ export function HeaderActions({
   setLocale,
   isAdmin,
   onSwitchPermission,
+  hidePermission,
   compact,
 }: {
   dark: boolean
@@ -33,6 +34,8 @@ export function HeaderActions({
   setLocale: (l: string) => void
   isAdmin: boolean
   onSwitchPermission: (toAdmin: boolean) => void
+  /** Android: no UAC elevation — hide Windows admin toggle */
+  hidePermission?: boolean
   compact?: boolean
 }) {
   const { t } = useTranslation()
@@ -97,23 +100,25 @@ export function HeaderActions({
         )}
       </div>
 
-      <Tooltip text={isAdmin ? t('settings.permission_admin_tip') : t('settings.permission_normal_tip')}>
-        <button
-          type="button"
-          onClick={() => {
-            const next = !isAdmin
-            onSwitchPermission(next)
-            addLog(`[Perm] → ${next ? 'admin' : 'normal'}`)
-          }}
-          className={ICON_CELL}
-        >
-          {isAdmin ? (
-            <Shield className={`${H.icon} text-accent`} />
-          ) : (
-            <User className={H.icon} />
-          )}
-        </button>
-      </Tooltip>
+      {!hidePermission && (
+        <Tooltip text={isAdmin ? t('settings.permission_admin_tip') : t('settings.permission_normal_tip')}>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !isAdmin
+              onSwitchPermission(next)
+              addLog(`[Perm] → ${next ? 'admin' : 'normal'}`)
+            }}
+            className={ICON_CELL}
+          >
+            {isAdmin ? (
+              <Shield className={`${H.icon} text-accent`} />
+            ) : (
+              <User className={H.icon} />
+            )}
+          </button>
+        </Tooltip>
+      )}
 
       <ThemeBtn dark={dark} onToggle={onToggleTheme} />
     </div>

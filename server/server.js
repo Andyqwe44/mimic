@@ -302,6 +302,8 @@ function devicesForUser(user) {
         deviceId: s.deviceId,
         deviceName: s.deviceName,
         lanIps: s.lanIps || [],
+        platform: s.platform || 'unknown',
+        peerProto: s.peerProto || 1,
         online: true,
       });
     }
@@ -491,6 +493,8 @@ const server = http.createServer(async (req, res) => {
       const password = String(body.password || '');
       const deviceId = String(body.deviceId || crypto.randomBytes(8).toString('hex'));
       const deviceName = String(body.deviceName || 'PC');
+      const platform = String(body.platform || 'unknown');
+      const peerProto = Number(body.peerProto || body.peer_proto || 1) || 1;
       const db = loadUsers();
       const rec = db.users[user];
       if (!rec || rec.hash !== hashPassword(password, rec.salt)) {
@@ -509,10 +513,12 @@ const server = http.createServer(async (req, res) => {
         deviceId,
         deviceName,
         lanIps: Array.isArray(body.lanIps) ? body.lanIps : [],
+        platform,
+        peerProto,
         ws: null,
         lastSeen: Date.now(),
       });
-      json(res, 200, { ok: true, token, deviceId, user });
+      json(res, 200, { ok: true, token, deviceId, user, platform, peerProto });
     } catch (e) {
       json(res, 400, { ok: false, error: String(e.message || e) });
     }
@@ -549,6 +555,10 @@ wss.on('connection', (ws, req) => {
     if (type === 'presence') {
       if (Array.isArray(msg.lanIps)) sess.lanIps = msg.lanIps;
       if (typeof msg.deviceName === 'string' && msg.deviceName) sess.deviceName = msg.deviceName;
+      if (typeof msg.platform === 'string' && msg.platform) sess.platform = msg.platform;
+      if (msg.peerProto != null || msg.peer_proto != null) {
+        sess.peerProto = Number(msg.peerProto || msg.peer_proto) || sess.peerProto || 1;
+      }
       broadcastDevices(sess.user);
       return;
     }
