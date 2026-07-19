@@ -402,12 +402,18 @@ bool ws_handshake(SOCKET s, const std::string& host, uint16_t port, const std::s
 void lan_stop_unlocked();
 
 void lan_send_frame(uint8_t type, const uint8_t* data, size_t len) {
-    if (peer_udp_ready()) {
+    // type 2 = JSON control — prefer reliable LAN TCP when the socket is up
+    // (mousedown/up atoms must not be lost on UDP).
+    const bool prefer_lan = (type == 2);
+    if (!prefer_lan && peer_udp_ready()) {
         peer_udp_send(type, data, len);
         return;
     }
     std::lock_guard<std::mutex> lk(g_lan_send_mtx);
-    if (g_lan_sock == INVALID_SOCKET) return;
+    if (g_lan_sock == INVALID_SOCKET) {
+        if (peer_udp_ready()) peer_udp_send(type, data, len);
+        return;
+    }
     uint8_t hdr[5];
     hdr[0] = type;
     uint32_t n = (uint32_t)len;

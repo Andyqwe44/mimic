@@ -34,6 +34,8 @@ export function PeerRemoteView({
   fill = false,
   encodeHint,
   compact = false,
+  /** remote = peer stream; local = this device's outbound capture mirror. */
+  source = 'remote',
 }: {
   active: boolean
   humanControl: boolean
@@ -43,6 +45,7 @@ export function PeerRemoteView({
   encodeHint?: string
   /** Smaller 16:9 preview — leave room for target list below. */
   compact?: boolean
+  source?: 'remote' | 'local'
 }) {
   const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -74,9 +77,13 @@ export function PeerRemoteView({
     if (now - lastKeyReqRef.current < 150) return
     lastKeyReqRef.current = now
     needKeyRef.current = true
-    hostCall('peer_request_keyframe').catch(() => {})
+    if (source === 'local') {
+      hostCall('local_request_keyframe').catch(() => {})
+    } else {
+      hostCall('peer_request_keyframe').catch(() => {})
+    }
     setStatus(t('peer.waiting_keyframe', { reason }))
-    addLog(`[Decode] need_key reason=${reason}`)
+    addLog(`[Decode] need_key reason=${reason} source=${source}`)
   }
 
   const closeDecoder = () => {
@@ -206,7 +213,7 @@ export function PeerRemoteView({
       window.removeEventListener('peer-h264', onFrame)
       closeDecoder()
     }
-  }, [active, t])
+  }, [active, t, source])
 
   useEffect(() => {
     const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight })
@@ -322,7 +329,9 @@ export function PeerRemoteView({
       )}
       <div className="flex flex-col bg-black" style={planeStyle}>
         <div className="h-7 px-2 flex items-center gap-2 text-[11px] text-text-tertiary border-b border-border shrink-0">
-          <span className="font-medium text-text-secondary">{t('peer.remote_view')}</span>
+            <span className="font-medium text-text-secondary">
+              {source === 'local' ? t('peer.local_preview') : t('peer.remote_view')}
+            </span>
           <span className="tabular-nums">{dims}</span>
           <span className="tabular-nums">{fps} fps</span>
           {encodeHint && (

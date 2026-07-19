@@ -164,6 +164,8 @@
     "vmouse_panel": "鼠标",
     "controlled_title": "本机被控中",
     "controlled_body": "控制端正在选择目标并查看画面。可用下方急停拒绝被控制（仅分享）或挂断。",
+    "controlled_preview_hint": "上方小窗为本机正在被控的实时画面（与控制端所见同源）。",
+    "local_preview": "本机被控预览",
     "monitor_idle_title": "尚无远程会话",
     "monitor_idle_body": "请到「对等」页登录，并向同账号设备请求控制，或等待对方邀请。",
     "waiting_frames": "等待画面…",

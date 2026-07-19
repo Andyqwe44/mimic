@@ -16,7 +16,7 @@ import { PeerRemoteView } from './PeerRemoteView'
 import { SessionPanicBar } from './SessionPanicBar'
 import { STATE_LABEL, codeToName, resolveInputMethods } from '../lib/constants'
 import { THIN_CLIENT } from '../lib/features'
-import { addLog, hostCall } from '../lib/bridge'
+import { addLog, hostCall, onNativePush } from '../lib/bridge'
 import { RADIUS, RING, SHELL_PAD, TEXT, PEER_WORKSPACE } from '../lib/design'
 import type { WindowInfo, Rect } from '../lib/types'
 
@@ -810,6 +810,21 @@ export function MonitorView({
     addLog(`[Peer] auto set_target ${def.title}${def.id ? ` (${def.id})` : ''}`)
   }, [lanReady, isController, remotePeerWindows, remoteTargetId, pickDefaultRemoteTarget, pickRemoteTarget])
 
+  // Controlled: mirror outbound H.264 into the same WebCodecs path as remote view.
+  useEffect(() => {
+    if (!isControlled) return
+    return onNativePush((d: Record<string, unknown>) => {
+      if (d.type !== 'local_preview') return
+      hostCall('local_get_frame').then((fr: {
+        ok?: boolean; w?: number; h?: number; flags?: number; b64?: string
+      }) => {
+        if (!fr?.ok || !fr.b64) return
+        const bin = Uint8Array.from(atob(fr.b64), (c) => c.charCodeAt(0))
+        window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
+      }).catch(() => {})
+    })
+  }, [isControlled])
+
   const hangupSession = useCallback(async () => {
     // Hangup = end video + control (not just signaling).
     setRemoteTargetId('')
@@ -930,11 +945,20 @@ export function MonitorView({
         )}
 
         {isControlled && (
-          <div className={`flex-1 flex flex-col min-h-0 ${SHELL_PAD.page} gap-3 justify-center`}>
-            <div className="text-center space-y-2 max-w-md mx-auto">
+          <div className={`flex-1 flex flex-col min-h-0 ${SHELL_PAD.page} gap-2`}>
+            <div className={`${PEER_WORKSPACE.previewWeight} shrink-0 flex flex-col min-h-0`}>
+              <PeerRemoteView
+                active={lanReady}
+                humanControl={false}
+                source="local"
+                compact
+                fill
+              />
+            </div>
+            <div className="text-center space-y-1 max-w-md mx-auto shrink-0">
               <div className={`${TEXT.sm} text-text-primary`}>{t('peer.controlled_title')}</div>
               <div className={`${TEXT.xs} text-text-muted leading-relaxed`}>
-                {t('peer.controlled_body')}
+                {t('peer.controlled_preview_hint')}
               </div>
             </div>
             <SessionPanicBar

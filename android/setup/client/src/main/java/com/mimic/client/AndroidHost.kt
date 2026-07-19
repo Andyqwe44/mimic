@@ -51,6 +51,10 @@ class AndroidHost(
     @Volatile private var allowStream = false
     @Volatile private var acceptControl = false
     @Volatile private var activeTargetId: String = "display:0"
+    /** Last outbound H.264 packed frame for on-device controlled preview. */
+    @Volatile private var lastLocalPreview: ByteArray? = null
+    @Volatile private var lastPreviewPushMs = 0L
+    private val previewPushIntervalMs = 80L
     /** After MediaProjection consent, start capture if stream gate / set_target requested it. */
     @Volatile private var pendingStartAfterConsent = false
     private val caps = CapabilityManager(context)
@@ -67,7 +71,17 @@ class AndroidHost(
             appendLog("confine", "re-launch $pkg (left confined app)")
             AppLauncher.launch(context, pkg, act)
         }
-        capture.onEncodedFrame = { packed -> peer.sendH264Packed(packed) }
+        capture.onEncodedFrame = { packed ->
+            peer.sendH264Packed(packed)
+            lastLocalPreview = packed
+            val now = System.currentTimeMillis()
+            if (now - lastPreviewPushMs >= previewPushIntervalMs) {
+                lastPreviewPushMs = now
+                main.post {
+                    pushToJs(JSONObject().put("type", "local_preview"))
+                }
+            }
+        }
         capture.onCaptureEnded = {
             allowStream = false
             appendLog("cap", "capture ended (projection revoked or stop)")
@@ -443,11 +457,30 @@ class AndroidHost(
             "peer_send_control", "peer_set_control_mode", "peer_request_keyframe",
             "peer_list_devices",
             "peer_get_frame" -> peer.dispatch(cmd, args)
+            "local_get_frame" -> {
+                val fr = lastLocalPreview
+                if (fr == null || fr.size < 16) {
+                    JSONObject().put("ok", false).put("error", "no local preview")
+                } else {
+                    val w = java.nio.ByteBuffer.wrap(fr, 0, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                    val h = java.nio.ByteBuffer.wrap(fr, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                    val flags = java.nio.ByteBuffer.wrap(fr, 8, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                    JSONObject()
+                        .put("ok", true)
+                        .put("w", w).put("h", h).put("flags", flags)
+                        .put("b64", android.util.Base64.encodeToString(fr, android.util.Base64.NO_WRAP))
+                }
+            }
+            "local_request_keyframe" -> {
+                capture.requestKeyframe()
+                jsonOk()
+            }
             "peer_hangup" -> {
                 allowStream = false
                 acceptControl = false
                 pendingStartAfterConsent = false
                 input.vdDisplayActive = false
+                lastLocalPreview = null
                 try { caps.shizuku.stopSession() } catch (_: Exception) {}
                 try { capture.stop() } catch (_: Exception) {}
                 val r = peer.hangup()

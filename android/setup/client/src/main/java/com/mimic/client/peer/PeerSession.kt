@@ -110,12 +110,13 @@ class PeerSession(
     private fun mediaReady(): Boolean = lan.ready || (udp?.ready == true)
 
     private fun mediaSendJson(obj: JSONObject) {
-        val u = udp
-        if (u != null && u.ready) {
-            u.sendJson(obj)
+        // Control JSON (incl. mousedown/up atoms) prefers reliable LAN TCP.
+        if (lan.ready) {
+            lan.sendJson(obj)
             return
         }
-        if (lan.ready) lan.sendJson(obj)
+        val u = udp
+        if (u != null && u.ready) u.sendJson(obj)
     }
 
     fun statusJson(): JSONObject = JSONObject()

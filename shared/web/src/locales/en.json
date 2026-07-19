@@ -164,6 +164,8 @@
     "vmouse_panel": "Mouse",
     "controlled_title": "This device is controlled",
     "controlled_body": "The controller picks the target and watches the stream. Use emergency controls below to refuse control (view-only) or hang up.",
+    "controlled_preview_hint": "The preview above mirrors what the controller sees (same outbound stream).",
+    "local_preview": "Local controlled preview",
     "monitor_idle_title": "No remote session",
     "monitor_idle_body": "Go to Peers to log in and request control, or wait for an invite.",
     "waiting_frames": "Waiting for frames…",

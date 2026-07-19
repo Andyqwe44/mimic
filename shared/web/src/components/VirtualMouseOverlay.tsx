@@ -1,5 +1,5 @@
-// UU-style virtual mouse — one widget: body drag moves remote cursor; L / wheel / R on the same piece.
-import { useRef, useState } from 'react'
+// UU-style virtual mouse — driver-level atoms: mousedown / mouseup / move / wheel.
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Tooltip } from './Toolkit'
 import { TEXT, VMOUSE, RADIUS } from '../lib/design'
@@ -15,6 +15,8 @@ function mapDelta(dSx: number, dSy: number, W: number, H: number, rotated: boole
   }
   return { dx: (dSx / W) * SENSITIVITY, dy: (dSy / H) * SENSITIVITY }
 }
+
+type MouseButton = 'left' | 'right'
 
 export function VirtualMouseOverlay({
   enabled,
@@ -36,6 +38,8 @@ export function VirtualMouseOverlay({
   const draggingRef = useRef(false)
   const lastPtrRef = useRef({ x: 0, y: 0 })
   const posRef = useRef({ x: 0.5, y: 0.5 })
+  const leftDownRef = useRef(false)
+  const rightDownRef = useRef(false)
   const [pos, setPos] = useState({ x: 0.5, y: 0.5 })
 
   const clampNorm = (x: number, y: number) => ({
@@ -43,7 +47,50 @@ export function VirtualMouseOverlay({
     y_norm: Math.min(1, Math.max(0, y)),
   })
 
-  const applyDelta = (clientX: number, clientY: number, held: boolean) => {
+  const anyHeld = () => leftDownRef.current || rightDownRef.current
+  const heldButton = (): MouseButton =>
+    (leftDownRef.current ? 'left' : rightDownRef.current ? 'right' : 'left')
+
+  const releaseButton = (button: MouseButton) => {
+    const down = button === 'left' ? leftDownRef : rightDownRef
+    if (!down.current) return
+    down.current = false
+    const { x, y } = posRef.current
+    onAction({ type: 'mouseup', button, x_norm: x, y_norm: y })
+  }
+
+  const onActionRef = useRef(onAction)
+  onActionRef.current = onAction
+
+  // Emergency release if overlay hides / unmounts while a button is held.
+  useEffect(() => {
+    if (!enabled || !showPanel) {
+      if (leftDownRef.current) {
+        leftDownRef.current = false
+        const { x, y } = posRef.current
+        onActionRef.current({ type: 'mouseup', button: 'left', x_norm: x, y_norm: y })
+      }
+      if (rightDownRef.current) {
+        rightDownRef.current = false
+        const { x, y } = posRef.current
+        onActionRef.current({ type: 'mouseup', button: 'right', x_norm: x, y_norm: y })
+      }
+    }
+    return () => {
+      if (leftDownRef.current) {
+        leftDownRef.current = false
+        const { x, y } = posRef.current
+        onActionRef.current({ type: 'mouseup', button: 'left', x_norm: x, y_norm: y })
+      }
+      if (rightDownRef.current) {
+        rightDownRef.current = false
+        const { x, y } = posRef.current
+        onActionRef.current({ type: 'mouseup', button: 'right', x_norm: x, y_norm: y })
+      }
+    }
+  }, [enabled, showPanel])
+
+  const applyDelta = (clientX: number, clientY: number) => {
     const el = stageRef.current
     if (!el) return
     const W = el.offsetWidth
@@ -56,7 +103,14 @@ export function VirtualMouseOverlay({
     const next = clampNorm(posRef.current.x + dx, posRef.current.y + dy)
     posRef.current = { x: next.x_norm, y: next.y_norm }
     setPos({ x: next.x_norm, y: next.y_norm })
-    onAction({ type: 'move', held, button: 'left', x_norm: next.x_norm, y_norm: next.y_norm })
+    // held mirrors physical button state only (driver-level: no fake press).
+    onAction({
+      type: 'move',
+      held: anyHeld(),
+      button: heldButton(),
+      x_norm: next.x_norm,
+      y_norm: next.y_norm,
+    })
   }
 
   const beginDrag = (clientX: number, clientY: number, el: HTMLElement, pointerId: number) => {
@@ -65,10 +119,18 @@ export function VirtualMouseOverlay({
     lastPtrRef.current = { x: clientX, y: clientY }
   }
 
-  const clickButton = (button: 'left' | 'right') => {
+  const endDrag = () => {
+    draggingRef.current = false
+  }
+
+  /** Physical press — one wire event. */
+  const pressButton = (button: MouseButton, el: HTMLElement, pointerId: number) => {
+    const down = button === 'left' ? leftDownRef : rightDownRef
+    if (down.current) return
+    down.current = true
+    el.setPointerCapture(pointerId)
     const { x, y } = posRef.current
     onAction({ type: 'mousedown', button, x_norm: x, y_norm: y })
-    onAction({ type: 'mouseup', button, x_norm: x, y_norm: y })
   }
 
   const wheel = (delta: number) => {
@@ -80,6 +142,29 @@ export function VirtualMouseOverlay({
 
   const aspect = videoAspect && videoAspect > 0 ? videoAspect : 16 / 9
 
+  const bindButton = (button: MouseButton) => ({
+    onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      e.preventDefault()
+      if (e.button !== 0) return
+      pressButton(button, e.currentTarget, e.pointerId)
+    },
+    onPointerUp: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      e.preventDefault()
+      releaseButton(button)
+    },
+    onPointerCancel: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      releaseButton(button)
+    },
+    // Swallow click — we already emitted down/up atoms.
+    onClick: (e: { stopPropagation: () => void; preventDefault: () => void }) => {
+      e.stopPropagation()
+      e.preventDefault()
+    },
+  })
+
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center p-1 pointer-events-none" data-no-page-swipe>
       <div
@@ -87,17 +172,16 @@ export function VirtualMouseOverlay({
         className="relative max-w-full max-h-full w-full pointer-events-auto touch-none"
         style={{ aspectRatio: `${aspect}`, height: 'auto' }}
         onPointerDown={(e) => {
-          // Empty stage drag also moves cursor (same axis mapping).
           if (e.button !== 0) return
           if ((e.target as HTMLElement).closest('[data-vmouse-ui]')) return
           beginDrag(e.clientX, e.clientY, e.currentTarget, e.pointerId)
         }}
         onPointerMove={(e) => {
           if (!draggingRef.current) return
-          applyDelta(e.clientX, e.clientY, true)
+          applyDelta(e.clientX, e.clientY)
         }}
-        onPointerUp={() => { draggingRef.current = false }}
-        onPointerCancel={() => { draggingRef.current = false }}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
       >
         {/* Single mouse widget — hotspot = remote cursor; body drag = move */}
         <div
@@ -106,11 +190,9 @@ export function VirtualMouseOverlay({
           style={{
             left: `${pos.x * 100}%`,
             top: `${pos.y * 100}%`,
-            // Tip (hotspot) sits near top-left of the mouse body
             transform: 'translate(-12%, -8%)',
           }}
         >
-          {/* Hotspot pip — visual lock between widget and remote cursor */}
           <div
             className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-accent ring-2 ring-bg-primary pointer-events-none"
             aria-hidden
@@ -124,10 +206,10 @@ export function VirtualMouseOverlay({
             }}
             onPointerMove={(e) => {
               if (!draggingRef.current) return
-              applyDelta(e.clientX, e.clientY, true)
+              applyDelta(e.clientX, e.clientY)
             }}
-            onPointerUp={() => { draggingRef.current = false }}
-            onPointerCancel={() => { draggingRef.current = false }}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
           >
             {t('peer.vmouse_panel')}
           </div>
@@ -136,7 +218,7 @@ export function VirtualMouseOverlay({
               <button
                 type="button"
                 className={`flex-1 ${VMOUSE.btnH} ${RADIUS.lg} ${TEXT.xs} font-semibold bg-bg-tertiary text-text-primary active:bg-accent-soft-mid`}
-                onClick={(e) => { e.stopPropagation(); clickButton('left') }}
+                {...bindButton('left')}
               >
                 {t('peer.vmouse_left_short')}
               </button>
@@ -146,7 +228,12 @@ export function VirtualMouseOverlay({
                 <button
                   type="button"
                   className={`flex-1 ${RADIUS.md} ${TEXT.tiny} font-medium bg-bg-tertiary text-text-primary active:bg-accent-soft-mid`}
-                  onClick={(e) => { e.stopPropagation(); wheel(120) }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    wheel(120)
+                  }}
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault() }}
                 >
                   ↑
                 </button>
@@ -155,7 +242,12 @@ export function VirtualMouseOverlay({
                 <button
                   type="button"
                   className={`flex-1 ${RADIUS.md} ${TEXT.tiny} font-medium bg-bg-tertiary text-text-primary active:bg-accent-soft-mid`}
-                  onClick={(e) => { e.stopPropagation(); wheel(-120) }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    wheel(-120)
+                  }}
+                  onClick={(e) => { e.stopPropagation(); e.preventDefault() }}
                 >
                   ↓
                 </button>
@@ -165,7 +257,7 @@ export function VirtualMouseOverlay({
               <button
                 type="button"
                 className={`flex-1 ${VMOUSE.btnH} ${RADIUS.lg} ${TEXT.xs} font-semibold bg-bg-tertiary text-text-primary active:bg-accent-soft-mid`}
-                onClick={(e) => { e.stopPropagation(); clickButton('right') }}
+                {...bindButton('right')}
               >
                 {t('peer.vmouse_right_short')}
               </button>

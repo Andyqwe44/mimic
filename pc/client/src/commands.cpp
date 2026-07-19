@@ -1657,8 +1657,9 @@ static std::string execute_remote_control_json(const std::string& actionJson) {
         std::lock_guard<std::mutex> lk(g_remote_cfg_mtx);
         input_mode = g_remote_input;
     }
-    // seize → SendInput (foreground); postmsg → PostMessage (background).
-    const char* method = (input_mode == "seize") ? "sendinput" : "postmessage";
+    // Thin-client policy: desktop hwnd=0 → SendInput (foreground);
+    // window → PostMessage (background). g_remote_input seize forces SendInput.
+    const char* method = (hwnd == 0 || input_mode == "seize") ? "sendinput" : "postmessage";
 
     std::string body = actionJson;
     if (body.empty() || body[0] != '{')
@@ -3460,6 +3461,13 @@ void backend_init() {
             g_control_hwnd.store(effective);
             g_accept_control.store(true);
             g_allow_stream.store(true);
+            // Match thin-client input policy to the new target.
+            {
+                std::lock_guard<std::mutex> lk(g_remote_cfg_mtx);
+                g_remote_input = (effective == 0) ? "seize" : "postmsg";
+            }
+            LOG("peer", "remote_input=%s (hwnd=%llu)",
+                effective == 0 ? "seize" : "postmsg", (unsigned long long)effective);
             // Restart stream on target change so controller sees the new surface.
             if (g_streaming.load())
                 cmd_capture_stream_stop();

@@ -164,6 +164,8 @@
     "vmouse_panel": "滑鼠",
     "controlled_title": "本機被控中",
     "controlled_body": "控制端正在選擇目標並查看畫面。可用下方急停拒絕被控制（僅分享）或掛斷。",
+    "controlled_preview_hint": "上方小窗為本機正在被控的即時畫面（與控制端所見同源）。",
+    "local_preview": "本機被控預覽",
     "monitor_idle_title": "尚無遠端工作階段",
     "monitor_idle_body": "請到「對等」頁登入，並向同帳號裝置請求控制，或等待對方邀請。",
     "waiting_frames": "等待畫面…",
