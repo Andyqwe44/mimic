@@ -191,7 +191,7 @@
     "soft_kb_title": "软键盘（按键发往被控端输入法）",
     "soft_kb_open": "打开软键盘",
     "soft_kb_close": "收起键盘",
-    "soft_kb_hint": "字母映射为物理键；中英文由电脑端输入法决定",
+    "soft_kb_hint": "按键按真键盘注入；中英文由被控端输入法决定",
     "expand_view": "展开画幅（横屏全屏）",
     "collapse_view": "收起画幅",
     "expand_hint": "横屏观看 · 按被控端比例 contain · 点收起返回",

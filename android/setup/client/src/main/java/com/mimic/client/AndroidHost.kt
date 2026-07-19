@@ -14,6 +14,7 @@ import com.mimic.client.capability.CapabilityManager
 import com.mimic.client.capture.CaptureController
 import com.mimic.client.input.InputController
 import com.mimic.client.input.MimicAccessibilityService
+import com.mimic.client.input.ShowTouchesHelper
 import com.mimic.client.peer.PeerSession
 import com.mimic.client.target.AppEnumerator
 import com.mimic.client.target.AppLauncher
@@ -111,6 +112,7 @@ class AndroidHost(
             acceptControl = false
             pendingStartAfterConsent = false
             MimicAccessibilityService.clearConfine()
+            ShowTouchesHelper.restore(context)
             try { capture.stop() } catch (_: Exception) {}
             appendLog("peer", "session_end → gates closed")
             pushGates()
@@ -588,6 +590,15 @@ class AndroidHost(
             "set_control_gate" -> {
                 acceptControl = args.optBoolean("on", args.optBoolean("enabled", args.optInt("on", 0) != 0))
                 appendLog("gate", "accept_control=$acceptControl")
+                if (acceptControl) {
+                    if (!ShowTouchesHelper.ensurePermission(context)) {
+                        appendLog("gate", "WRITE_SETTINGS needed for show_touches")
+                    } else if (!ShowTouchesHelper.enableForSession(context)) {
+                        appendLog("gate", "show_touches enable failed")
+                    }
+                } else {
+                    ShowTouchesHelper.restore(context)
+                }
                 val a11y = MimicAccessibilityService.isEnabled()
                 if (acceptControl && !a11y && !input.vdDisplayActive) {
                     appendLog("gate", "AccessibilityService not enabled")

@@ -443,7 +443,8 @@ void lan_send_frame(uint8_t type, const uint8_t* data, size_t len) {
 std::mutex g_frame_mtx;
 std::vector<uint8_t> g_last_frame;
 
-void peer_store_frame_(const uint8_t* data, size_t len) {
+/** @return true if slot updated (caller may emit peer_frame). */
+bool peer_store_frame_(const uint8_t* data, size_t len) {
     std::lock_guard<std::mutex> lk(g_frame_mtx);
     auto flags_at = [](const uint8_t* p, size_t n) -> uint32_t {
         if (n < 12) return 0;
@@ -455,15 +456,17 @@ void peer_store_frame_(const uint8_t* data, size_t len) {
     const bool old_key = (flags_at(g_last_frame.data(), g_last_frame.size()) & 1u) != 0;
     // Never let a delta overwrite an unread IDR — that causes WebCodecs blur until next GOP.
     if (!g_last_frame.empty() && old_key && !new_key)
-        return;
+        return false;
     g_last_frame.assign(data, data + len);
+    return true;
 }
 
 void handle_lan_payload(uint8_t type, const std::vector<uint8_t>& payload) {
     if (type == 1) {
         if (payload.size() < 16) return;
-        peer_store_frame_(payload.data(), payload.size());
-        emit_ui(R"({"type":"peer_frame"})");
+        // Only notify UI when the single slot actually changed (avoids N× empty takes).
+        if (peer_store_frame_(payload.data(), payload.size()))
+            emit_ui(R"({"type":"peer_frame"})");
         return;
     }
     if (type == 2) {
@@ -678,6 +681,13 @@ void begin_ice_p2p(const char* offer_kind) {
                 g_media_ready = true;
                 emit_ui(R"({"type":"peer_transport","mode":"p2p"})");
                 LOG("peer", "P2P media ready (UDP hole-punch)");
+            },
+            [](uint8_t type) {
+                // Lost UDP fragment → whole frame gone; ask controlled for a fresh IDR.
+                if (type == 1 && g_cb.on_need_key) {
+                    LOG("peer", "UDP reasm fail type=1 → need_key");
+                    g_cb.on_need_key();
+                }
             });
         if (!ok) {
             g_ice_started = false;

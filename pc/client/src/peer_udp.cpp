@@ -27,7 +27,7 @@ constexpr uint8_t kTypePunch = 0xFF;
 constexpr size_t kMaxFrag = 1100;
 constexpr uint32_t kStunMagic = 0x2112A442u;
 /** Drop incomplete UDP reassembly after this many ms (lost fragment). */
-constexpr DWORD kReasmTimeoutMs = 400;
+constexpr DWORD kReasmTimeoutMs = 1200;
 
 SOCKET g_sock = INVALID_SOCKET;
 std::thread g_reader;
@@ -42,6 +42,7 @@ std::vector<PeerUdpCand> g_local_cands;
 std::vector<PeerUdpCand> g_remote_cands;
 PeerUdpPayloadFn g_on_payload;
 PeerUdpReadyFn g_on_ready;
+PeerUdpReasmFailFn g_on_reasm_fail;
 std::atomic<uint32_t> g_msg_id{1};
 std::atomic<uint32_t> g_reasm_timeouts{0};
 std::atomic<uint32_t> g_udp_send_ok{0};
@@ -58,13 +59,15 @@ std::unordered_map<uint32_t, Reasm> g_reasm;
 void purge_stale_reasm(DWORD now) {
     for (auto it = g_reasm.begin(); it != g_reasm.end(); ) {
         if (now - it->second.started_ms > kReasmTimeoutMs) {
+            uint8_t dropped_type = it->second.type;
             uint32_t n = g_reasm_timeouts.fetch_add(1) + 1;
             if (n <= 5 || n % 30 == 0) {
                 LOG_WARN("peer", "UDP reasm timeout mid=%u type=%u frags=%u (total_timeouts=%u)",
-                         (unsigned)it->first, (unsigned)it->second.type,
+                         (unsigned)it->first, (unsigned)dropped_type,
                          (unsigned)it->second.cnt, n);
             }
             it = g_reasm.erase(it);
+            if (g_on_reasm_fail) g_on_reasm_fail(dropped_type);
         } else {
             ++it;
         }
@@ -273,10 +276,12 @@ void puncher_loop() {
 } // namespace
 
 bool peer_udp_start(const std::string& stun_host, uint16_t stun_port,
-                    PeerUdpPayloadFn on_payload, PeerUdpReadyFn on_ready) {
+                    PeerUdpPayloadFn on_payload, PeerUdpReadyFn on_ready,
+                    PeerUdpReasmFailFn on_reasm_fail) {
     peer_udp_stop();
     g_on_payload = std::move(on_payload);
     g_on_ready = std::move(on_ready);
+    g_on_reasm_fail = std::move(on_reasm_fail);
     g_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (g_sock == INVALID_SOCKET) return false;
     sockaddr_in local = {};
@@ -361,6 +366,9 @@ void peer_udp_stop() {
     g_remote_cands.clear();
     g_reasm.clear();
     g_local_port = 0;
+    g_on_payload = nullptr;
+    g_on_ready = nullptr;
+    g_on_reasm_fail = nullptr;
 }
 
 bool peer_udp_ready() { return g_ready.load(); }

@@ -191,7 +191,7 @@
     "soft_kb_title": "Soft keyboard (keys go to host IME)",
     "soft_kb_open": "Open soft keyboard",
     "soft_kb_close": "Hide keyboard",
-    "soft_kb_hint": "Letters map to physical keys; host IME chooses EN/CJK",
+    "soft_kb_hint": "Keys are injected like a real keyboard; host IME handles EN/CJK",
     "expand_view": "Expand view (landscape fullscreen)",
     "collapse_view": "Collapse view",
     "expand_hint": "Hold phone sideways · contain to remote aspect · tap collapse",

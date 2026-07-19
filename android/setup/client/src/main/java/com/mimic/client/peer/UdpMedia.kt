@@ -25,6 +25,7 @@ class UdpMedia(
     private val onJson: (JSONObject) -> Unit,
     private val onH264: (ByteArray) -> Unit,
     private val onReady: () -> Unit,
+    private val onReasmFail: ((type: Int) -> Unit)? = null,
 ) {
     private val tag = "MimicUdp"
     private val running = AtomicBoolean(false)
@@ -166,11 +167,13 @@ class UdpMedia(
         while (it.hasNext()) {
             val e = it.next()
             if (now - e.value.startedAtMs > REASM_TIMEOUT_MS) {
+                val droppedType = e.value.type
                 val n = reasmTimeouts.incrementAndGet()
                 if (n <= 5 || n % 30 == 0) {
-                    Log.w(tag, "UDP reasm timeout mid=${e.key} type=${e.value.type} frags=${e.value.cnt} (total=$n)")
+                    Log.w(tag, "UDP reasm timeout mid=${e.key} type=$droppedType frags=${e.value.cnt} (total=$n)")
                 }
                 it.remove()
+                try { onReasmFail?.invoke(droppedType) } catch (_: Exception) {}
             }
         }
     }
@@ -235,7 +238,7 @@ class UdpMedia(
         private const val TYPE_PUNCH: Byte = 0xFF.toByte()
         private const val STUN_MAGIC = 0x2112A442
         /** Drop incomplete UDP reassembly after this many ms (lost fragment). */
-        private const val REASM_TIMEOUT_MS = 400L
+        private const val REASM_TIMEOUT_MS = 1200L
 
         fun candsToJson(cands: List<UdpCand>): JSONArray {
             val arr = JSONArray()

@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.27",
-    "mimicReleaseNote":  "skeleton zip until first signed APK",
+    "version":  "0.1.28",
+    "mimicReleaseNote":  "frame pipeline + SHOW_TOUCHES + real keyboard IME",
     "description":  "Mimic Android shell 閳?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",

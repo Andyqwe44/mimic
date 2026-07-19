@@ -1027,6 +1027,13 @@ static std::vector<std::string> g_peer_ui_q;
 void peer_ui_enqueue(const std::string& json) {
     {
         std::lock_guard<std::mutex> lk(g_peer_ui_mtx);
+        // Coalesce peer_frame: single-slot take only needs one pending notify.
+        if (json.find("\"type\":\"peer_frame\"") != std::string::npos) {
+            for (const auto& q : g_peer_ui_q) {
+                if (q.find("\"type\":\"peer_frame\"") != std::string::npos)
+                    return;
+            }
+        }
         g_peer_ui_q.push_back(json);
     }
     HWND hwnd = (HWND)get_main_hwnd();
@@ -1757,6 +1764,7 @@ static bool screen_norm_to_window_norm(HWND hwnd, double& x_norm, double& y_norm
 
 // Apply target-driven policy: desktop=foreground SendInput, window=background SendMessage.
 // Forces hwnd to g_control_hwnd so a hallucinating model cannot retarget another window.
+// Keyboard always uses SendInput (+ scancode) so the host IME sees real keystrokes.
 static std::string execute_remote_control_json(const std::string& actionJson) {
     if (!g_accept_control.load()) {
         return "{\"ok\":false,\"error\":\"accept_control gate closed\"}";
@@ -1767,9 +1775,22 @@ static std::string execute_remote_control_json(const std::string& actionJson) {
         std::lock_guard<std::mutex> lk(g_remote_cfg_mtx);
         input_mode = g_remote_input;
     }
-    // Thin-client policy: desktop hwnd=0 → SendInput (foreground);
-    // window → PostMessage (background). g_remote_input seize forces SendInput.
-    const char* method = (hwnd == 0 || input_mode == "seize") ? "sendinput" : "postmessage";
+    std::string atype = json_get_str(actionJson, "type");
+    const bool is_key =
+        atype == "keydown" || atype == "keyup" || atype == "keypress" || atype == "combo";
+    // Thin-client: pointer — desktop/seize → SendInput, window → PostMessage.
+    // Keys always SendInput so Windows IME candidacy matches a physical keyboard.
+    const char* method =
+        (is_key || hwnd == 0 || input_mode == "seize") ? "sendinput" : "postmessage";
+
+    // Keyboard into a window target: briefly foreground so IME attaches correctly.
+    if (is_key && hwnd != 0) {
+        HWND h = (HWND)(uintptr_t)hwnd;
+        if (IsWindow(h) && GetForegroundWindow() != h) {
+            AllowSetForegroundWindow(ASFW_ANY);
+            SetForegroundWindow(h);
+        }
+    }
 
     std::string body = actionJson;
     if (body.empty() || body[0] != '{')

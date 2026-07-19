@@ -79,6 +79,38 @@ export function PeerPanel({
   const saveCredsRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Stable push handler — avoid re-subscribe churn duplicating addLog.
   const pushHandlerRef = useRef<(d: Record<string, unknown>) => void>(() => {})
+  // Single-slot frame take: at most one in-flight peer_get_frame; coalesce notifies.
+  const frameBusyRef = useRef(false)
+  const framePendingRef = useRef(false)
+  const frameEmptyLogRef = useRef(0)
+
+  const pullPeerFrame = useCallback(() => {
+    if (frameBusyRef.current) {
+      framePendingRef.current = true
+      return
+    }
+    frameBusyRef.current = true
+    framePendingRef.current = false
+    hostCall('peer_get_frame').then((fr: {
+      ok?: boolean; w?: number; h?: number; flags?: number; b64?: string; error?: string
+    }) => {
+      if (!fr?.ok || !fr.b64) {
+        // Rate-limit empty-slot logs (structural coalesce should make these rare).
+        const now = Date.now()
+        if (fr?.error && now - frameEmptyLogRef.current > 2000) {
+          frameEmptyLogRef.current = now
+          addLog(`[Decode] peer_get_frame: ${fr.error}`)
+        }
+      } else {
+        const bin = Uint8Array.from(atob(fr.b64), (c) => c.charCodeAt(0))
+        window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
+      }
+    }).catch((e) => addLog(`[Decode] peer_get_frame failed: ${e}`))
+      .finally(() => {
+        frameBusyRef.current = false
+        if (framePendingRef.current) pullPeerFrame()
+      })
+  }, [])
 
   // Load persisted signaling credentials (local prefs only; wire still uses passHash).
   useEffect(() => {
@@ -226,16 +258,7 @@ export function PeerPanel({
         setStatus(code === 'busy' ? t('peer.busy') : err)
         addLog(`[Peer] ${code ? `${code}: ` : ''}${err}`)
       } else if (d.type === 'peer_frame') {
-        hostCall('peer_get_frame').then((fr: {
-          ok?: boolean; w?: number; h?: number; flags?: number; b64?: string; error?: string
-        }) => {
-          if (!fr?.ok || !fr.b64) {
-            if (fr?.error) addLog(`[Decode] peer_get_frame: ${fr.error}`)
-            return
-          }
-          const bin = Uint8Array.from(atob(fr.b64), (c) => c.charCodeAt(0))
-          window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
-        }).catch((e) => addLog(`[Decode] peer_get_frame failed: ${e}`))
+        pullPeerFrame()
       } else if (d.type === 'peer_msg') {
         const payload = d.payload as {
           type?: string
@@ -272,7 +295,7 @@ export function PeerPanel({
         if (d.reconnected) addLog('[Peer] reconnected')
       }
     }
-  }, [onRemoteWindows, onTransport, onRole, onSessionStart, refreshStatus, t])
+  }, [onRemoteWindows, onTransport, onRole, onSessionStart, refreshStatus, t, pullPeerFrame])
 
   useEffect(() => {
     return onNativePush((d: Record<string, unknown>) => {

@@ -18,9 +18,12 @@ struct PeerUdpCand {
 
 using PeerUdpPayloadFn = std::function<void(uint8_t type, const std::vector<uint8_t>& payload)>;
 using PeerUdpReadyFn = std::function<void()>;
+/** Fired when an incomplete reassembly is dropped — request a keyframe for type=1. */
+using PeerUdpReasmFailFn = std::function<void(uint8_t type)>;
 
 bool peer_udp_start(const std::string& stun_host, uint16_t stun_port,
-                    PeerUdpPayloadFn on_payload, PeerUdpReadyFn on_ready);
+                    PeerUdpPayloadFn on_payload, PeerUdpReadyFn on_ready,
+                    PeerUdpReasmFailFn on_reasm_fail = {});
 void peer_udp_stop();
 bool peer_udp_ready();
 uint16_t peer_udp_local_port();

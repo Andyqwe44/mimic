@@ -191,7 +191,7 @@
     "soft_kb_title": "軟鍵盤（按鍵送往被控端輸入法）",
     "soft_kb_open": "開啟軟鍵盤",
     "soft_kb_close": "收起鍵盤",
-    "soft_kb_hint": "字母對應實體鍵；中英文由電腦端輸入法決定",
+    "soft_kb_hint": "按鍵按真鍵盤注入；中英文由被控端輸入法決定",
     "expand_view": "展開畫幅（橫向全螢幕）",
     "collapse_view": "收起畫幅",
     "expand_hint": "橫握手機觀看 · 依被控端比例 contain · 點收起返回",

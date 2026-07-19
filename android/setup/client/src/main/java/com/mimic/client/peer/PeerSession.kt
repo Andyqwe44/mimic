@@ -61,8 +61,8 @@ class PeerSession(
     private val lan = LanMedia(
         onJson = { handleLanJson(it) },
         onH264 = { bytes ->
-            storeFramePreferKey(bytes)
-            push(JSONObject().put("type", "peer_frame"))
+            if (storeFramePreferKey(bytes))
+                push(JSONObject().put("type", "peer_frame"))
         },
         onReady = { onMediaLinkReady("lan") },
     )
@@ -100,17 +100,18 @@ class PeerSession(
         }
     }
 
-    private fun storeFramePreferKey(bytes: ByteArray) {
-        if (bytes.size < 12) return
+    private fun storeFramePreferKey(bytes: ByteArray): Boolean {
+        if (bytes.size < 12) return false
         fun flagsOf(b: ByteArray): Int =
             java.nio.ByteBuffer.wrap(b, 8, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
         val newKey = (flagsOf(bytes) and 1) != 0
         val prev = lastFrame
         if (prev != null && prev.size >= 12) {
             val oldKey = (flagsOf(prev) and 1) != 0
-            if (oldKey && !newKey) return // keep unread IDR
+            if (oldKey && !newKey) return false // keep unread IDR — do not notify
         }
         lastFrame = bytes
+        return true
     }
 
     var onControlAction: ((JSONObject) -> JSONObject)? = null
@@ -491,12 +492,18 @@ class PeerSession(
             val media = UdpMedia(
                 onJson = { handleLanJson(it) },
                 onH264 = { bytes ->
-                    storeFramePreferKey(bytes)
-                    push(JSONObject().put("type", "peer_frame"))
+                    if (storeFramePreferKey(bytes))
+                        push(JSONObject().put("type", "peer_frame"))
                 },
                 onReady = {
                     onMediaLinkReady("p2p")
                     Log.i(tag, "P2P media ready (UDP hole-punch)")
+                },
+                onReasmFail = { type ->
+                    if (type == 1) {
+                        Log.i(tag, "UDP reasm fail type=1 → need_key")
+                        onRequestKeyframe?.invoke()
+                    }
                 },
             )
             if (!media.start(stunHost(), 3478)) {

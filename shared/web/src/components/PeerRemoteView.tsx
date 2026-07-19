@@ -1,10 +1,12 @@
-// Peer remote view — WebCodecs H.264 decode + UU virtual mouse + soft keyboard.
+// Peer remote view — WebCodecs H.264 decode + platform pointer + soft keyboard.
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Expand, Keyboard, Minimize2 } from 'lucide-react'
 import { hostCall, addLog } from '../lib/bridge'
+import { isAndroidHost } from '../lib/platform'
 import { Tooltip } from './Toolkit'
 import { VirtualMouseOverlay } from './VirtualMouseOverlay'
+import { AbsolutePointerOverlay } from './AbsolutePointerOverlay'
 import { SoftKeyboardOverlay } from './SoftKeyboardOverlay'
 import { TEXT } from '../lib/design'
 
@@ -339,7 +341,9 @@ export function PeerRemoteView({
   const viewportPortrait =
     typeof window !== 'undefined' && window.innerHeight > window.innerWidth
   const rotated = expanded && landscapeVideo && viewportPortrait
-  const maxPreviewH = portraitVideo ? 'min(58vh, 640px)' : 'min(36vh, 420px)'
+  // Portrait remote (typical Android app): taller preview on PC; landscape: wider/shorter.
+  const maxPreviewH = portraitVideo ? 'min(72vh, 720px)' : 'min(42vh, 480px)'
+  const androidCtl = isAndroidHost()
 
   // Rotated: pre-rotate box = (stageH × stageW). Keyboard lives inside when open.
   const contentW = rotated ? stageBox.h : stageBox.w
@@ -390,6 +394,28 @@ export function PeerRemoteView({
     </div>
   ) : null
 
+  const controlOverlay = humanControl && expanded ? (
+    androidCtl ? (
+      <VirtualMouseOverlay
+        enabled
+        videoAspect={videoAspect}
+        rotated={rotated}
+        showPanel
+        fitWidth={fit.w}
+        fitHeight={fit.h}
+        onAction={send}
+      />
+    ) : (
+      <AbsolutePointerOverlay
+        enabled
+        rotated={rotated}
+        fitWidth={fit.w}
+        fitHeight={fit.h}
+        onAction={send}
+      />
+    )
+  ) : null
+
   const videoStack = (
     <div
       className="relative flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full"
@@ -405,128 +431,150 @@ export function PeerRemoteView({
           height: fit.h > 0 ? fit.h : '100%',
         }}
       />
-      {humanControl && (
-        <VirtualMouseOverlay
-          enabled
-          videoAspect={videoAspect}
-          rotated={rotated}
-          showPanel={expanded}
-          fitWidth={fit.w}
-          fitHeight={fit.h}
-          onAction={send}
-        />
+      {controlOverlay}
+    </div>
+  )
+
+  const statusRow = (
+    <div className="h-7 px-2 flex items-center gap-2 text-[11px] text-text-tertiary shrink-0">
+      <span className="font-medium text-text-secondary">
+        {source === 'local' ? t('peer.local_preview') : t('peer.remote_view')}
+      </span>
+      <span className="tabular-nums">{dims}</span>
+      <span className="tabular-nums">{fps} fps</span>
+      {encodeHint && (
+        <span className="text-amber-500 truncate">{encodeHint}</span>
+      )}
+      {latHint && (
+        <span className="tabular-nums text-text-muted truncate min-w-0">{latHint}</span>
+      )}
+      <span className="ml-auto truncate min-w-0">
+        {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
+      </span>
+      {!expanded && (
+        <Tooltip text={t('peer.expand_view')}>
+          <button
+            type="button"
+            className="h-6 w-6 rounded flex items-center justify-center shrink-0 hover:bg-bg-hover text-text-secondary"
+            onClick={() => setExpanded(true)}
+          >
+            <Expand className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
       )}
     </div>
   )
 
   return (
-    <div className={shellClass} style={shellStyle}>
-      {expanded && (
-        <div
-          className="fixed z-[90] flex items-center gap-1 pointer-events-auto"
-          style={{
-            top: 'max(10px, env(safe-area-inset-top, 0px))',
-            right: 'max(10px, env(safe-area-inset-right, 0px))',
-          }}
-          data-no-page-swipe
-        >
-          {humanControl && (
-            <Tooltip text={kbOpen ? t('peer.soft_kb_close') : t('peer.soft_kb_open')}>
-              <button
-                type="button"
-                className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary/90 ring-1 ring-inset ring-border ${
-                  kbOpen ? 'text-accent' : 'text-text-secondary'
-                }`}
-                onClick={() => setKbOpen((v) => !v)}
-              >
-                <Keyboard className="w-4 h-4" />
-              </button>
-            </Tooltip>
-          )}
-          <Tooltip text={t('peer.collapse_view')}>
-            <button
-              type="button"
-              className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary/90 ring-1 ring-inset ring-border text-text-secondary"
-              onClick={() => setExpanded(false)}
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
-          </Tooltip>
-        </div>
-      )}
-      <div className="flex flex-col bg-black" style={planeStyle}>
-        {!rotated && (
-          <div className="h-7 px-2 flex items-center gap-2 text-[11px] text-text-tertiary border-b border-border shrink-0">
-            <span className="font-medium text-text-secondary">
-              {source === 'local' ? t('peer.local_preview') : t('peer.remote_view')}
-            </span>
-            <span className="tabular-nums">{dims}</span>
-            <span className="tabular-nums">{fps} fps</span>
-            {encodeHint && (
-              <span className="text-amber-500 truncate">{encodeHint}</span>
+    <div className={expanded ? shellClass : 'shrink-0 flex flex-col w-full gap-0'}>
+      {expanded ? (
+        <div className={shellClass} style={shellStyle}>
+          <div
+            className="fixed z-[90] flex items-center gap-2 pointer-events-auto"
+            style={{
+              top: 'max(10px, env(safe-area-inset-top, 0px))',
+              right: 'max(10px, env(safe-area-inset-right, 0px))',
+            }}
+            data-no-page-swipe
+          >
+            {!rotated && (
+              <div className="max-w-[min(50vw,320px)] truncate text-[11px] text-text-muted bg-bg-secondary/90 ring-1 ring-inset ring-border rounded-lg px-2 h-9 flex items-center">
+                <span className="tabular-nums mr-2">{fps} fps</span>
+                <span className="truncate">{status}</span>
+              </div>
             )}
-            {latHint && (
-              <span className="tabular-nums text-text-muted truncate min-w-0">{latHint}</span>
-            )}
-            <span className="ml-auto truncate min-w-0">
-              {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
-            </span>
-            {!expanded && (
-              <Tooltip text={t('peer.expand_view')}>
+            {humanControl && (
+              <Tooltip text={kbOpen ? t('peer.soft_kb_close') : t('peer.soft_kb_open')}>
                 <button
                   type="button"
-                  className="h-6 w-6 rounded flex items-center justify-center shrink-0 hover:bg-bg-hover text-text-secondary"
-                  onClick={() => setExpanded(true)}
+                  className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary/90 ring-1 ring-inset ring-border ${
+                    kbOpen ? 'text-accent' : 'text-text-secondary'
+                  }`}
+                  onClick={() => setKbOpen((v) => !v)}
                 >
-                  <Expand className="w-3.5 h-3.5" />
+                  <Keyboard className="w-4 h-4" />
                 </button>
               </Tooltip>
             )}
+            <Tooltip text={t('peer.collapse_view')}>
+              <button
+                type="button"
+                className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary/90 ring-1 ring-inset ring-border text-text-secondary"
+                onClick={() => setExpanded(false)}
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+            </Tooltip>
           </div>
-        )}
-        <div
-          ref={stageRef}
-          className="relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full"
-          data-no-page-swipe={humanControl ? true : undefined}
-        >
-          {rotated ? (
+          <div className="flex flex-col bg-black" style={planeStyle}>
             <div
-              className="flex flex-col"
-              style={{
-                position: 'absolute',
-                width: contentW > 0 ? contentW : '100%',
-                height: contentHFull > 0 ? contentHFull : '100%',
-                left: '50%',
-                top: '50%',
-                transform: 'translate(-50%, -50%) rotate(90deg)',
-                transformOrigin: 'center center',
-                flexShrink: 0,
-                minWidth: contentW > 0 ? contentW : undefined,
-                minHeight: contentHFull > 0 ? contentHFull : undefined,
-              }}
+              ref={stageRef}
+              className="relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full"
+              data-no-page-swipe={humanControl ? true : undefined}
             >
-              {videoStack}
-              {softKb}
+              {rotated ? (
+                <div
+                  className="flex flex-col"
+                  style={{
+                    position: 'absolute',
+                    width: contentW > 0 ? contentW : '100%',
+                    height: contentHFull > 0 ? contentHFull : '100%',
+                    left: '50%',
+                    top: '50%',
+                    transform: 'translate(-50%, -50%) rotate(90deg)',
+                    transformOrigin: 'center center',
+                    flexShrink: 0,
+                    minWidth: contentW > 0 ? contentW : undefined,
+                    minHeight: contentHFull > 0 ? contentHFull : undefined,
+                  }}
+                >
+                  {videoStack}
+                  {softKb}
+                </div>
+              ) : (
+                <div
+                  className="flex items-center justify-center"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                >
+                  {videoStack}
+                </div>
+              )}
             </div>
-          ) : (
-            <div
-              className="flex items-center justify-center"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-            >
-              {videoStack}
+            {expanded && !rotated && !kbOpen && (
+              <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
+                {t('peer.expand_hint')}
+              </div>
+            )}
+          </div>
+          {!rotated && softKb && (
+            <div className="fixed inset-x-0 bottom-0 z-[95] pointer-events-auto" data-no-page-swipe>
+              {softKb}
             </div>
           )}
         </div>
-        {expanded && !rotated && !kbOpen && (
-          <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
-            {t('peer.expand_hint')}
+      ) : (
+        <>
+          <div className={shellClass} style={shellStyle}>
+            <div className="flex flex-col bg-black" style={planeStyle}>
+              <div
+                ref={stageRef}
+                className="relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full"
+                data-no-page-swipe={humanControl ? true : undefined}
+              >
+                <div
+                  className="flex items-center justify-center"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                >
+                  {videoStack}
+                </div>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
-      {!rotated && softKb && (
-        <div className="fixed inset-x-0 bottom-0 z-[95] pointer-events-auto" data-no-page-swipe>
-          {softKb}
-        </div>
+          {/* Status below preview — does not steal video height */}
+          <div className="rounded-b-xl bg-bg-secondary ring-1 ring-inset ring-border border-t-0 -mt-px">
+            {statusRow}
+          </div>
+        </>
       )}
     </div>
   )
