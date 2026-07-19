@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.util.Log
 import com.mimic.client.capability.CapabilityBackend
 import org.json.JSONObject
 
@@ -12,6 +13,7 @@ import org.json.JSONObject
  * Capture facade — MediaProjection (normal) / privileged VirtualDisplay (shizuku|root).
  */
 class CaptureController(private val context: Context) {
+    private val tag = "MimicCap"
     @Volatile var streaming: Boolean = false
         private set
     @Volatile private var mediaProjectionResultCode: Int = 0
@@ -19,6 +21,8 @@ class CaptureController(private val context: Context) {
     private var projection: MediaProjection? = null
     private var encoder: ScreenEncoder? = null
     @Volatile var onEncodedFrame: ((ByteArray) -> Unit)? = null
+    /** Fired when system revokes projection or encoder stops due to onStop. */
+    @Volatile var onCaptureEnded: (() -> Unit)? = null
 
     fun setProjectionResult(resultCode: Int, data: Intent?) {
         mediaProjectionResultCode = resultCode
@@ -27,6 +31,12 @@ class CaptureController(private val context: Context) {
 
     fun hasProjectionConsent(): Boolean =
         mediaProjectionData != null && mediaProjectionResultCode != 0
+
+    /** Consent Intent is one-shot on modern Android — clear after stop / revoke. */
+    fun clearProjectionConsent() {
+        mediaProjectionResultCode = 0
+        mediaProjectionData = null
+    }
 
     fun start(args: JSONObject, backend: CapabilityBackend): JSONObject {
         val targetId = args.optString("target_id", args.optString("id", "display:0"))
@@ -53,7 +63,7 @@ class CaptureController(private val context: Context) {
                 .put("need_consent", true)
         }
         return try {
-            stopInternal()
+            stopInternal(clearConsent = false)
             // FGS must be running before getMediaProjection on modern Android.
             val i = Intent(context, CaptureService::class.java)
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i)
@@ -61,6 +71,8 @@ class CaptureController(private val context: Context) {
             val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val proj = mgr.getMediaProjection(mediaProjectionResultCode, mediaProjectionData!!)
                 ?: return JSONObject().put("ok", false).put("error", "getMediaProjection returned null")
+            // One-shot consent — clear so a later restart re-prompts.
+            clearProjectionConsent()
             projection = proj
 
             val dm = context.resources.displayMetrics
@@ -69,6 +81,11 @@ class CaptureController(private val context: Context) {
                 height = dm.heightPixels,
                 dpi = dm.densityDpi,
                 onFrame = { packed -> onEncodedFrame?.invoke(packed) },
+                onProjectionStopped = {
+                    Log.w(tag, "projection stopped by system")
+                    stopInternal(clearConsent = true)
+                    onCaptureEnded?.invoke()
+                },
             )
             enc.start(proj)
             encoder = enc
@@ -80,13 +97,14 @@ class CaptureController(private val context: Context) {
                 .put("w", dm.widthPixels)
                 .put("h", dm.heightPixels)
         } catch (e: Exception) {
-            stopInternal()
+            Log.e(tag, "capture start failed", e)
+            stopInternal(clearConsent = true)
             JSONObject().put("ok", false).put("error", e.message ?: "capture start failed")
         }
     }
 
     fun stop(): JSONObject {
-        stopInternal()
+        stopInternal(clearConsent = true)
         return JSONObject().put("ok", true)
     }
 
@@ -94,12 +112,13 @@ class CaptureController(private val context: Context) {
         encoder?.requestKeyframe()
     }
 
-    private fun stopInternal() {
+    private fun stopInternal(clearConsent: Boolean) {
         streaming = false
         try { encoder?.stop() } catch (_: Exception) {}
         encoder = null
         try { projection?.stop() } catch (_: Exception) {}
         projection = null
         try { context.stopService(Intent(context, CaptureService::class.java)) } catch (_: Exception) {}
+        if (clearConsent) clearProjectionConsent()
     }
 }

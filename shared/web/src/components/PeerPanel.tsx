@@ -205,12 +205,15 @@ export function PeerPanel({
         addLog(`[Peer] ${code ? `${code}: ` : ''}${err}`)
       } else if (d.type === 'peer_frame') {
         hostCall('peer_get_frame').then((fr: {
-          ok?: boolean; w?: number; h?: number; flags?: number; b64?: string
+          ok?: boolean; w?: number; h?: number; flags?: number; b64?: string; error?: string
         }) => {
-          if (!fr?.ok || !fr.b64) return
+          if (!fr?.ok || !fr.b64) {
+            if (fr?.error) addLog(`[Decode] peer_get_frame: ${fr.error}`)
+            return
+          }
           const bin = Uint8Array.from(atob(fr.b64), (c) => c.charCodeAt(0))
           window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
-        }).catch(() => {})
+        }).catch((e) => addLog(`[Decode] peer_get_frame failed: ${e}`))
       } else if (d.type === 'peer_msg') {
         const payload = d.payload as {
           type?: string
@@ -315,6 +318,8 @@ export function PeerPanel({
   }
 
   const hangup = async () => {
+    try { await hostCall('set_stream_gate', { enabled: false }) } catch { /* */ }
+    try { await hostCall('set_control_gate', { enabled: false }) } catch { /* */ }
     await hostCall('peer_hangup')
     setRole('idle')
     onRole?.('idle')

@@ -98,6 +98,58 @@ bool to_annexb(const uint8_t* data, DWORD size, std::vector<uint8_t>& out, bool&
     return !out.empty();
 }
 
+bool annexb_has_nal_type(const std::vector<uint8_t>& ab, uint8_t nal_type) {
+    const uint8_t* data = ab.data();
+    size_t size = ab.size();
+    for (size_t i = 0; i + 4 < size; ++i) {
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
+            if ((data[i + 4] & 0x1F) == nal_type) return true;
+            i += 3;
+        } else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+            if ((data[i + 3] & 0x1F) == nal_type) return true;
+            i += 2;
+        }
+    }
+    return false;
+}
+
+// Rebuild cached SPS+PPS Annex-B from a packet that contains parameter sets.
+void cache_sps_pps_from_annexb(const std::vector<uint8_t>& ab, std::vector<uint8_t>& sps_pps) {
+    std::vector<uint8_t> sps, pps;
+    const uint8_t* data = ab.data();
+    size_t size = ab.size();
+    size_t i = 0;
+    while (i + 3 < size) {
+        size_t sc = 0;
+        if (i + 3 < size && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1)
+            sc = 4;
+        else if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
+            sc = 3;
+        else { ++i; continue; }
+        size_t nal_start = i + sc;
+        size_t j = nal_start;
+        while (j + 3 < size) {
+            if (data[j] == 0 && data[j + 1] == 0 &&
+                (data[j + 2] == 1 || (data[j + 2] == 0 && j + 3 < size && data[j + 3] == 1)))
+                break;
+            ++j;
+        }
+        if (nal_start < size) {
+            uint8_t nt = data[nal_start] & 0x1F;
+            if (nt == 7) {
+                sps.assign(data + i, data + j);
+            } else if (nt == 8) {
+                pps.assign(data + i, data + j);
+            }
+        }
+        i = j;
+    }
+    if (!sps.empty() && !pps.empty()) {
+        sps_pps = sps;
+        sps_pps.insert(sps_pps.end(), pps.begin(), pps.end());
+    }
+}
+
 } // namespace
 
 struct H264Encoder::Impl {
@@ -125,6 +177,7 @@ struct H264Encoder::Impl {
     bool vp_ready = false;
 
     std::vector<uint8_t> nv12_cpu;
+    std::vector<uint8_t> sps_pps; // Annex-B SPS+PPS cached for IDR prepend
     LONGLONG sample_time = 0;
     LONGLONG sample_duration = 0;
     int fps = 30;
@@ -479,8 +532,10 @@ bool H264Encoder::init(ID3D11Device* device, int width, int height, int fps, int
         set_bool(CODECAPI_AVLowLatencyMode, true);
         set_u4(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR);
         set_u4(CODECAPI_AVEncCommonMeanBitRate, (ULONG)bitrate_kbps * 1000);
-        // Small GOP → frequent IDR for joiners; still low latency with B-frames off.
-        set_u4(CODECAPI_AVEncMPVGOPSize, (ULONG)fps);
+        // ~0.5s GOP → faster keyframe recovery after loss (B-frames off).
+        ULONG gop = (ULONG)((fps > 1) ? (fps / 2) : 15);
+        if (gop < 8) gop = 8;
+        set_u4(CODECAPI_AVEncMPVGOPSize, gop);
         set_u4(CODECAPI_AVEncMPVDefaultBPictureCount, 0);
         // 0 = favor speed / lower latency on vendors that honor it.
         set_u4(CODECAPI_AVEncCommonQualityVsSpeed, 100);
@@ -577,6 +632,14 @@ bool H264Encoder::process_one_output_(std::vector<H264Packet>& out) {
     contiguous->Unlock();
     if (odb.pSample && !need_provide) odb.pSample->Release();
     if (ok) {
+        if (annexb_has_nal_type(pkt.annexb, 7) || annexb_has_nal_type(pkt.annexb, 8))
+            cache_sps_pps_from_annexb(pkt.annexb, impl_->sps_pps);
+        // Decoder reconfigure / joiners need SPS+PPS before IDR (parity with Android).
+        if (pkt.keyframe && !impl_->sps_pps.empty() && !annexb_has_nal_type(pkt.annexb, 7)) {
+            std::vector<uint8_t> merged = impl_->sps_pps;
+            merged.insert(merged.end(), pkt.annexb.begin(), pkt.annexb.end());
+            pkt.annexb = std::move(merged);
+        }
         pkt.ts_ms = (uint32_t)(GetTickCount64() & 0xffffffffu);
         out.push_back(std::move(pkt));
     }

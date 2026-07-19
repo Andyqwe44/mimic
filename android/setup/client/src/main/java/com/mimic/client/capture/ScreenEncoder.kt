@@ -22,6 +22,7 @@ class ScreenEncoder(
     private val bitrate: Int = 4_000_000,
     private val fps: Int = 30,
     private val onFrame: (packed: ByteArray) -> Unit,
+    private val onProjectionStopped: (() -> Unit)? = null,
 ) {
     private val tag = "MimicEnc"
     private var codec: MediaCodec? = null
@@ -30,10 +31,13 @@ class ScreenEncoder(
     private var thread: HandlerThread? = null
     private var spsPps: ByteArray = ByteArray(0)
     @Volatile private var running = false
+    private var projectionCallback: MediaProjection.Callback? = null
+    private var projectionRef: MediaProjection? = null
 
     fun start(projection: MediaProjection) {
         stop()
         running = true
+        projectionRef = projection
         val w = width and 1.inv() // even
         val h = height and 1.inv()
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
@@ -50,6 +54,25 @@ class ScreenEncoder(
         c.start()
         codec = c
         surface = inputSurface
+
+        val t = HandlerThread("mimic-enc").also { it.start() }
+        thread = t
+        val handler = Handler(t.looper)
+
+        // API 34+: must register callback BEFORE createVirtualDisplay or it throws.
+        val cb = object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.w(tag, "MediaProjection.onStop")
+                running = false
+                handler.post {
+                    releaseEncoderSurfaces()
+                    onProjectionStopped?.invoke()
+                }
+            }
+        }
+        projectionCallback = cb
+        projection.registerCallback(cb, handler)
+
         virtualDisplay = projection.createVirtualDisplay(
             "mimic-cap",
             w, h, dpi,
@@ -58,9 +81,6 @@ class ScreenEncoder(
             null,
             null,
         )
-        val t = HandlerThread("mimic-enc").also { it.start() }
-        thread = t
-        val handler = Handler(t.looper)
         handler.post { drainLoop(w, h) }
         Log.i(tag, "encoder started ${w}x$h")
     }
@@ -137,8 +157,7 @@ class ScreenEncoder(
         }
     }
 
-    fun stop() {
-        running = false
+    private fun releaseEncoderSurfaces() {
         try { virtualDisplay?.release() } catch (_: Exception) {}
         virtualDisplay = null
         try { surface?.release() } catch (_: Exception) {}
@@ -149,6 +168,16 @@ class ScreenEncoder(
         } catch (_: Exception) {
         }
         codec = null
+    }
+
+    fun stop() {
+        running = false
+        projectionCallback?.let { cb ->
+            try { projectionRef?.unregisterCallback(cb) } catch (_: Exception) {}
+        }
+        projectionCallback = null
+        projectionRef = null
+        releaseEncoderSurfaces()
         try { thread?.quitSafely() } catch (_: Exception) {}
         thread = null
     }

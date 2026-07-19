@@ -43,15 +43,11 @@
 
   "session": {
     "panic_title": "Session emergency",
-    "panic_hint": "You are being controlled. Pause video, lock input, or hang up.",
-    "pause_stream": "Pause video",
-    "resume_stream": "Resume video",
-    "pause_stream_tip": "Stop sending video to the controller",
-    "resume_stream_tip": "Resume sending video",
-    "lock_input": "Lock input",
-    "unlock_input": "Allow input",
-    "lock_input_tip": "Reject remote keyboard/mouse",
-    "unlock_input_tip": "Allow remote keyboard/mouse"
+    "panic_hint": "The peer is viewing this device. Refuse control (view-only share) or hang up to end the session.",
+    "refuse_control": "Refuse control",
+    "allow_control": "Allow control",
+    "refuse_control_tip": "Share video only — reject remote keyboard/mouse",
+    "allow_control_tip": "Allow remote keyboard/mouse"
   },
 
   "topbar": {
@@ -161,7 +157,7 @@
     "remote_workspace": "Remote console",
     "controller_picks_target": "Pick a window or desktop on the controlled device (not this device)",
     "controlled_title": "This device is controlled",
-    "controlled_body": "The controller picks the target and watches the stream. Use emergency controls below to pause video, lock input, or hang up.",
+    "controlled_body": "The controller picks the target and watches the stream. Use emergency controls below to refuse control (view-only) or hang up.",
     "monitor_idle_title": "No remote session",
     "monitor_idle_body": "Go to Peers to log in and request control, or wait for an invite.",
     "waiting_frames": "Waiting for frames…",
@@ -172,7 +168,20 @@
     "live": "Live",
     "idle": "Idle",
     "ai_mode_short": "AI mode",
-    "encode_soft": "Software encode {w}×{h} (quality limited)"
+    "encode_soft": "Software encode {w}×{h} (quality limited)",
+    "vmouse_left": "Left click",
+    "vmouse_right": "Right click",
+    "vmouse_left_short": "LMB",
+    "vmouse_right_short": "RMB",
+    "vmouse_wheel_up": "Scroll up",
+    "vmouse_wheel_down": "Scroll down",
+    "soft_kb_title": "Soft keyboard (keys go to host IME)",
+    "soft_kb_open": "Open soft keyboard",
+    "soft_kb_close": "Hide keyboard",
+    "soft_kb_hint": "Letters map to physical keys; host IME chooses EN/CJK",
+    "expand_view": "Expand view (landscape fullscreen)",
+    "collapse_view": "Collapse view",
+    "expand_hint": "Contain to remote aspect · short edge fill · tap collapse to exit"
   },
 
   "screenshot": {
@@ -199,6 +208,8 @@
     "copy_all": "Copy all logs",
     "copy_log": "Copy log",
     "copy_file_content": "Copy file content",
+    "copy_ok": "Copied",
+    "copy_failed": "Copy failed (long-press to select text manually)",
     "refresh_file": "Refresh file content",
     "pin_tip": "Pin panel — exclude from auto-layout",
     "unpin_tip": "Unpin panel — allow auto-layout adjustment"

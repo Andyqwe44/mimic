@@ -2990,7 +2990,12 @@ std::string dispatch_command(const std::string& json) {
     else if (cmd == "peer_invite") result = peer_invite(json_get_str(args, "targetDeviceId"));
     else if (cmd == "peer_accept") result = peer_accept(json_get_str(args, "fromDeviceId"));
     else if (cmd == "peer_reject") result = peer_reject(json_get_str(args, "fromDeviceId"));
-    else if (cmd == "peer_hangup") result = peer_hangup();
+    else if (cmd == "peer_hangup") {
+        g_allow_stream.store(false);
+        g_accept_control.store(false);
+        if (g_streaming.load()) cmd_capture_stream_stop();
+        result = peer_hangup();
+    }
     else if (cmd == "peer_request_windows") result = peer_request_windows();
     else if (cmd == "peer_set_target") {
         std::string tid = json_get_str(args, "id");

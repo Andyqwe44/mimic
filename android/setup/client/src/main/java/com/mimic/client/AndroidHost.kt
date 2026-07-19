@@ -41,7 +41,8 @@ class AndroidHost(
     private val main = Handler(Looper.getMainLooper())
     private val tag = "MimicHost"
     private val prefs = context.getSharedPreferences("mimic_host", Context.MODE_PRIVATE)
-    private val logFile = File(context.filesDir, "live.log")
+    private val logDir = File(context.filesDir, "log").also { it.mkdirs() }
+    private val logFile = File(logDir, "live.log")
     private val ring = ArrayDeque<String>(500)
 
     // Gate SSOT — UI may open gates, but stream/control still fail until backends exist.
@@ -58,14 +59,68 @@ class AndroidHost(
     var requestProjection: (() -> Unit)? = null
 
     init {
+        rotateLogIfNeeded()
         capture.onEncodedFrame = { packed -> peer.sendH264Packed(packed) }
+        capture.onCaptureEnded = {
+            allowStream = false
+            appendLog("cap", "capture ended (projection revoked or stop)")
+            pushGates()
+        }
         peer.onControlAction = { action ->
             if (acceptControl) input.inject(action, caps.active)
             else JSONObject().put("ok", false).put("error", "accept_control gate closed")
         }
         peer.onListTargets = { listTargets() }
         peer.onSetTarget = { json -> applyRemoteSetTarget(json) }
-        peer.onRequestKeyframe = { capture.requestKeyframe() }
+        peer.onRequestKeyframe = {
+            appendLog("peer", "need_key → requestKeyframe")
+            capture.requestKeyframe()
+        }
+        peer.onSessionEnd = {
+            allowStream = false
+            acceptControl = false
+            pendingStartAfterConsent = false
+            try { capture.stop() } catch (_: Exception) {}
+            appendLog("peer", "session_end → gates closed")
+            pushGates()
+        }
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                appendLog("crash", "uncaught in ${t.name}: ${e.javaClass.simpleName}: ${e.message}")
+            } catch (_: Exception) {
+            }
+            val prev = Thread.getDefaultUncaughtExceptionHandler()
+            // Avoid infinite recursion — only forward if not ourselves.
+            Log.e(tag, "uncaught", e)
+        }
+    }
+
+    private fun pushGates() {
+        val o = JSONObject()
+            .put("type", "gates")
+            .put("allow_stream", allowStream)
+            .put("accept_control", acceptControl)
+        main.post { pushToJs(o) }
+    }
+
+    private fun rotateLogIfNeeded() {
+        try {
+            if (logFile.exists() && logFile.length() > 0) {
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val archived = File(logDir, "session_$stamp.log")
+                if (!logFile.renameTo(archived)) {
+                    logFile.copyTo(archived, overwrite = true)
+                    logFile.writeText("")
+                }
+            }
+            // Keep last 20 session files
+            val sessions = logDir.listFiles { f -> f.name.startsWith("session_") && f.name.endsWith(".log") }
+                ?.sortedByDescending { it.lastModified() }
+                ?: emptyList()
+            sessions.drop(20).forEach { it.delete() }
+        } catch (e: Exception) {
+            Log.w(tag, "log rotate", e)
+        }
     }
 
     /**
@@ -181,13 +236,58 @@ class AndroidHost(
                 jsonOk()
             }
             "read_live_log" -> JSONObject().put("lines", ring.joinToString("\n"))
-            "read_logs" -> JSONObject().put("files", JSONArray())
+            "read_logs" -> {
+                val max = args.optInt("max_files", 20).coerceIn(1, 50)
+                val files = logDir.listFiles { f ->
+                    f.isFile && f.name.endsWith(".log") && f.name != "live.log"
+                }?.sortedByDescending { it.lastModified() }?.take(max) ?: emptyList()
+                val arr = JSONArray()
+                for (f in files) {
+                    arr.put(
+                        JSONObject()
+                            .put("name", f.name)
+                            .put("size", f.length()),
+                    )
+                }
+                JSONObject().put("files", arr)
+            }
+            "read_log_file" -> {
+                val name = args.optString("filename", args.optString("name", ""))
+                if (name.isBlank() || name.contains("..") || name.contains('/') || name.contains('\\')) {
+                    JSONObject().put("ok", false).put("error", "invalid filename")
+                } else {
+                    val f = File(logDir, name)
+                    if (!f.exists() || !f.isFile) {
+                        JSONObject().put("ok", false).put("error", "file not found")
+                    } else {
+                        JSONObject()
+                            .put("ok", true)
+                            .put("filename", name)
+                            .put("content", f.readText())
+                    }
+                }
+            }
+            "open_log_dir" -> {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW).setDataAndType(
+                        Uri.parse(logDir.absolutePath),
+                        "*/*",
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    jsonOk().put("dir", logDir.absolutePath)
+                } catch (e: Exception) {
+                    JSONObject()
+                        .put("ok", true)
+                        .put("dir", logDir.absolutePath)
+                        .put("note", e.message ?: "no folder viewer")
+                }
+            }
             "clear_log" -> {
                 ring.clear()
                 logFile.writeText("")
                 jsonOk()
             }
-            "get_log_dir" -> JSONObject().put("dir", context.filesDir.absolutePath)
+            "get_log_dir" -> JSONObject().put("dir", logDir.absolutePath)
             "get_settings" -> {
                 val raw = prefs.getString("settings", null)
                 val inner = if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
@@ -217,9 +317,21 @@ class AndroidHost(
             "peer_probe" -> peerProbe(args.optString("url", DEFAULT_BOOTSTRAP))
             "peer_status" -> peer.statusJson()
             "peer_login", "peer_register", "peer_logout", "peer_invite", "peer_accept",
-            "peer_reject", "peer_hangup", "peer_request_windows", "peer_set_target",
+            "peer_reject", "peer_request_windows", "peer_set_target",
             "peer_send_control", "peer_set_control_mode", "peer_request_keyframe",
             "peer_get_frame" -> peer.dispatch(cmd, args)
+            "peer_hangup" -> {
+                allowStream = false
+                acceptControl = false
+                pendingStartAfterConsent = false
+                try { capture.stop() } catch (_: Exception) {}
+                val r = peer.hangup()
+                val end = JSONObject().put("type", "session_end").put("reason", "hangup")
+                main.post { pushToJs(end) }
+                pushGates()
+                appendLog("peer", "hangup → gates closed")
+                r
+            }
             "request_projection" -> {
                 main.post { requestProjection?.invoke() }
                 jsonOk().put("pending", true)

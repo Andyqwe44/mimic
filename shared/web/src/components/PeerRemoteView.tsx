@@ -1,7 +1,12 @@
-// Peer remote view — WebCodecs H.264 decode + human pointer/keyboard → peer_send_control
+// Peer remote view — WebCodecs H.264 decode + UU virtual mouse + soft keyboard.
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { hostCall } from '../lib/bridge'
+import { Expand, Keyboard, Minimize2 } from 'lucide-react'
+import { hostCall, addLog } from '../lib/bridge'
+import { Tooltip } from './Toolkit'
+import { VirtualMouseOverlay } from './VirtualMouseOverlay'
+import { SoftKeyboardOverlay } from './SoftKeyboardOverlay'
+import { TEXT } from '../lib/design'
 
 function annexbHasIdr(u8: Uint8Array) {
   for (let i = 0; i + 4 < u8.length; i++) {
@@ -28,6 +33,7 @@ export function PeerRemoteView({
   humanControl,
   fill = false,
   encodeHint,
+  compact = false,
 }: {
   active: boolean
   humanControl: boolean
@@ -35,28 +41,35 @@ export function PeerRemoteView({
   fill?: boolean
   /** Optional encoder path hint from controlled side (e.g. SOFTWARE). */
   encodeHint?: string
+  /** Smaller 16:9 preview — leave room for target list below. */
+  compact?: boolean
 }) {
   const { t } = useTranslation()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const decoderRef = useRef<VideoDecoder | null>(null)
   const needKeyRef = useRef(true)
   const videoSizeRef = useRef({ w: 0, h: 0 })
-  const buttonDownRef = useRef(false)
   const framesRef = useRef(0)
   const lastFpsTsRef = useRef(performance.now())
   const dropCountRef = useRef(0)
   const lastKeyReqRef = useRef(0)
+  const recvCountRef = useRef(0)
+  const lastDiagTsRef = useRef(0)
   const [fps, setFps] = useState(0)
   const [dims, setDims] = useState('')
   const [status, setStatus] = useState(t('peer.waiting_frames'))
+  const [videoAspect, setVideoAspect] = useState(16 / 9)
+  const [expanded, setExpanded] = useState(false)
+  const [kbOpen, setKbOpen] = useState(false)
 
   const requestKeyframe = (reason: string) => {
     const now = performance.now()
-    if (now - lastKeyReqRef.current < 250) return
+    if (now - lastKeyReqRef.current < 150) return
     lastKeyReqRef.current = now
     needKeyRef.current = true
     hostCall('peer_request_keyframe').catch(() => {})
     setStatus(t('peer.waiting_keyframe', { reason }))
+    addLog(`[Decode] need_key reason=${reason}`)
   }
 
   const closeDecoder = () => {
@@ -73,7 +86,9 @@ export function PeerRemoteView({
     canvas.width = w
     canvas.height = h
     setDims(`${w}×${h}`)
+    setVideoAspect(w / h)
     needKeyRef.current = true
+    addLog(`[Decode] configure ${w}x${h} codec=avc1.42E028`)
     if (typeof VideoDecoder === 'undefined') {
       setStatus(t('peer.webcodecs_unavailable'))
       return
@@ -94,6 +109,7 @@ export function PeerRemoteView({
       error: (e) => {
         requestKeyframe('error')
         setStatus(t('peer.decoder_error', { msg: e.message }))
+        addLog(`[Decode] VideoDecoder error: ${e.message}`)
       },
     })
     decoderRef.current.configure({
@@ -109,6 +125,9 @@ export function PeerRemoteView({
       setStatus(t('peer.idle'))
       setFps(0)
       dropCountRef.current = 0
+      recvCountRef.current = 0
+      setExpanded(false)
+      setKbOpen(false)
       return
     }
     const onFrame = (ev: Event) => {
@@ -123,14 +142,22 @@ export function PeerRemoteView({
       const decoder = decoderRef.current
       if (!decoder || decoder.state === 'closed') return
       const key = ((flags & 1) !== 0) || annexbHasIdr(annexb)
+      recvCountRef.current++
+      const nowDiag = performance.now()
+      if (nowDiag - lastDiagTsRef.current >= 2000) {
+        lastDiagTsRef.current = nowDiag
+        addLog(
+          `[Decode] recv=${recvCountRef.current} fps≈${framesRef.current} needKey=${needKeyRef.current} q=${decoder.decodeQueueSize}`,
+        )
+      }
       if (needKeyRef.current && !key) {
         requestKeyframe('sync')
         return
       }
-      // Backpressure: always decode keyframes; drop deltas only when queue is busy.
-      if (!key && decoder.decodeQueueSize > 1) {
+      // After sync, a lost IDR still leaves deltas undecodable — pull key early.
+      if (!key && decoder.decodeQueueSize > 0) {
         dropCountRef.current++
-        if (dropCountRef.current >= 3) {
+        if (dropCountRef.current >= 2) {
           dropCountRef.current = 0
           requestKeyframe('drop')
         }
@@ -149,9 +176,9 @@ export function PeerRemoteView({
         }
       } catch (e: unknown) {
         requestKeyframe('decode')
-        setStatus(t('peer.decode_error', {
-          msg: e instanceof Error ? e.message : String(e),
-        }))
+        const msg = e instanceof Error ? e.message : String(e)
+        setStatus(t('peer.decode_error', { msg }))
+        addLog(`[Decode] decode() throw: ${msg}`)
       }
     }
     window.addEventListener('peer-h264', onFrame)
@@ -162,89 +189,131 @@ export function PeerRemoteView({
   }, [active, t])
 
   useEffect(() => {
-    if (!active || !humanControl) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return
-      hostCall('peer_send_control', { type: 'keydown', key: e.key, code: e.code }).catch(() => {})
+    if (!expanded) {
+      try {
+        const o = screen.orientation as ScreenOrientation & { unlock?: () => void }
+        o?.unlock?.()
+      } catch { /* */ }
+      return
     }
-    const onKeyUp = (e: KeyboardEvent) => {
-      hostCall('peer_send_control', { type: 'keyup', key: e.key, code: e.code }).catch(() => {})
-    }
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
+    try {
+      const o = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }
+      o?.lock?.('landscape')?.catch?.(() => {})
+    } catch { /* */ }
     return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
+      try {
+        const o = screen.orientation as ScreenOrientation & { unlock?: () => void }
+        o?.unlock?.()
+      } catch { /* */ }
     }
-  }, [active, humanControl])
-
-  const normFromEvent = (e: React.PointerEvent) => {
-    const canvas = canvasRef.current
-    if (!canvas) return { x_norm: 0, y_norm: 0, in: false }
-    const r = canvas.getBoundingClientRect()
-    const x = (e.clientX - r.left) / r.width
-    const y = (e.clientY - r.top) / r.height
-    return {
-      x_norm: Math.min(1, Math.max(0, x)),
-      y_norm: Math.min(1, Math.max(0, y)),
-      in: x >= 0 && x <= 1 && y >= 0 && y <= 1,
-    }
-  }
+  }, [expanded])
 
   const send = (action: Record<string, unknown>) => {
     if (!humanControl) return
     hostCall('peer_send_control', action).catch(() => {})
   }
 
+  const sendKey = (type: 'keydown' | 'keyup', key: string, code: string) => {
+    if (!humanControl) return
+    hostCall('peer_send_control', { type, key, code }).catch(() => {})
+  }
+
   if (!active) return null
 
-  return (
-    <div className={`${fill ? 'flex-1 flex flex-col min-h-0' : 'mt-2'} rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden`}>
-      <div className="h-7 px-2 flex items-center gap-2 text-[11px] text-text-tertiary border-b border-border shrink-0">
-        <span className="font-medium text-text-secondary">{t('peer.remote_view')}</span>
-        <span className="tabular-nums">{dims}</span>
-        <span className="tabular-nums">{fps} fps</span>
-        {encodeHint && (
-          <span className="text-amber-500 truncate">{encodeHint}</span>
-        )}
-        <span className="ml-auto truncate">
-          {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
-        </span>
-      </div>
-      <div
-        className={`bg-black flex items-center justify-center ${fill ? 'flex-1 min-h-0' : 'min-h-[160px] max-h-[280px]'}`}
-        data-no-page-swipe
-      >
-        <canvas
-          ref={canvasRef}
-          width={640}
-          height={360}
-          className={`${fill ? 'max-w-full max-h-full object-contain' : 'max-w-full max-h-[280px]'} ${humanControl ? 'cursor-crosshair' : 'cursor-default'} touch-none`}
-          onContextMenu={(e) => e.preventDefault()}
-          onPointerDown={(e) => {
-            if (!humanControl) return
-            ;(e.target as HTMLCanvasElement).setPointerCapture(e.pointerId)
-            const c = normFromEvent(e)
-            if (!c.in) return
-            buttonDownRef.current = true
-            const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
-            send({ type: 'mousedown', button, x_norm: c.x_norm, y_norm: c.y_norm })
-          }}
-          onPointerMove={(e) => {
-            if (!humanControl || !buttonDownRef.current) return
-            const c = normFromEvent(e)
-            if (!c.in) return
-            send({ type: 'move', held: true, button: 'left', x_norm: c.x_norm, y_norm: c.y_norm })
-          }}
-          onPointerUp={(e) => {
-            if (!humanControl) return
-            const c = normFromEvent(e)
-            buttonDownRef.current = false
-            const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left'
-            send({ type: 'mouseup', button, x_norm: c.x_norm, y_norm: c.y_norm })
-          }}
+  const stage = (
+    <div
+      className={`relative bg-black flex items-center justify-center overflow-hidden ${
+        expanded
+          ? 'flex-1 min-h-0 w-full'
+          : compact
+            ? 'w-full aspect-video max-h-[28vh] shrink-0'
+            : fill
+              ? 'flex-1 min-h-0'
+              : 'min-h-[160px] max-h-[280px]'
+      }`}
+      data-no-page-swipe
+    >
+      <canvas
+        ref={canvasRef}
+        width={640}
+        height={360}
+        className="max-w-full max-h-full object-contain pointer-events-none"
+        style={{
+          aspectRatio: `${videoAspect}`,
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+        }}
+      />
+      {humanControl && (
+        <VirtualMouseOverlay
+          enabled
+          videoAspect={videoAspect}
+          onAction={send}
         />
+      )}
+      {humanControl && (
+        <SoftKeyboardOverlay
+          open={kbOpen}
+          onClose={() => setKbOpen(false)}
+          onKey={sendKey}
+        />
+      )}
+    </div>
+  )
+
+  const toolbar = (
+    <div className="h-7 px-2 flex items-center gap-2 text-[11px] text-text-tertiary border-b border-border shrink-0">
+      <span className="font-medium text-text-secondary">{t('peer.remote_view')}</span>
+      <span className="tabular-nums">{dims}</span>
+      <span className="tabular-nums">{fps} fps</span>
+      {encodeHint && (
+        <span className="text-amber-500 truncate">{encodeHint}</span>
+      )}
+      <span className="ml-auto truncate min-w-0">
+        {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
+      </span>
+      {humanControl && (
+        <Tooltip text={kbOpen ? t('peer.soft_kb_close') : t('peer.soft_kb_open')}>
+          <button
+            type="button"
+            className={`h-6 w-6 rounded flex items-center justify-center shrink-0 ${
+              kbOpen ? 'bg-accent-soft-mid text-accent' : 'hover:bg-bg-hover text-text-secondary'
+            }`}
+            onClick={() => setKbOpen((v) => !v)}
+          >
+            <Keyboard className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
+      )}
+      <Tooltip text={expanded ? t('peer.collapse_view') : t('peer.expand_view')}>
+        <button
+          type="button"
+          className="h-6 w-6 rounded flex items-center justify-center shrink-0 hover:bg-bg-hover text-text-secondary"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Expand className="w-3.5 h-3.5" />}
+        </button>
+      </Tooltip>
+    </div>
+  )
+
+  if (expanded) {
+    return (
+      <div className="fixed inset-0 z-[80] bg-black flex flex-col">
+        {toolbar}
+        {stage}
+        <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
+          {t('peer.expand_hint')}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div className={`${fill && !compact ? 'flex-1 flex flex-col min-h-0' : 'shrink-0'} rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden`}>
+      {toolbar}
+      {stage}
     </div>
   )
 }

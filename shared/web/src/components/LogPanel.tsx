@@ -6,6 +6,7 @@ import { FileText, ChevronDown, ArrowDown, Copy, Check, RefreshCw, Pin } from 'l
 import { Tooltip } from './Toolkit'
 import { useTranslation } from 'react-i18next'
 import { logMgr, addLog, hostCall } from '../lib/bridge'
+import { copyText } from '../lib/clipboard'
 import { COLLAPSIBLE_HEADER } from '../lib/constants'
 import { SHELL_PAD } from '../lib/design'
 import type { HistoryFile } from '../lib/types'
@@ -134,11 +135,15 @@ export function LogPanel({
               </Tooltip>
               <Tooltip text={t('log.copy_all')}>
                 <button
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation()
-                    navigator.clipboard.writeText(displayLines.join('\n'))
-                    setSessionCopied(true)
-                    setTimeout(() => setSessionCopied(false), 1500)
+                    const ok = await copyText(displayLines.join('\n'))
+                    if (ok) {
+                      setSessionCopied(true)
+                      setTimeout(() => setSessionCopied(false), 1500)
+                    } else {
+                      addLog(`[Log] ${t('log.copy_failed')}`)
+                    }
                   }}
                   className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
                 >
@@ -288,11 +293,15 @@ export function LogPanel({
                   </Tooltip>
                   <Tooltip text={t('log.copy_file_content')}>
                     <button
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation()
-                        navigator.clipboard.writeText(f.lines.join('\n'))
-                        setCopiedFileIdx(fi)
-                        setTimeout(() => setCopiedFileIdx(null), 1500)
+                        const ok = await copyText(f.lines.join('\n'))
+                        if (ok) {
+                          setCopiedFileIdx(fi)
+                          setTimeout(() => setCopiedFileIdx(null), 1500)
+                        } else {
+                          addLog(`[Log] ${t('log.copy_failed')}`)
+                        }
                       }}
                       className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
                     >
@@ -413,11 +422,15 @@ export function LogPanel({
           </Tooltip>
           <Tooltip text={t('log.copy_log')}>
             <button
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation()
-                navigator.clipboard.writeText(displayLines.join('\n'))
-                setSessionCopied(true)
-                setTimeout(() => setSessionCopied(false), 1500)
+                const ok = await copyText(displayLines.join('\n'))
+                if (ok) {
+                  setSessionCopied(true)
+                  setTimeout(() => setSessionCopied(false), 1500)
+                } else {
+                  addLog(`[Log] ${t('log.copy_failed')}`)
+                }
               }}
               className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
             >

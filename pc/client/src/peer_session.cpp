@@ -364,6 +364,17 @@ std::vector<uint8_t> g_last_frame;
 
 void peer_store_frame_(const uint8_t* data, size_t len) {
     std::lock_guard<std::mutex> lk(g_frame_mtx);
+    auto flags_at = [](const uint8_t* p, size_t n) -> uint32_t {
+        if (n < 12) return 0;
+        uint32_t f = 0;
+        memcpy(&f, p + 8, 4);
+        return f;
+    };
+    const bool new_key = (flags_at(data, len) & 1u) != 0;
+    const bool old_key = (flags_at(g_last_frame.data(), g_last_frame.size()) & 1u) != 0;
+    // Never let a delta overwrite an unread IDR — that causes WebCodecs blur until next GOP.
+    if (!g_last_frame.empty() && old_key && !new_key)
+        return;
     g_last_frame.assign(data, data + len);
 }
 
@@ -401,6 +412,7 @@ void handle_lan_payload(uint8_t type, const std::vector<uint8_t>& payload) {
             return;
         }
         if (json.find("\"type\":\"need_key\"") != std::string::npos) {
+            LOG("peer", "need_key from controller");
             if (g_cb.on_need_key) g_cb.on_need_key();
             return;
         }
@@ -825,15 +837,6 @@ std::string role_str(PeerRole r) {
 
 } // namespace
 
-// expose for frame store
-namespace {
-void peer_store_frame_(const uint8_t* data, size_t len);
-}
-void peer_store_frame_(const uint8_t* data, size_t len) {
-    std::lock_guard<std::mutex> lk(g_frame_mtx);
-    g_last_frame.assign(data, data + len);
-}
-
 bool peer_init(PeerCallbacks cb) {
     g_cb = std::move(cb);
     ensure_wsa();
@@ -1018,9 +1021,14 @@ std::string peer_reject(const std::string& from_device_id) {
 std::string peer_hangup() {
     if (peer_online()) ws_send_text(g_sig_sock, R"({"type":"hangup"})");
     lan_stop_unlocked();
-    std::lock_guard<std::mutex> lk(g_mtx);
-    g_role = PeerRole::Idle;
-    g_session = {};
+    {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        g_role = PeerRole::Idle;
+        g_session = {};
+    }
+    // Notify UI so gates/stream can be closed (frontend also closes explicitly).
+    emit_ui(R"({"type":"session_end","reason":"hangup"})");
+    LOG("peer", "hangup → idle");
     return R"({"ok":true})";
 }
 

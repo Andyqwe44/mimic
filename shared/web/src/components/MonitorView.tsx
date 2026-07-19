@@ -778,10 +778,16 @@ export function MonitorView({
       .catch((e) => addLog(`[Peer] set_target failed: ${e}`))
   }, [])
 
-  const hangupSession = useCallback(() => {
-    hostCall('peer_hangup')
-      .then(() => addLog('[Peer] hangup'))
-      .catch((e) => addLog(`[Peer] hangup failed: ${e}`))
+  const hangupSession = useCallback(async () => {
+    // Hangup = end video + control (not just signaling).
+    try { await hostCall('set_stream_gate', { enabled: false }) } catch { /* */ }
+    try { await hostCall('set_control_gate', { enabled: false }) } catch { /* */ }
+    try {
+      await hostCall('peer_hangup')
+      addLog('[Peer] hangup')
+    } catch (e) {
+      addLog(`[Peer] hangup failed: ${e}`)
+    }
   }, [])
 
   if (THIN_CLIENT) {
@@ -828,7 +834,7 @@ export function MonitorView({
               <PeerRemoteView
                 active={lanReady}
                 humanControl={peerControlMode === 'human'}
-                fill
+                compact
                 encodeHint={encodeHint}
               />
               {peerControlMode === 'ai' && lanReady && (
@@ -836,7 +842,7 @@ export function MonitorView({
                   {t('peer.ai_mode_hint')}
                 </div>
               )}
-              <div className={`${RADIUS.xl} bg-bg-secondary ${RING} p-2 space-y-1 max-h-40 overflow-y-auto shrink-0`}>
+              <div className={`${RADIUS.xl} bg-bg-secondary ${RING} p-2 space-y-1 flex-1 min-h-0 overflow-y-auto`}>
                 <div className={`${TEXT.smallMono} font-medium text-text-secondary px-1 flex items-center justify-between gap-2`}>
                   <span>{t('peer.remote_targets')}</span>
                   {lanReady && (
@@ -893,9 +899,7 @@ export function MonitorView({
               </div>
             </div>
             <SessionPanicBar
-              streamOn={previewing}
               controlOn={acceptControl}
-              onToggleStream={onTogglePreview}
               onToggleControl={() => onToggleAcceptControl?.()}
               onHangup={hangupSession}
             />

@@ -43,15 +43,11 @@
 
   "session": {
     "panic_title": "工作階段急停",
-    "panic_hint": "對方正在控制本機。可暫停畫面、鎖定輸入或掛斷。",
-    "pause_stream": "暫停畫面",
-    "resume_stream": "恢復畫面",
-    "pause_stream_tip": "停止向控制端傳送畫面",
-    "resume_stream_tip": "繼續傳送畫面",
-    "lock_input": "鎖定輸入",
-    "unlock_input": "允許輸入",
-    "lock_input_tip": "拒絕遠端鍵鼠",
-    "unlock_input_tip": "允許遠端鍵鼠"
+    "panic_hint": "對方正在查看本機。可拒絕被控制（僅分享畫面）或掛斷結束工作階段。",
+    "refuse_control": "拒絕被控制",
+    "allow_control": "允許控制",
+    "refuse_control_tip": "只分享畫面，拒絕遠端鍵鼠",
+    "allow_control_tip": "允許遠端鍵鼠操作本機"
   },
 
   "topbar": {
@@ -161,7 +157,7 @@
     "remote_workspace": "遠端操作台",
     "controller_picks_target": "在此選擇被控端的視窗或桌面（非本機視窗）",
     "controlled_title": "本機被控中",
-    "controlled_body": "控制端正在選擇目標並查看畫面。可用下方急停暫停畫面、鎖定輸入或掛斷。",
+    "controlled_body": "控制端正在選擇目標並查看畫面。可用下方急停拒絕被控制（僅分享）或掛斷。",
     "monitor_idle_title": "尚無遠端工作階段",
     "monitor_idle_body": "請到「對等」頁登入，並向同帳號裝置請求控制，或等待對方邀請。",
     "waiting_frames": "等待畫面…",
@@ -172,7 +168,20 @@
     "live": "直播中",
     "idle": "閒置",
     "ai_mode_short": "AI 模式",
-    "encode_soft": "軟體編碼 {w}×{h}（畫質受限）"
+    "encode_soft": "軟體編碼 {w}×{h}（畫質受限）",
+    "vmouse_left": "左鍵點擊",
+    "vmouse_right": "右鍵點擊",
+    "vmouse_left_short": "左鍵",
+    "vmouse_right_short": "右鍵",
+    "vmouse_wheel_up": "滾輪向上",
+    "vmouse_wheel_down": "滾輪向下",
+    "soft_kb_title": "軟鍵盤（按鍵送往被控端輸入法）",
+    "soft_kb_open": "開啟軟鍵盤",
+    "soft_kb_close": "收起鍵盤",
+    "soft_kb_hint": "字母對應實體鍵；中英文由電腦端輸入法決定",
+    "expand_view": "展開畫幅（橫向全螢幕）",
+    "collapse_view": "收起畫幅",
+    "expand_hint": "依被控端比例自適應 · 短邊填滿 · 點收起返回"
   },
 
   "screenshot": {
@@ -199,6 +208,8 @@
     "copy_all": "複製全部日誌",
     "copy_log": "複製日誌",
     "copy_file_content": "複製檔案內容",
+    "copy_ok": "已複製",
+    "copy_failed": "複製失敗（可長按選取文字手動複製）",
     "refresh_file": "重新整理檔案內容",
     "pin_tip": "固定面板 — 不受自動佈局影響",
     "unpin_tip": "取消固定 — 允許自動佈局調整"

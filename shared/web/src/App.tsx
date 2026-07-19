@@ -762,6 +762,13 @@ export default function App() {
         }
       } else if (d.type === 'session_end') {
         setEncodeHint('')
+        setAcceptControl(false)
+        setPreviewing(false)
+        previewingRef.current = false
+        opStateRef.current = 'idle'
+        hostCall('set_stream_gate', { enabled: false }).catch(() => {})
+        hostCall('set_control_gate', { enabled: false }).catch(() => {})
+        addLog(`[Peer] session_end ${d.reason || ''}`)
       }
     })
   }, [t])

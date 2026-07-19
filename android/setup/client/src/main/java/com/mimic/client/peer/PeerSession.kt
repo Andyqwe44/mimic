@@ -56,11 +56,24 @@ class PeerSession(
     private val lan = LanMedia(
         onJson = { handleLanJson(it) },
         onH264 = { bytes ->
-            lastFrame = bytes
+            storeFramePreferKey(bytes)
             push(JSONObject().put("type", "peer_frame"))
         },
     )
     @Volatile private var lastFrame: ByteArray? = null
+
+    private fun storeFramePreferKey(bytes: ByteArray) {
+        if (bytes.size < 12) return
+        fun flagsOf(b: ByteArray): Int =
+            java.nio.ByteBuffer.wrap(b, 8, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+        val newKey = (flagsOf(bytes) and 1) != 0
+        val prev = lastFrame
+        if (prev != null && prev.size >= 12) {
+            val oldKey = (flagsOf(prev) and 1) != 0
+            if (oldKey && !newKey) return // keep unread IDR
+        }
+        lastFrame = bytes
+    }
 
     var onControlAction: ((JSONObject) -> JSONObject)? = null
     var onListTargets: (() -> JSONObject)? = null
@@ -68,6 +81,8 @@ class PeerSession(
     var onSetTarget: ((JSONObject) -> JSONObject)? = null
     /** Controlled side: force next encoder output to be an IDR/sync frame. */
     var onRequestKeyframe: (() -> Unit)? = null
+    /** Session ended (local or remote) — host closes stream/control gates. */
+    var onSessionEnd: (() -> Unit)? = null
 
     fun statusJson(): JSONObject = JSONObject()
         .put("ok", true)
@@ -253,6 +268,7 @@ class PeerSession(
             val fr = lastFrame
             if (fr == null || fr.size < 16) err("no frame")
             else {
+                lastFrame = null // consumed — allow next IDR to land
                 val w = java.nio.ByteBuffer.wrap(fr, 0, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
                 val h = java.nio.ByteBuffer.wrap(fr, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
                 val flags = java.nio.ByteBuffer.wrap(fr, 8, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
@@ -386,6 +402,7 @@ class PeerSession(
                 }
             }
             "need_key" -> {
+                Log.i(tag, "need_key from controller")
                 onRequestKeyframe?.invoke()
                     ?: Log.w(tag, "need_key: no encoder keyframe handler")
             }
@@ -448,7 +465,11 @@ class PeerSession(
                             lan.stop()
                             role = "idle"
                             transport = "none"
-                            push(msg)
+                            onSessionEnd?.invoke()
+                            val out = if (msg.optString("type") == "hangup") {
+                                JSONObject().put("type", "session_end").put("reason", "remote_hangup")
+                            } else msg
+                            push(out)
                         }
                         "invite_rejected", "error" -> push(msg)
                         else -> push(msg)

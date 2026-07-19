@@ -43,15 +43,11 @@
 
   "session": {
     "panic_title": "会话急停",
-    "panic_hint": "对方正在控制本机。可暂停画面、锁定输入或挂断。",
-    "pause_stream": "暂停画面",
-    "resume_stream": "恢复画面",
-    "pause_stream_tip": "停止向控制端发送画面",
-    "resume_stream_tip": "继续发送画面",
-    "lock_input": "锁定输入",
-    "unlock_input": "允许输入",
-    "lock_input_tip": "拒绝远程键鼠",
-    "unlock_input_tip": "允许远程键鼠"
+    "panic_hint": "对方正在查看本机。可拒绝被控制（仅分享画面）或挂断结束会话。",
+    "refuse_control": "拒绝被控制",
+    "allow_control": "允许控制",
+    "refuse_control_tip": "只分享画面，拒绝远程键鼠",
+    "allow_control_tip": "允许远程键鼠操作本机"
   },
 
   "topbar": {
@@ -161,7 +157,7 @@
     "remote_workspace": "远程操作台",
     "controller_picks_target": "在此选择被控端的窗口或桌面（非本机窗口）",
     "controlled_title": "本机被控中",
-    "controlled_body": "控制端正在选择目标并查看画面。可用下方急停暂停画面、锁定输入或挂断。",
+    "controlled_body": "控制端正在选择目标并查看画面。可用下方急停拒绝被控制（仅分享）或挂断。",
     "monitor_idle_title": "尚无远程会话",
     "monitor_idle_body": "请到「对等」页登录，并向同账号设备请求控制，或等待对方邀请。",
     "waiting_frames": "等待画面…",
@@ -172,7 +168,20 @@
     "live": "直播中",
     "idle": "空闲",
     "ai_mode_short": "AI 模式",
-    "encode_soft": "软件编码 {w}×{h}（画质受限）"
+    "encode_soft": "软件编码 {w}×{h}（画质受限）",
+    "vmouse_left": "左键点击",
+    "vmouse_right": "右键点击",
+    "vmouse_left_short": "左键",
+    "vmouse_right_short": "右键",
+    "vmouse_wheel_up": "滚轮向上",
+    "vmouse_wheel_down": "滚轮向下",
+    "soft_kb_title": "软键盘（按键发往被控端输入法）",
+    "soft_kb_open": "打开软键盘",
+    "soft_kb_close": "收起键盘",
+    "soft_kb_hint": "字母映射为物理键；中英文由电脑端输入法决定",
+    "expand_view": "展开画幅（横屏全屏）",
+    "collapse_view": "收起画幅",
+    "expand_hint": "按被控端比例自适应 · 短边填满 · 点击收起返回"
   },
 
   "screenshot": {
@@ -199,6 +208,8 @@
     "copy_all": "复制全部日志",
     "copy_log": "复制日志",
     "copy_file_content": "复制文件内容",
+    "copy_ok": "已复制",
+    "copy_failed": "复制失败（可长按选中文字手动复制）",
     "refresh_file": "刷新文件内容",
     "pin_tip": "固定面板 — 不受自动布局影响",
     "unpin_tip": "取消固定 — 允许自动布局调整"
