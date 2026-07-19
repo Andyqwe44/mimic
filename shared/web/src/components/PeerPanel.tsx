@@ -112,6 +112,32 @@ export function PeerPanel({
       })
   }, [])
 
+  // PC WebView2: H.264 via SharedBuffer (zero base64) — preferred over peer_get_frame.
+  useEffect(() => {
+    const wv = window.chrome?.webview
+    if (!wv?.addEventListener) return
+    const onSb = (e: {
+      getBuffer: () => ArrayBuffer
+      additionalData: unknown
+    }) => {
+      try {
+        const metaRaw = e.additionalData
+        const meta = (typeof metaRaw === 'string' ? JSON.parse(metaRaw) : metaRaw) as {
+          kind?: string; w?: number; h?: number; flags?: number; ts?: number
+        }
+        if (meta?.kind !== 'h264') return
+        const buf = e.getBuffer()
+        if (!buf || buf.byteLength < 16) return
+        const bytes = new Uint8Array(buf.slice(0))
+        window.dispatchEvent(new CustomEvent('peer-h264', {
+          detail: { w: meta.w, h: meta.h, flags: meta.flags, bytes },
+        }))
+      } catch { /* ignore non-h264 / parse errors */ }
+    }
+    wv.addEventListener('sharedbufferreceived', onSb)
+    return () => wv.removeEventListener('sharedbufferreceived', onSb)
+  }, [])
+
   // Load persisted signaling credentials (local prefs only; wire still uses passHash).
   useEffect(() => {
     hostCall('get_settings').then((res: { settings?: Record<string, unknown> }) => {

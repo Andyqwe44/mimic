@@ -239,24 +239,14 @@ class AndroidHost(
         return if (started.optBoolean("ok", false)) {
             pendingStartAfterConsent = false
             appendLog("cap", "encoder started target=$tid")
-            // Burst keyframe requests — static screens / first-frame races need multiple kicks.
+            // Keep Mimic in foreground while sharing — moveTaskToBack caused OEM
+            // to kill/suspend WebView + OkHttp WS (reconnect storm → LAN media die).
+            // User can manually switch apps; CaptureService FGS keeps encoding alive.
+            appendLog("cap", "display target streaming — stay foreground (no auto-minimize)")
             listOf(80L, 250L, 700L, 1600L).forEach { delayMs ->
                 main.postDelayed({
                     try { capture.requestKeyframe() } catch (_: Exception) {}
                 }, delayMs)
-            }
-            // display:* — send Mimic to background AFTER first frames so encoder has content,
-            // and PC sees something before the home screen goes fully static.
-            if (tid.startsWith("display:")) {
-                main.postDelayed({
-                    try {
-                        (context as? android.app.Activity)?.moveTaskToBack(true)
-                        appendLog("cap", "display target → moveTaskToBack")
-                        capture.requestKeyframe()
-                    } catch (e: Exception) {
-                        appendLog("cap", "moveTaskToBack failed: ${e.message}")
-                    }
-                }, 900L)
             }
             started.put("id", tid).put("peer_proto", 2)
         } else {

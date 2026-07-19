@@ -352,6 +352,28 @@ export function PeerRemoteView({
     hostCall('peer_send_control', { type, key, code }).catch(() => {})
   }
 
+  // Publish decode/link stats for the external float (never overlays video).
+  useEffect(() => {
+    if (!active) {
+      window.dispatchEvent(new CustomEvent('peer-decode-stats', { detail: { active: false } }))
+      return
+    }
+    window.dispatchEvent(new CustomEvent('peer-decode-stats', {
+      detail: {
+        active: true,
+        source,
+        dims,
+        fps,
+        status,
+        latHint,
+        encodeHint: encodeHint || '',
+        rtt: rttMsRef.current,
+        transport: transportRef.current,
+        humanControl,
+      },
+    }))
+  }, [active, source, dims, fps, status, latHint, encodeHint, humanControl])
+
   if (!active) return null
 
   const portraitVideo = videoAspect > 0 && videoAspect < 1
@@ -449,56 +471,23 @@ export function PeerRemoteView({
 
   const titleLabel = source === 'local' ? t('peer.local_preview') : t('peer.remote_view')
   const hudPrimary = [dims || '—', `${fps} fps`].filter(Boolean).join(' · ')
-  const hudSecondary = [
-    status,
-    !humanControl ? t('peer.ai_mode_short') : '',
-  ].filter(Boolean).join(' · ')
 
   return (
     <div
       className={
         expanded
           ? 'fixed inset-0 z-[80] bg-black overflow-hidden'
-          : 'shrink-0 flex flex-col w-full'
+          : 'shrink-0 flex flex-col w-full gap-0'
       }
     >
       <div
         className={
           expanded
             ? 'absolute inset-0 bg-black overflow-hidden'
-            : 'relative shrink-0 rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden w-full'
+            : 'relative shrink-0 rounded-t-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden w-full'
         }
         style={shellStyle}
       >
-        {/* Compact HUD over preview — no separate status strip below */}
-        {!expanded && (
-          <div
-            className="absolute inset-x-0 bottom-0 z-10 pointer-events-none"
-            data-no-page-swipe
-          >
-            <div className="flex items-end gap-2 px-2 pb-1.5 pt-8 bg-gradient-to-t from-black/75 via-black/35 to-transparent">
-              <div className="min-w-0 flex-1 text-white/95 drop-shadow-sm">
-                <div className={`${TEXT.tiny} font-medium truncate`}>
-                  {titleLabel}
-                  {hudPrimary ? ` · ${hudPrimary}` : ''}
-                </div>
-                <div className={`${TEXT.tiny} text-white/70 truncate`}>
-                  {hudSecondary}
-                </div>
-              </div>
-              <Tooltip text={t('peer.expand_view')}>
-                <button
-                  type="button"
-                  className="pointer-events-auto h-8 w-8 rounded-lg flex items-center justify-center shrink-0 bg-black/45 ring-1 ring-inset ring-white/20 text-white hover:bg-black/60"
-                  onClick={() => setExpanded(true)}
-                >
-                  <Expand className="w-3.5 h-3.5" />
-                </button>
-              </Tooltip>
-            </div>
-          </div>
-        )}
-
         {expanded && (
           <div
             className="fixed z-[90] flex items-center gap-2 pointer-events-auto"
@@ -509,7 +498,7 @@ export function PeerRemoteView({
             data-no-page-swipe
           >
             {!rotated && (
-              <div className="max-w-[min(55vw,360px)] truncate text-[11px] text-text-muted bg-bg-secondary/90 ring-1 ring-inset ring-border rounded-lg px-2 h-9 flex items-center gap-2">
+              <div className="max-w-[min(55vw,360px)] truncate text-[11px] text-text-muted bg-bg-secondary ring-1 ring-inset ring-border rounded-lg px-2 h-9 flex items-center gap-2">
                 <span className="font-medium text-text-secondary shrink-0">{titleLabel}</span>
                 <span className="tabular-nums shrink-0">{hudPrimary}</span>
                 <span className="truncate">{status}</span>
@@ -519,7 +508,7 @@ export function PeerRemoteView({
               <Tooltip text={kbOpen ? t('peer.soft_kb_close') : t('peer.soft_kb_open')}>
                 <button
                   type="button"
-                  className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary/90 ring-1 ring-inset ring-border ${
+                  className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary ring-1 ring-inset ring-border ${
                     kbOpen ? 'text-accent' : 'text-text-secondary'
                   }`}
                   onClick={() => setKbOpen((v) => !v)}
@@ -531,7 +520,7 @@ export function PeerRemoteView({
             <Tooltip text={t('peer.collapse_view')}>
               <button
                 type="button"
-                className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary/90 ring-1 ring-inset ring-border text-text-secondary"
+                className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-bg-secondary ring-1 ring-inset ring-border text-text-secondary"
                 onClick={() => setExpanded(false)}
               >
                 <Minimize2 className="w-4 h-4" />
@@ -593,11 +582,25 @@ export function PeerRemoteView({
         )}
       </div>
 
-      {/* Dev/diag line kept out of the preview chrome; only when encode/latency present */}
-      {!expanded && (encodeHint || latHint) && (
-        <div className={`${TEXT.tiny} text-text-muted px-1 pt-1 truncate`}>
-          {encodeHint && <span className="text-amber-500 mr-2">{encodeHint}</span>}
-          {latHint && <span className="tabular-nums">{latHint}</span>}
+      {/* Status OUTSIDE the video — no overlay on pixels (Android WebView-safe solid tokens) */}
+      {!expanded && (
+        <div className="rounded-b-xl bg-bg-secondary ring-1 ring-inset ring-border -mt-px shrink-0">
+          <div className="h-8 px-2 flex items-center gap-2 text-[11px] text-text-tertiary">
+            <span className="font-medium text-text-secondary shrink-0">{titleLabel}</span>
+            <span className="tabular-nums text-text-secondary shrink-0">{hudPrimary || '—'}</span>
+            <span className="truncate min-w-0 text-text-muted">
+              {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
+            </span>
+            <Tooltip text={t('peer.expand_view')}>
+              <button
+                type="button"
+                className="ml-auto h-6 w-6 rounded flex items-center justify-center shrink-0 hover:bg-bg-hover text-text-secondary"
+                onClick={() => setExpanded(true)}
+              >
+                <Expand className="w-3.5 h-3.5" />
+              </button>
+            </Tooltip>
+          </div>
         </div>
       )}
     </div>

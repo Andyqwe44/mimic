@@ -56,6 +56,13 @@ class ScreenEncoder(
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             // 1s GOP; force-sync via requestKeyframe for faster recovery.
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            // Prefer low-latency encode when the OEM exposes the key (API 30+).
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    setInteger(MediaFormat.KEY_LATENCY, 1)
+                    setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
+                }
+            } catch (_: Exception) { /* older OEM */ }
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel4)
         }

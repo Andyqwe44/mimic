@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { Camera, Play, Square, Power, Bot, User, RefreshCw } from 'lucide-react'
 import { ActionBtn, Tooltip } from './Toolkit'
 import { PeerRemoteView } from './PeerRemoteView'
+import { LinkStatsFloat } from './LinkStatsFloat'
 import { SessionPanicBar } from './SessionPanicBar'
 import { STATE_LABEL, codeToName, resolveInputMethods } from '../lib/constants'
 import { THIN_CLIENT } from '../lib/features'
@@ -841,7 +842,8 @@ export function MonitorView({
 
   if (THIN_CLIENT) {
     return (
-      <div className="flex-1 flex flex-col min-h-0 h-full">
+      <div className="flex-1 flex flex-col min-h-0 h-full relative">
+        <LinkStatsFloat visible={lanReady} />
         {isController && (
           <>
             <div className="flex items-center h-11 px-3 bg-bg-secondary border-b border-border shrink-0 gap-2">

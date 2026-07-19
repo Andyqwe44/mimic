@@ -6,6 +6,9 @@
 #include "h264_encoder.h"
 #include "../../logger/logger.h"
 
+// Declared in commands.h / main.cpp — binary H.264 → WebView2 SharedBuffer.
+void peer_h264_bridge_push(const uint8_t* packed, size_t len);
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -463,9 +466,9 @@ bool peer_store_frame_(const uint8_t* data, size_t len) {
 void handle_lan_payload(uint8_t type, const std::vector<uint8_t>& payload) {
     if (type == 1) {
         if (payload.size() < 16) return;
-        // Only notify UI when the single slot actually changed (avoids N× empty takes).
-        if (peer_store_frame_(payload.data(), payload.size()))
-            emit_ui(R"({"type":"peer_frame"})");
+        // Prefer SharedBuffer (no base64). Keep slot for peer_get_frame fallback only.
+        peer_h264_bridge_push(payload.data(), payload.size());
+        peer_store_frame_(payload.data(), payload.size());
         return;
     }
     if (type == 2) {

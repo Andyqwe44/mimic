@@ -41,6 +41,9 @@ static std::atomic<int> g_hw{0};
 static std::atomic<long long> g_enc_us_sum{0};
 static std::atomic<int> g_enc_us_n{0};
 static std::atomic<bool> g_running{true};
+static FILE* g_dump = nullptr;
+static std::mutex g_dump_mtx;
+static std::atomic<int> g_dumped{0};
 
 static bool tcp_send_all(SOCKET s, const char* p, int n) {
     while (n > 0) {
@@ -96,14 +99,21 @@ static void on_gpu_frame(void* /*ctx*/, void* d3d_device, void* d3d_tex, int w, 
     g_enc_us_n.fetch_add(1);
     g_encoded.fetch_add((int)pkts.size());
 
-    SOCKET s;
-    {
-        std::lock_guard<std::mutex> slk(g_sock_mtx);
-        s = g_client;
-    }
-    if (s == INVALID_SOCKET) return;
-
     for (const auto& pkt : pkts) {
+        // Always dump Annex-B to file for offline encode-latency diagnosis.
+        if (g_dump && !pkt.annexb.empty()) {
+            std::lock_guard<std::mutex> dlk(g_dump_mtx);
+            fwrite(pkt.annexb.data(), 1, pkt.annexb.size(), g_dump);
+            g_dumped.fetch_add(1);
+        }
+
+        SOCKET s;
+        {
+            std::lock_guard<std::mutex> slk(g_sock_mtx);
+            s = g_client;
+        }
+        if (s == INVALID_SOCKET) continue;
+
         uint32_t flags = pkt.keyframe ? 1u : 0u;
         uint32_t meta[5] = {
             (uint32_t)pkt.w, (uint32_t)pkt.h, flags, pkt.ts_ms, (uint32_t)pkt.annexb.size()
@@ -126,9 +136,20 @@ int main() {
     capture_log_init("h264_hw_bench", "0.0.0", "log", 3, 2000);
     capture_log_set_level(LOG_LEVEL_DEBUG);
 
+    // Raw Annex-B elementary stream — play with ffplay -f h264 dump.h264
+    const char* dump_path = "log\\h264_hw_bench_dump.h264";
+    CreateDirectoryA("log", nullptr);
+    g_dump = fopen(dump_path, "wb");
+    if (g_dump) {
+        LOG("bench", "dumping Annex-B to %s", dump_path);
+    } else {
+        LOG_WARN("bench", "cannot open dump file %s — encode-only without file", dump_path);
+    }
+
     WSADATA wsa{};
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         LOG_ERROR("bench", "WSAStartup failed");
+        if (g_dump) fclose(g_dump);
         return 1;
     }
 
@@ -200,13 +221,21 @@ int main() {
 
     int enc = g_encoded.load();
     int sent = g_sent.load();
+    int dumped = g_dumped.load();
     int n = g_enc_us_n.load();
     double fps = enc / (run_ms / 1000.0);
     double avg_ms = n > 0 ? (g_enc_us_sum.load() / (double)n) / 1000.0 : 0;
-    LOG("bench", "RESULT hardware=%d encoded=%d sent=%d fps=%.1f avg_encode=%.2fms",
-        g_hw.load(), enc, sent, fps, avg_ms);
-    std::printf("RESULT hardware=%d encoded=%d sent=%d fps=%.1f avg_encode=%.2fms\n",
-                g_hw.load(), enc, sent, fps, avg_ms);
+    if (g_dump) {
+        fflush(g_dump);
+        fclose(g_dump);
+        g_dump = nullptr;
+        LOG("bench", "wrote %d NAL units to %s", dumped, dump_path);
+    }
+    LOG("bench", "RESULT hardware=%d encoded=%d sent=%d dumped=%d fps=%.1f avg_encode=%.2fms",
+        g_hw.load(), enc, sent, dumped, fps, avg_ms);
+    std::printf("RESULT hardware=%d encoded=%d sent=%d dumped=%d fps=%.1f avg_encode=%.2fms\n",
+                g_hw.load(), enc, sent, dumped, fps, avg_ms);
+    std::printf("DUMP %s\n", dump_path);
 
     g_enc.shutdown();
     capture_log_shutdown();

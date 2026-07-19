@@ -135,6 +135,11 @@ static std::vector<uint8_t> g_bridge_buf;
 static int g_bridge_w = 0, g_bridge_h = 0;
 static std::atomic<bool> g_bridge_has_frame{false};
 
+// Peer LAN H.264 → SharedBuffer (packed 16B meta + Annex-B).
+static std::mutex g_h264_bridge_mtx;
+static std::vector<uint8_t> g_h264_bridge_buf;
+static std::atomic<bool> g_h264_bridge_has{false};
+
 // ── Remaining fwd declarations (referenced before definition) ──
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 HRESULT InitWebView2(HWND hwnd);
@@ -434,6 +439,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             g_bridge_has_frame.store(false, std::memory_order_release);
         }
         break;
+    case WM_PEER_H264:
+        if (g_h264_bridge_has.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> lk(g_h264_bridge_mtx);
+            shared_buffer_push_h264(g_h264_bridge_buf.data(), g_h264_bridge_buf.size());
+            g_h264_bridge_has.store(false, std::memory_order_release);
+        }
+        break;
     case WM_UPDATE_PROGRESS: {
         // Download thread posted a progress/terminal update. Read the shared state
         // on this STA thread and push it to JS; on completion, launch updater + exit.
@@ -672,6 +684,44 @@ void stream_bridge_push_frame(const uint8_t* bgra, int w, int h) {
     }
     g_bridge_has_frame.store(true, std::memory_order_release);
     PostMessageW(g_hwnd, WM_STREAM_FRAME, 0, 0);
+}
+
+void peer_h264_bridge_push(const uint8_t* packed, size_t len) {
+    if (!g_hwnd || !packed || len < 16) return;
+    {
+        std::lock_guard<std::mutex> lk(g_h264_bridge_mtx);
+        g_h264_bridge_buf.assign(packed, packed + len);
+    }
+    g_h264_bridge_has.store(true, std::memory_order_release);
+    PostMessageW(g_hwnd, WM_PEER_H264, 0, 0);
+}
+
+void shared_buffer_push_h264(const uint8_t* packed, size_t len) {
+    auto* env12 = g_env12.Get();
+    auto* wv17 = g_webview17.Get();
+    if (!env12 || !wv17 || !packed || len < 16) return;
+    uint32_t w = 0, h = 0, flags = 0, ts = 0;
+    memcpy(&w, packed, 4);
+    memcpy(&h, packed + 4, 4);
+    memcpy(&flags, packed + 8, 4);
+    memcpy(&ts, packed + 12, 4);
+    ComPtr<ICoreWebView2SharedBuffer> buf;
+    if (FAILED(env12->CreateSharedBuffer((UINT)len, &buf))) {
+        LOG_WARN("peer", "shared_buffer_push_h264: CreateSharedBuffer failed len=%zu", len);
+        return;
+    }
+    BYTE* dst = nullptr;
+    if (FAILED(buf->get_Buffer(&dst)) || !dst) {
+        LOG_WARN("peer", "shared_buffer_push_h264: get_Buffer failed");
+        return;
+    }
+    memcpy(dst, packed, len);
+    wchar_t meta[160];
+    swprintf(meta, 160,
+             L"{\"kind\":\"h264\",\"w\":%u,\"h\":%u,\"flags\":%u,\"ts\":%u,\"len\":%u}",
+             w, h, flags, ts, (unsigned)len);
+    wv17->PostSharedBufferToScript(buf.Get(), COREWEBVIEW2_SHARED_BUFFER_ACCESS_READ_ONLY, meta);
+    buf->Close();
 }
 
 // ── WebMessage bridge (replaces Tauri invoke) ───────────────

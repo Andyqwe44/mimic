@@ -71,11 +71,20 @@ void selftest_drain_to_webview();
 // rule as WM_SELFTEST_EVENT. Without this, PeerPanel never sees devices/invite.
 static constexpr UINT WM_PEER_UI_EVENT = WM_USER + 104;
 
+// LAN H.264 → SharedBuffer (avoid base64 peer_get_frame round-trip).
+static constexpr UINT WM_PEER_H264 = WM_USER + 105;
+
 /// Enqueue peer JSON for STA delivery (any thread).
 void peer_ui_enqueue(const std::string& json);
 
 /// Drain peer UI queue to WebView (main thread only).
 void peer_ui_drain_to_webview();
+
+/// LAN/UDP reader → copy packed H.264 → PostMessage → SharedBuffer on STA.
+void peer_h264_bridge_push(const uint8_t* packed, size_t len);
+
+/// Push packed H.264 (16B meta + Annex-B) via SharedBuffer (main STA only).
+void shared_buffer_push_h264(const uint8_t* packed, size_t len);
 
 struct UpdateProgress {
     bool active = false;       // download thread running
