@@ -434,6 +434,7 @@ class AndroidHost(
             "peer_login", "peer_register", "peer_logout", "peer_invite", "peer_accept",
             "peer_reject", "peer_request_windows", "peer_set_target",
             "peer_send_control", "peer_set_control_mode", "peer_request_keyframe",
+            "peer_list_devices",
             "peer_get_frame" -> peer.dispatch(cmd, args)
             "peer_hangup" -> {
                 allowStream = false

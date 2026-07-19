@@ -2987,6 +2987,7 @@ std::string dispatch_command(const std::string& json) {
     }
     else if (cmd == "peer_logout") { peer_logout(); result = R"({"ok":true})"; }
     else if (cmd == "peer_status") result = peer_status_json();
+    else if (cmd == "peer_list_devices") result = peer_list_devices();
     else if (cmd == "peer_invite") result = peer_invite(json_get_str(args, "targetDeviceId"));
     else if (cmd == "peer_accept") result = peer_accept(json_get_str(args, "fromDeviceId"));
     else if (cmd == "peer_reject") result = peer_reject(json_get_str(args, "fromDeviceId"));

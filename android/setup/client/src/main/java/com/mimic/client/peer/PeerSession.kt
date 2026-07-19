@@ -63,6 +63,25 @@ class PeerSession(
     @Volatile private var lastFrame: ByteArray? = null
     @Volatile private var reconnectAttempt = 0
     private val reconnectRunnable = Runnable { tryReconnect() }
+    private val presenceHb = object : Runnable {
+        override fun run() {
+            if (!running.get() || !online) return
+            try {
+                sendWs(
+                    JSONObject()
+                        .put("type", "presence")
+                        .put("deviceName", deviceName)
+                        .put("lanIps", JSONArray(collectLanIps()))
+                        .put("platform", "android")
+                        .put("peerProto", 2),
+                )
+                sendWs(JSONObject().put("type", "list_devices"))
+            } catch (e: Exception) {
+                Log.w(tag, "presence hb", e)
+            }
+            if (running.get()) main.postDelayed(this, 15_000L)
+        }
+    }
 
     private fun storeFramePreferKey(bytes: ByteArray) {
         if (bytes.size < 12) return
@@ -141,6 +160,8 @@ class PeerSession(
             role = "idle"
             reconnectAttempt = 0
             PeerKeepAliveService.start(context)
+            main.removeCallbacks(presenceHb)
+            main.postDelayed(presenceHb, 15_000L)
             Log.i(tag, "logged in user=$user device=$deviceId")
             JSONObject()
                 .put("ok", true)
@@ -171,6 +192,7 @@ class PeerSession(
     fun logout(): JSONObject {
         running.set(false)
         main.removeCallbacks(reconnectRunnable)
+        main.removeCallbacks(presenceHb)
         reconnectAttempt = 0
         lan.stop()
         try { ws?.close(1000, "logout") } catch (_: Exception) {}
@@ -232,6 +254,13 @@ class PeerSession(
         "peer_register" -> register(args)
         "peer_logout" -> logout()
         "peer_status" -> statusJson()
+        "peer_list_devices" -> {
+            if (!online) err("not logged in")
+            else {
+                sendWs(JSONObject().put("type", "list_devices"))
+                JSONObject().put("ok", true)
+            }
+        }
         "peer_invite" -> invite(args)
         "peer_accept" -> accept(args)
         "peer_reject" -> reject(args)
@@ -437,6 +466,7 @@ class PeerSession(
                         .put("platform", "android")
                         .put("peerProto", 2),
                 )
+                sendWs(JSONObject().put("type", "list_devices"))
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {

@@ -50,6 +50,7 @@ std::atomic<bool> g_media_ready{false};
 
 SOCKET g_sig_sock = INVALID_SOCKET;
 std::thread g_sig_reader;
+std::thread g_presence_hb;
 std::atomic<bool> g_sig_running{false};
 
 // LAN media
@@ -318,6 +319,62 @@ bool ws_send_text(SOCKET s, const std::string& text) {
     if (!send_all(s, (const char*)hdr, (int)hlen)) return false;
     if (!send_all(s, (const char*)mask, 4)) return false;
     return len == 0 || send_all(s, (const char*)masked.data(), (int)len);
+}
+
+/** Client→server masked frame (text/pong/etc). */
+bool ws_send_frame(SOCKET s, uint8_t opcode, const uint8_t* data, size_t len) {
+    uint8_t mask[4];
+    fill_mask(mask);
+    uint8_t hdr[14];
+    size_t hlen = 2;
+    hdr[0] = (uint8_t)(0x80 | (opcode & 0x0F));
+    if (len < 126) {
+        hdr[1] = (uint8_t)(0x80 | len);
+    } else if (len <= 0xFFFF) {
+        hdr[1] = 0x80 | 126;
+        hdr[2] = (uint8_t)((len >> 8) & 0xFF);
+        hdr[3] = (uint8_t)(len & 0xFF);
+        hlen = 4;
+    } else {
+        return false;
+    }
+    if (!send_all(s, (const char*)hdr, (int)hlen)) return false;
+    if (!send_all(s, (const char*)mask, 4)) return false;
+    if (len == 0) return true;
+    std::vector<uint8_t> masked(len);
+    for (size_t i = 0; i < len; ++i) masked[i] = data[i] ^ mask[i % 4];
+    return send_all(s, (const char*)masked.data(), (int)len);
+}
+
+std::string build_presence_json() {
+    g_lan_ips = collect_lan_ips();
+    std::string ips = "[";
+    for (size_t i = 0; i < g_lan_ips.size(); ++i) {
+        if (i) ips += ",";
+        ips += "\"" + g_lan_ips[i] + "\"";
+    }
+    ips += "]";
+    return std::string("{\"type\":\"presence\",\"deviceName\":\"") + g_device_name +
+           "\",\"lanIps\":" + ips +
+           ",\"platform\":\"windows\",\"peerProto\":2}";
+}
+
+void presence_heartbeat_loop() {
+    // Keep NAT/mappings alive and force server to re-broadcast devices to all
+    // same-account peers (so A sees B without re-login).
+    while (g_sig_running.load()) {
+        for (int i = 0; i < 150 && g_sig_running.load(); ++i)
+            Sleep(100); // ~15s
+        if (!g_sig_running.load()) break;
+        SOCKET s = g_sig_sock;
+        if (s == INVALID_SOCKET) break;
+        std::string presence = build_presence_json();
+        if (!ws_send_text(s, presence)) {
+            LOG_WARN("peer", "presence heartbeat send failed");
+            break;
+        }
+        ws_send_text(s, R"({"type":"list_devices"})");
+    }
 }
 
 bool ws_handshake(SOCKET s, const std::string& host, uint16_t port, const std::string& path_query) {
@@ -766,9 +823,11 @@ void sig_reader_loop() {
             for (uint64_t i = 0; i < plen; ++i) payload[(size_t)i] ^= mask[i % 4];
         if (opcode == 0x8) break;
         if (opcode == 0x9) {
-            // pong
+            // Server ping → reply pong (was wrongly labeled "pong" and ignored).
+            ws_send_frame(s, 0xA, payload.data(), payload.size());
             continue;
         }
+        if (opcode == 0xA) continue; // ignore unsolicited pong
         if (opcode == 0x1) {
             on_sig_message(std::string((char*)payload.data(), payload.size()));
         }
@@ -810,18 +869,15 @@ bool open_signaling_ws(const std::string& http_base, const std::string& token) {
     g_sig_sock = s;
     g_sig_running = true;
     g_sig_reader = std::thread(sig_reader_loop);
-    // announce presence
-    g_lan_ips = collect_lan_ips();
-    std::string ips = "[";
-    for (size_t i = 0; i < g_lan_ips.size(); ++i) {
-        if (i) ips += ",";
-        ips += "\"" + g_lan_ips[i] + "\"";
+    if (g_presence_hb.joinable()) {
+        // previous login should have joined; detach if somehow still running
+        g_presence_hb.detach();
     }
-    ips += "]";
-    std::string presence = std::string("{\"type\":\"presence\",\"deviceName\":\"") + g_device_name +
-                           "\",\"lanIps\":" + ips +
-                           ",\"platform\":\"windows\",\"peerProto\":2}";
+    g_presence_hb = std::thread(presence_heartbeat_loop);
+    // announce presence
+    std::string presence = build_presence_json();
     ws_send_text(s, presence);
+    ws_send_text(s, R"({"type":"list_devices"})");
     return true;
 }
 
@@ -971,6 +1027,10 @@ void peer_logout() {
         if (g_sig_reader.get_id() != std::this_thread::get_id()) g_sig_reader.join();
         else g_sig_reader.detach();
     }
+    if (g_presence_hb.joinable()) {
+        if (g_presence_hb.get_id() != std::this_thread::get_id()) g_presence_hb.join();
+        else g_presence_hb.detach();
+    }
     lan_stop_unlocked();
     std::lock_guard<std::mutex> lk(g_mtx);
     g_token.clear();
@@ -992,6 +1052,13 @@ std::string peer_status_json() {
              g_transport.c_str(), g_control_mode.c_str(),
              g_media_ready.load() ? "true" : "false");
     return buf;
+}
+
+std::string peer_list_devices() {
+    if (!peer_online()) return R"({"ok":false,"error":"offline"})";
+    if (!ws_send_text(g_sig_sock, R"({"type":"list_devices"})"))
+        return R"({"ok":false,"error":"send failed"})";
+    return R"({"ok":true})";
 }
 
 std::string peer_invite(const std::string& target_device_id) {

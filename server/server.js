@@ -369,12 +369,16 @@ function broadcastDevices(user) {
   const list = devicesForUser(user);
   const msg = JSON.stringify({ type: 'devices', devices: list });
   for (const [, s] of sessions) {
-    if (s.user === user && s.ws && s.ws.readyState === 1) s.ws.send(msg);
+    if (s.user === user && s.ws && s.ws.readyState === 1) {
+      try { s.ws.send(msg); } catch { /* drop dead socket; close will clean */ }
+    }
   }
 }
 
 function send(s, obj) {
-  if (s && s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify(obj));
+  if (s && s.ws && s.ws.readyState === 1) {
+    try { s.ws.send(JSON.stringify(obj)); } catch { /* */ }
+  }
 }
 
 ensureData();
@@ -588,6 +592,19 @@ const server = http.createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+// Drop half-open sockets so presence stays accurate (NAT / sleep / firewall).
+const WS_PING_MS = 20000;
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      try { ws.terminate(); } catch { /* */ }
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { /* */ }
+  }
+}, WS_PING_MS);
+
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const token = url.searchParams.get('token') || '';
@@ -598,6 +615,8 @@ wss.on('connection', (ws, req) => {
   }
   sess.ws = ws;
   sess.lastSeen = Date.now();
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   console.log(`[signaling] online ${sess.user}/${sess.deviceName} (${sess.deviceId})`);
   send(sess, { type: 'hello', user: sess.user, deviceId: sess.deviceId });
   broadcastDevices(sess.user);
@@ -608,6 +627,7 @@ wss.on('connection', (ws, req) => {
     let msg;
     try { msg = JSON.parse(String(raw)); } catch { return; }
     sess.lastSeen = Date.now();
+    ws.isAlive = true;
     const type = msg.type;
 
     if (type === 'presence') {
@@ -618,6 +638,12 @@ wss.on('connection', (ws, req) => {
         sess.peerProto = Number(msg.peerProto || msg.peer_proto) || sess.peerProto || 1;
       }
       broadcastDevices(sess.user);
+      return;
+    }
+
+    // Client pull — recovery if a previous devices push was missed.
+    if (type === 'list_devices') {
+      send(sess, { type: 'devices', devices: devicesForUser(sess.user) });
       return;
     }
 

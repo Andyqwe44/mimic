@@ -121,6 +121,10 @@ export function PeerPanel({
         setTransport(st.transport)
         onTransport?.(st.transport)
       }
+      // Pull fresh same-account device list (server push can be missed on half-open WS).
+      if (st?.online) {
+        hostCall('peer_list_devices').catch(() => {})
+      }
     } catch { /* */ }
   }, [onTransport, onRole])
 
@@ -165,6 +169,7 @@ export function PeerPanel({
       if (!d || typeof d !== 'object') return
       if (d.type === 'devices' && Array.isArray(d.devices)) {
         setDevices(d.devices as Device[])
+        addLog(`[Peer] devices update: ${(d.devices as Device[]).length}`)
       } else if (d.type === 'invite') {
         setIncoming({
           fromDeviceId: String(d.fromDeviceId || ''),

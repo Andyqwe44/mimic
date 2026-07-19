@@ -59,6 +59,8 @@ void peer_logout();
 bool peer_online();
 PeerRole peer_role();
 std::string peer_status_json();
+/// Ask signaling for a fresh same-account device list (push arrives as type=devices).
+std::string peer_list_devices();
 
 std::string peer_invite(const std::string& target_device_id);
 std::string peer_accept(const std::string& from_device_id);
