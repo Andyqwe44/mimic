@@ -5,6 +5,7 @@ import { X, Download, ArrowRight, FileStack, Package, ChevronDown, CheckCircle2,
 import { ActionBtn } from './Toolkit'
 import { addLog, type UpdateProgressMsg } from '../lib/bridge'
 import { useScrollLock } from '../lib/useScrollLock'
+import { isAndroidHost } from '../lib/platform'
 import { MODAL_CARD, DIFF_CONTAINER, DIFF_COL, H } from '../lib/design'
 import { versionCmp } from '../lib/constants'
 
@@ -23,6 +24,7 @@ export interface UpdateInfo {
   jump_pad?: string     // migration bridge version (e.g. 0.3.31)
   mandatory?: boolean   // manifest "mandatory" → hide "Later"
   mode?: string         // 'incremental' | 'full'
+  platform?: string     // 'android' | 'windows' | …
   /** DevTools UI demo — must not persist after leaving Dev mode */
   _dev?: boolean
   // per-file changes. size = 解压后磁盘占用; dl = 下载流量 (压缩后).
@@ -134,6 +136,8 @@ export function UpdateModal({
   const totalDl = pendingDiff.reduce((s, f) => s + traffic(f), 0)
   const nPending = pendingDiff.length
   const serverFull = info.mode === 'full'  // 服务端/min_version 强制全量
+  // Android APK: only version + size — no changelog / marketing / file-role noise.
+  const compactAndroid = isAndroidHost() || info.platform === 'android'
 
   // mandatory 只对「有更新」态有意义; 其余态一律允许关闭.
   const canClose = !(isUpdate && info.mandatory)
@@ -188,8 +192,22 @@ export function UpdateModal({
           </div>
         )}
 
-        {/* ── Update state: 完整更新 UI ── */}
-        {isUpdate && (
+        {/* ── Update state ── */}
+        {isUpdate && compactAndroid && (
+          <div className="flex-1 min-h-0 px-5 py-6 space-y-4 overflow-y-auto flex flex-col items-center justify-center">
+            <div className="flex items-center justify-center gap-3 py-1">
+              <VersionChip version={(info.current || '').replace(/^v/i, '')} label={t('update.role_old')} />
+              <ArrowRight className="w-4 h-4 text-accent shrink-0" />
+              <VersionChip version={(info.latest || '').replace(/^v/i, '')} label={t('update.role_latest')} accent />
+            </div>
+            {(totalDl > 0 || totalSize > 0) && (
+              <div className="text-sm tabular-nums text-text-secondary">
+                {t('update.download_size', { size: fmtSize(totalDl > 0 ? totalDl : totalSize) })}
+              </div>
+            )}
+          </div>
+        )}
+        {isUpdate && !compactAndroid && (
           <div className="flex-1 min-h-0 px-5 py-4 space-y-3 overflow-y-auto">
             {/* Version comparison — jump-pad ONLY when host/manifest sets jump_pad.
                 Never fall back to PC UPDATE_JUMP_PAD (0.3.31): Android 0.1.x would be
@@ -479,9 +497,23 @@ export function UpdateModal({
               )}
               {/* 增量更新 / 继续下载 (primary) — auto-skips staging files via sha256 */}
               <ActionBtn
-                label={downloading ? t('update.installing') : hasResume ? t('update.continue_download') : serverFull ? t('update.force_update') : t('update.incremental')}
-                title={hasResume ? t('update.continue_download_tip') : serverFull ? t('update.force_update_tip') : t('update.incremental_tip')}
-                icon={hasResume ? <RotateCcw className="w-3.5 h-3.5" /> : serverFull ? <Package className="w-3.5 h-3.5" /> : <FileStack className="w-3.5 h-3.5" />}
+                label={
+                  downloading
+                    ? t('update.installing')
+                    : hasResume
+                      ? t('update.continue_download')
+                      : compactAndroid || serverFull
+                        ? t('update.update_now')
+                        : t('update.incremental')
+                }
+                title={
+                  hasResume
+                    ? t('update.continue_download_tip')
+                    : compactAndroid || serverFull
+                      ? t('update.update_now_tip')
+                      : t('update.incremental_tip')
+                }
+                icon={hasResume ? <RotateCcw className="w-3.5 h-3.5" /> : serverFull || compactAndroid ? <Download className="w-3.5 h-3.5" /> : <FileStack className="w-3.5 h-3.5" />}
                 variant="primary"
                 size="lg"
                 onClick={() => {

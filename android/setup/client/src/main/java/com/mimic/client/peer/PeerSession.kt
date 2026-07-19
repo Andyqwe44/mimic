@@ -30,12 +30,15 @@ class PeerSession(
 ) {
     private val tag = "MimicPeer"
     private val main = Handler(Looper.getMainLooper())
+    /** Presence + reconnect on keep-alive worker — not Activity main (OEM freeze on Home). */
+    private fun keepHandler(): Handler = PeerKeepAliveService.worker()
     private val http = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
     private val wsClient = OkHttpClient.Builder()
-        .pingInterval(20, TimeUnit.SECONDS)
+        // Faster than server WS_PING (20s) so we detect stalls before roster drop.
+        .pingInterval(10, TimeUnit.SECONDS)
         .build()
 
     @Volatile private var signalingHttp = ""
@@ -80,7 +83,7 @@ class PeerSession(
             if (!running.get() || !loggedIn) return
             if (!online) {
                 // Keep hb scheduled so presence resumes right after reconnect.
-                if (running.get()) main.postDelayed(this, 15_000L)
+                if (running.get()) keepHandler().postDelayed(this, PRESENCE_MS)
                 return
             }
             try {
@@ -96,7 +99,7 @@ class PeerSession(
             } catch (e: Exception) {
                 Log.w(tag, "presence hb", e)
             }
-            if (running.get()) main.postDelayed(this, 15_000L)
+            if (running.get()) keepHandler().postDelayed(this, PRESENCE_MS)
         }
     }
 
@@ -240,8 +243,8 @@ class PeerSession(
             role = "idle"
             reconnectAttempt = 0
             PeerKeepAliveService.start(context)
-            main.removeCallbacks(presenceHb)
-            main.postDelayed(presenceHb, 15_000L)
+            keepHandler().removeCallbacks(presenceHb)
+            keepHandler().postDelayed(presenceHb, PRESENCE_MS)
             Log.i(tag, "logged in user=$user device=$deviceId")
             JSONObject()
                 .put("ok", true)
@@ -271,6 +274,8 @@ class PeerSession(
 
     fun logout(): JSONObject {
         running.set(false)
+        keepHandler().removeCallbacks(reconnectRunnable)
+        keepHandler().removeCallbacks(presenceHb)
         main.removeCallbacks(reconnectRunnable)
         main.removeCallbacks(presenceHb)
         reconnectAttempt = 0
@@ -736,11 +741,13 @@ class PeerSession(
 
     private fun scheduleReconnect() {
         if (!running.get() || token.isBlank() || signalingHttp.isBlank() || !loggedIn) return
-        main.removeCallbacks(reconnectRunnable)
-        val delay = (1000L * (1 shl reconnectAttempt.coerceAtMost(5))).coerceAtMost(30_000L)
+        keepHandler().removeCallbacks(reconnectRunnable)
+        // First retry almost immediately — Home→freeze often drops WS within seconds.
+        val delay = if (reconnectAttempt == 0) 400L
+        else (1000L * (1 shl (reconnectAttempt - 1).coerceAtMost(5))).coerceAtMost(30_000L)
         reconnectAttempt++
         Log.i(tag, "ws reconnect in ${delay}ms attempt=$reconnectAttempt")
-        main.postDelayed(reconnectRunnable, delay)
+        keepHandler().postDelayed(reconnectRunnable, delay)
     }
 
     private fun tryReconnect() {
@@ -755,8 +762,8 @@ class PeerSession(
                 reconnectAttempt = 0
                 PeerKeepAliveService.start(context)
                 // Resume presence heartbeat after reconnect.
-                main.removeCallbacks(presenceHb)
-                main.postDelayed(presenceHb, 15_000L)
+                keepHandler().removeCallbacks(presenceHb)
+                keepHandler().postDelayed(presenceHb, PRESENCE_MS)
                 push(JSONObject().put("type", "peer_online").put("reconnected", true))
                 Log.i(tag, "ws reconnected")
             } else {
@@ -766,6 +773,27 @@ class PeerSession(
             Log.e(tag, "reconnect", e)
             scheduleReconnect()
         }
+    }
+
+    /**
+     * Activity onResume — kick reconnect / presence if WS died while backgrounded.
+     * Safe to call often; no-op when already online.
+     */
+    fun ensureOnline() {
+        if (!loggedIn || token.isBlank() || signalingHttp.isBlank()) return
+        PeerKeepAliveService.start(context)
+        if (online && ws != null) {
+            // Refresh roster for peers that missed pushes while we were frozen.
+            try { sendWs(JSONObject().put("type", "list_devices")) } catch (_: Exception) {}
+            return
+        }
+        if (!reconnecting) {
+            reconnecting = true
+            push(JSONObject().put("type", "peer_reconnecting").put("reason", "resume"))
+        }
+        reconnectAttempt = 0
+        keepHandler().removeCallbacks(reconnectRunnable)
+        keepHandler().post { tryReconnect() }
     }
 
     private fun sendWs(msg: JSONObject) {
@@ -824,6 +852,8 @@ class PeerSession(
 
     companion object {
         const val DEFAULT_BOOTSTRAP = "http://47.107.43.5:8443"
+        /** Presence interval — shorter than server WS_PING so NAT/OEM freezes recover faster. */
+        private const val PRESENCE_MS = 8_000L
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         fun sha256Hex(password: String): String {

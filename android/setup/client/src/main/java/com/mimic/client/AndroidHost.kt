@@ -132,6 +132,15 @@ class AndroidHost(
         }
     }
 
+    /** Activity resume — heal signaling if OEM froze WS while on Home. */
+    fun onActivityResume() {
+        try {
+            peer.ensureOnline()
+        } catch (e: Exception) {
+            Log.w(tag, "ensureOnline", e)
+        }
+    }
+
     private fun pushGates() {
         val o = JSONObject()
             .put("type", "gates")
@@ -765,9 +774,9 @@ class AndroidHost(
             .put("has_update", has)
             .put("mode", "full")
             .put("jump_pad", "") // empty: UpdateModal must not apply PC 0.3.31 ladder
-            .put("message", manifest.optString("message", ""))
-            .put("name", "Mimic Android $remote")
-            .put("body", "APK update from CDN android/ (not mimic/client)")
+            .put("message", "")
+            .put("name", "")
+            .put("body", "")
             .put("download_base", base)
         if (has && apkName.isNotBlank()) {
             val size = manifest.optLong("client_size", 0).takeIf { it > 0 }
@@ -779,7 +788,6 @@ class AndroidHost(
                 .put("dl", size)
             if (sha.isNotBlank()) entry.put("sha256", sha)
             o.put("diff", JSONArray().put(entry))
-            o.put("body", "Full APK replace (Android PackageInstaller — not PC multi-file incremental)")
         } else {
             o.put("diff", JSONArray())
         }

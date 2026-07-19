@@ -47,6 +47,10 @@ const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const HEARTBEAT_MS = 15000;
 const NODE_TTL_MS = 45000;
+/** Delay roster/session teardown after WS close (Android Home flaps). */
+const OFFLINE_GRACE_MS = 20_000;
+/** Token kept for re-login-less reconnect after confirmed offline. */
+const TOKEN_GRACE_MS = 90_000;
 
 /** Client wire secret: hex(SHA-256(UTF-8(password))). Never accept plaintext password. */
 function clientPassHash(password) {
@@ -351,16 +355,19 @@ const activeSessions = new Map();
 function devicesForUser(user) {
   const list = [];
   for (const [, s] of sessions) {
-    if (s.user === user && s.ws && s.ws.readyState === 1) {
-      list.push({
-        deviceId: s.deviceId,
-        deviceName: s.deviceName,
-        lanIps: s.lanIps || [],
-        platform: s.platform || 'unknown',
-        peerProto: s.peerProto || 1,
-        online: true,
-      });
-    }
+    if (s.user !== user) continue;
+    const live = s.ws && s.ws.readyState === 1;
+    // Still list during offline grace so peers do not flicker to "0 devices".
+    if (!live && !s.offlineTimer) continue;
+    list.push({
+      deviceId: s.deviceId,
+      deviceName: s.deviceName,
+      lanIps: s.lanIps || [],
+      platform: s.platform || 'unknown',
+      peerProto: s.peerProto || 1,
+      // Optimistic online during grace — invite still needs a live WS (findByDevice).
+      online: true,
+    });
   }
   return list;
 }
@@ -652,6 +659,10 @@ wss.on('connection', (ws, req) => {
   const prevWs = sess.ws;
   sess.ws = ws;
   sess.lastSeen = Date.now();
+  if (sess.offlineTimer) {
+    try { clearTimeout(sess.offlineTimer); } catch { /* */ }
+    sess.offlineTimer = null;
+  }
   // Close previous socket without treating it as logout (close handler checks sess.ws).
   if (prevWs && prevWs !== ws) {
     try { prevWs.close(4000, 'replaced'); } catch { /* */ }
@@ -812,28 +823,38 @@ wss.on('connection', (ws, req) => {
       console.log(`[signaling] stale close ignored ${sess.user}/${sess.deviceName}`);
       return;
     }
-    console.log(`[signaling] offline ${sess.user}/${sess.deviceName}`);
+    console.log(`[signaling] offline ${sess.user}/${sess.deviceName} (grace ${OFFLINE_GRACE_MS}ms)`);
     sess.ws = null;
-    const cur = activeSessions.get(sess.user);
-    if (cur && (cur.controllerId === sess.deviceId || cur.controlledId === sess.deviceId)) {
-      activeSessions.delete(sess.user);
-      const otherId =
-        cur.controllerId === sess.deviceId ? cur.controlledId : cur.controllerId;
-      const other = findByDevice(sess.user, otherId);
-      send(other, { type: 'session_end', reason: 'peer_disconnect', session: cur });
+    // Delay roster drop + session teardown — Android Home often flaps WS for a few seconds.
+    // Immediate broadcast made PC show "0 devices" while the phone was only backgrounded.
+    if (sess.offlineTimer) {
+      try { clearTimeout(sess.offlineTimer); } catch { /* */ }
+      sess.offlineTimer = null;
     }
-    // Keep token briefly so the same device can re-open /ws?token=... without re-login.
-    const graceMs = 90_000;
-    const tok = token;
-    setTimeout(() => {
-      const curSess = sessions.get(tok);
-      if (curSess === sess && curSess.ws == null) {
-        sessions.delete(tok);
-        console.log(`[signaling] token expired ${sess.user}/${sess.deviceName}`);
-        broadcastDevices(sess.user);
+    sess.offlineTimer = setTimeout(() => {
+      sess.offlineTimer = null;
+      if (sess.ws != null) return; // reconnected within grace
+      console.log(`[signaling] offline confirmed ${sess.user}/${sess.deviceName}`);
+      const cur = activeSessions.get(sess.user);
+      if (cur && (cur.controllerId === sess.deviceId || cur.controlledId === sess.deviceId)) {
+        activeSessions.delete(sess.user);
+        const otherId =
+          cur.controllerId === sess.deviceId ? cur.controlledId : cur.controllerId;
+        const other = findByDevice(sess.user, otherId);
+        send(other, { type: 'session_end', reason: 'peer_disconnect', session: cur });
       }
-    }, graceMs);
-    broadcastDevices(sess.user);
+      // Keep token briefly so the same device can re-open /ws?token=... without re-login.
+      const tok = token;
+      setTimeout(() => {
+        const curSess = sessions.get(tok);
+        if (curSess === sess && curSess.ws == null) {
+          sessions.delete(tok);
+          console.log(`[signaling] token expired ${sess.user}/${sess.deviceName}`);
+          broadcastDevices(sess.user);
+        }
+      }, TOKEN_GRACE_MS);
+      broadcastDevices(sess.user);
+    }, OFFLINE_GRACE_MS);
   });
 });
 

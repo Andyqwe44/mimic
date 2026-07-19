@@ -276,4 +276,9 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
+
+    override fun onResume() {
+        super.onResume()
+        if (::host.isInitialized) host.onActivityResume()
+    }
 }

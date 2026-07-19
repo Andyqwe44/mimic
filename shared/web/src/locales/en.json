@@ -479,9 +479,12 @@
     "unknown_error": "Unknown error",
 
     "full_package_hint": "This is a full update (download all files)",
-    "role_old": "Old version",
+    "role_old": "Current",
     "role_jump": "Jump-pad",
     "role_latest": "Latest",
+    "download_size": "Download {size}",
+    "update_now": "Update",
+    "update_now_tip": "Download and install the new version",
     "role_latest_placeholder": "Check again",
     "jump_pad_first_hop": "Repo migrated to mimic: this step installs jump-pad v{jump}. After install, click Check Update again to reach the real latest. Multi-round manual updates are required — one update is not enough.",
     "jump_pad_second_hop": "Migration step 2 (jump-pad v{jump} → v{latest}). After this you are on the current latest.",

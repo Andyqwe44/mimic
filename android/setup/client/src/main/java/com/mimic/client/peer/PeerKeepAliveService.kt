@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
@@ -15,7 +17,9 @@ import androidx.core.app.NotificationCompat
 
 /**
  * Keeps Mimic alive while peer is logged in (signaling WS), even when WebView
- * is backgrounded. CaptureService still owns MediaProjection FGS separately.
+ * is backgrounded. Owns a dedicated HandlerThread so presence / reconnect
+ * are NOT tied to the Activity main looper (OEM freezes that on Home).
+ * CaptureService still owns MediaProjection FGS separately.
  */
 class PeerKeepAliveService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -24,9 +28,10 @@ class PeerKeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
+        ensureWorker()
         val n: Notification = NotificationCompat.Builder(this, CHANNEL)
             .setContentTitle("Mimic")
-            .setContentText("Peer online — keeping connection")
+            .setContentText("Keeping peer connection")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -58,6 +63,7 @@ class PeerKeepAliveService : Service() {
 
     override fun onDestroy() {
         releaseWakeLock()
+        // Keep worker thread until process dies — stop() clears via companion.
         super.onDestroy()
     }
 
@@ -95,7 +101,27 @@ class PeerKeepAliveService : Service() {
         const val CHANNEL = "mimic_peer"
         const val NOTIF_ID = 43
 
+        @Volatile private var workerThread: HandlerThread? = null
+        @Volatile private var workerHandler: Handler? = null
+
+        /** Dedicated looper for presence / WS reconnect (survives Activity pause). */
+        fun worker(): Handler {
+            ensureWorker()
+            return workerHandler ?: Handler(android.os.Looper.getMainLooper())
+        }
+
+        @Synchronized
+        fun ensureWorker() {
+            val t = workerThread
+            if (t != null && t.isAlive && workerHandler != null) return
+            val nt = HandlerThread("mimic-peer-keep").also { it.start() }
+            workerThread = nt
+            workerHandler = Handler(nt.looper)
+            Log.i(TAG, "worker thread started")
+        }
+
         fun start(context: Context) {
+            ensureWorker()
             val i = Intent(context, PeerKeepAliveService::class.java)
             try {
                 if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i)

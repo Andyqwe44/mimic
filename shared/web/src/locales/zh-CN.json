@@ -479,9 +479,12 @@
     "unknown_error": "未知错误",
 
     "full_package_hint": "本次为完整更新（下载全部文件）",
-    "role_old": "老版本",
+    "role_old": "当前",
     "role_jump": "跳板版本",
     "role_latest": "新版本",
+    "download_size": "下载 {size}",
+    "update_now": "更新",
+    "update_now_tip": "下载并安装新版本",
     "role_latest_placeholder": "再检查",
     "jump_pad_first_hop": "仓库已迁移到 mimic：本次先升到跳板版 v{jump}。安装完成后请再点一次「检查更新」，才能继续升到最新。需要多轮手动更新，只更新一次不等于已到最新。",
     "jump_pad_second_hop": "这是迁移第二步（跳板 v{jump} → v{latest}）。完成后即到当前最新版。",
