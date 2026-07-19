@@ -12,10 +12,11 @@ import {
 import { NAV } from '../lib/design'
 import { PRIMARY_PAGES, fractionalPageIndex, pageIndex, type AppPage } from '../lib/pages'
 
-const MIN_DX = 48
-const MAX_SLOPE = 0.7
+const MIN_DX = 36
+/** Horizontal wins unless clearly vertical (Clash-Royale-style tab swipe). */
+const MAX_SLOPE = 0.85
 /** Screen-edge strips always allow horizontal page swipe (even over scroll/canvas). */
-const EDGE_PX = 28
+const EDGE_PX = 40
 
 function blockedTarget(t: EventTarget | null): boolean {
   if (!(t instanceof Element)) return false

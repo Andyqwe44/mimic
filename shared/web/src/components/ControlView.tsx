@@ -24,7 +24,7 @@ export function ControlView({
   const [shizukuExpanded, setShizukuExpanded] = useState(true)
 
   return (
-    <div className={`flex-1 overflow-y-auto ${SHELL_PAD.page} space-y-3 min-h-0`} data-no-page-swipe>
+    <div className={`flex-1 overflow-y-auto ${SHELL_PAD.page} space-y-3 min-h-0`}>
       {isAndroidHost() && (
         <ShizukuConnectCard
           expanded={shizukuExpanded}

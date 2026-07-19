@@ -450,7 +450,6 @@ export function SettingsView({
   return (
     <div
       className={`flex-1 min-h-0 overflow-y-auto ${SHELL_PAD.page} space-y-3 w-full`}
-      data-no-page-swipe
     >
       <StatusBar screen={screenRes} appVersion={appVersion} />
 
