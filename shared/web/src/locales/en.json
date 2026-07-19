@@ -181,7 +181,8 @@
     "soft_kb_hint": "Letters map to physical keys; host IME chooses EN/CJK",
     "expand_view": "Expand view (landscape fullscreen)",
     "collapse_view": "Collapse view",
-    "expand_hint": "Contain to remote aspect · short edge fill · tap collapse to exit"
+    "expand_hint": "Hold phone sideways · contain to remote aspect · tap collapse",
+    "vmouse_hint": "Drag = relative cursor move (no snap under finger)"
   },
 
   "screenshot": {
@@ -210,6 +211,8 @@
     "copy_file_content": "Copy file content",
     "copy_ok": "Copied",
     "copy_failed": "Copy failed (long-press to select text manually)",
+    "share_all": "Share / export logs",
+    "share_ok": "Share sheet opened",
     "refresh_file": "Refresh file content",
     "pin_tip": "Pin panel — exclude from auto-layout",
     "unpin_tip": "Unpin panel — allow auto-layout adjustment"

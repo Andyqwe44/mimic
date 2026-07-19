@@ -38,15 +38,25 @@ class ScreenEncoder(
         stop()
         running = true
         projectionRef = projection
-        val w = width and 1.inv() // even
-        val h = height and 1.inv()
+        // Scale long edge ≤1920 so Baseline Level 4.0 can encode phone full-screen.
+        var w = width and 1.inv()
+        var h = height and 1.inv()
+        val maxEdge = 1920
+        val longEdge = maxOf(w, h)
+        if (longEdge > maxEdge) {
+            val scale = maxEdge.toFloat() / longEdge
+            w = (w * scale).toInt() and 1.inv()
+            h = (h * scale).toInt() and 1.inv()
+            if (w < 2) w = 2
+            if (h < 2) h = 2
+        }
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel4)
         }
         val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)

@@ -2,11 +2,11 @@
 // Two modes: compact (right sidebar, last 100 lines, no history) and full
 // (Log tab: current session + lazy-loaded history file cards).
 import { useState, useEffect, useRef } from 'react'
-import { FileText, ChevronDown, ArrowDown, Copy, Check, RefreshCw, Pin } from 'lucide-react'
+import { FileText, ChevronDown, ArrowDown, Copy, Check, RefreshCw, Pin, Share2 } from 'lucide-react'
 import { Tooltip } from './Toolkit'
 import { useTranslation } from 'react-i18next'
 import { logMgr, addLog, hostCall } from '../lib/bridge'
-import { copyText } from '../lib/clipboard'
+import { copyText, shareText, exportLiveLog } from '../lib/clipboard'
 import { COLLAPSIBLE_HEADER } from '../lib/constants'
 import { SHELL_PAD } from '../lib/design'
 import type { HistoryFile } from '../lib/types'
@@ -69,7 +69,23 @@ export function LogPanel({
     return `[${e.ts}] ${e.msg}`
   }
   const currentLines = entries.map(formatLine)
-  const displayLines = compact ? currentLines.slice(-100) : currentLines.slice(-500)
+  const displayLines = compact ? currentLines.slice(-200) : currentLines.slice(-2000)
+
+  const copyOrShareSession = async (preferShare: boolean) => {
+    let text = displayLines.join('\n')
+    try {
+      const exported = await exportLiveLog()
+      if (exported && exported.length > text.length) text = exported
+    } catch { /* use UI buffer */ }
+    if (!text) {
+      addLog(`[Log] ${t('log.copy_failed')}`)
+      return false
+    }
+    const ok = preferShare ? await shareText(text) : await copyText(text)
+    if (!ok) addLog(`[Log] ${t('log.copy_failed')}`)
+    else addLog(`[Log] ${preferShare ? t('log.share_ok') : t('log.copy_ok')} (${text.split('\n').length} lines)`)
+    return ok
+  }
 
   useEffect(() => {
     const ref = compact ? scrollRef.current : sessionScrollRef.current
@@ -137,12 +153,10 @@ export function LogPanel({
                 <button
                   onClick={async (e) => {
                     e.stopPropagation()
-                    const ok = await copyText(displayLines.join('\n'))
+                    const ok = await copyOrShareSession(false)
                     if (ok) {
                       setSessionCopied(true)
                       setTimeout(() => setSessionCopied(false), 1500)
-                    } else {
-                      addLog(`[Log] ${t('log.copy_failed')}`)
                     }
                   }}
                   className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
@@ -152,6 +166,17 @@ export function LogPanel({
                   ) : (
                     <Copy className="w-3.5 h-3.5" />
                   )}
+                </button>
+              </Tooltip>
+              <Tooltip text={t('log.share_all')}>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    await copyOrShareSession(true)
+                  }}
+                  className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
                 </button>
               </Tooltip>
               <ChevronDown
@@ -424,12 +449,10 @@ export function LogPanel({
             <button
               onClick={async (e) => {
                 e.stopPropagation()
-                const ok = await copyText(displayLines.join('\n'))
+                const ok = await copyOrShareSession(false)
                 if (ok) {
                   setSessionCopied(true)
                   setTimeout(() => setSessionCopied(false), 1500)
-                } else {
-                  addLog(`[Log] ${t('log.copy_failed')}`)
                 }
               }}
               className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
@@ -439,6 +462,17 @@ export function LogPanel({
               ) : (
                 <Copy className="w-3.5 h-3.5" />
               )}
+            </button>
+          </Tooltip>
+          <Tooltip text={t('log.share_all')}>
+            <button
+              onClick={async (e) => {
+                e.stopPropagation()
+                await copyOrShareSession(true)
+              }}
+              className="p-1 rounded-md text-text-secondary hover:text-accent hover:bg-bg-tertiary transition-colors"
+            >
+              <Share2 className="w-3.5 h-3.5" />
             </button>
           </Tooltip>
           {pinned !== undefined && onTogglePin && (

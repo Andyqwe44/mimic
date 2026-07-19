@@ -123,7 +123,7 @@ class LogManager {
       count: (count && count > 1) ? count : undefined,
       firstTs: (count && count > 1 && firstTs) ? firstTs : undefined,
     })
-    if (this.entries.length > 500) this.entries = this.entries.slice(-500)
+    if (this.entries.length > 2000) this.entries = this.entries.slice(-2000)
     this.listeners.forEach((f) => f())
   }
 
@@ -169,7 +169,7 @@ class LogManager {
         }
       }
       this.entries.sort((a, b) => a.ts.localeCompare(b.ts))
-      if (this.entries.length > 500) this.entries = this.entries.slice(-500)
+      if (this.entries.length > 2000) this.entries = this.entries.slice(-2000)
       this.listeners.forEach((f) => f())
     } catch (_) {}
   }

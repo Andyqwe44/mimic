@@ -181,7 +181,8 @@
     "soft_kb_hint": "字母對應實體鍵；中英文由電腦端輸入法決定",
     "expand_view": "展開畫幅（橫向全螢幕）",
     "collapse_view": "收起畫幅",
-    "expand_hint": "依被控端比例自適應 · 短邊填滿 · 點收起返回"
+    "expand_hint": "橫握手機觀看 · 依被控端比例 contain · 點收起返回",
+    "vmouse_hint": "滑動=相對移動游標（不跳到手指下）"
   },
 
   "screenshot": {
@@ -210,6 +211,8 @@
     "copy_file_content": "複製檔案內容",
     "copy_ok": "已複製",
     "copy_failed": "複製失敗（可長按選取文字手動複製）",
+    "share_all": "分享 / 匯出日誌",
+    "share_ok": "已開啟分享",
     "refresh_file": "重新整理檔案內容",
     "pin_tip": "固定面板 — 不受自動佈局影響",
     "unpin_tip": "取消固定 — 允許自動佈局調整"

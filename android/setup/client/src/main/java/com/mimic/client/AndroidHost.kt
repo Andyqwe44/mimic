@@ -1,5 +1,7 @@
 package com.mimic.client
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -43,7 +45,7 @@ class AndroidHost(
     private val prefs = context.getSharedPreferences("mimic_host", Context.MODE_PRIVATE)
     private val logDir = File(context.filesDir, "log").also { it.mkdirs() }
     private val logFile = File(logDir, "live.log")
-    private val ring = ArrayDeque<String>(500)
+    private val ring = ArrayDeque<String>(2000)
 
     // Gate SSOT — UI may open gates, but stream/control still fail until backends exist.
     @Volatile private var allowStream = false
@@ -60,6 +62,11 @@ class AndroidHost(
 
     init {
         rotateLogIfNeeded()
+        MimicAccessibilityService.ourPackage = context.packageName
+        MimicAccessibilityService.relaunchConfined = { pkg, act ->
+            appendLog("confine", "re-launch $pkg (left confined app)")
+            AppLauncher.launch(context, pkg, act)
+        }
         capture.onEncodedFrame = { packed -> peer.sendH264Packed(packed) }
         capture.onCaptureEnded = {
             allowStream = false
@@ -80,18 +87,22 @@ class AndroidHost(
             allowStream = false
             acceptControl = false
             pendingStartAfterConsent = false
+            MimicAccessibilityService.clearConfine()
             try { capture.stop() } catch (_: Exception) {}
             appendLog("peer", "session_end → gates closed")
             pushGates()
         }
+        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             try {
                 appendLog("crash", "uncaught in ${t.name}: ${e.javaClass.simpleName}: ${e.message}")
             } catch (_: Exception) {
             }
-            val prev = Thread.getDefaultUncaughtExceptionHandler()
-            // Avoid infinite recursion — only forward if not ourselves.
             Log.e(tag, "uncaught", e)
+            try {
+                prevHandler?.uncaughtException(t, e)
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -140,18 +151,25 @@ class AndroidHost(
         activeTargetId = tid
         appendLog("peer", "set_target id=$tid")
 
-        // Launch app targets so the controlled device shows the chosen app.
+        // display:* = whole screen, keep current UI state (do NOT go Home).
+        // app:* = launch that app and confine control inside it.
         if (tid.startsWith("app:")) {
             val rest = tid.removePrefix("app:")
             val slash = rest.indexOf('/')
             val pkg = if (slash >= 0) rest.substring(0, slash) else rest
             val act = if (slash >= 0) rest.substring(slash + 1) else ""
             if (pkg.isNotBlank()) {
+                MimicAccessibilityService.setConfine(pkg, act.ifBlank { null })
                 val launch = AppLauncher.launch(context, pkg, act.ifBlank { null })
                 if (!launch.optBoolean("ok", false)) {
                     appendLog("peer", "set_target launch failed: ${launch.optString("error")}")
+                } else {
+                    appendLog("peer", "launched+confined $pkg")
                 }
             }
+        } else {
+            MimicAccessibilityService.clearConfine()
+            appendLog("peer", "display target — no launch, keep current screen")
         }
 
         allowStream = true
@@ -234,6 +252,49 @@ class AndroidHost(
             "log_ui_event" -> {
                 appendLog("ui", args.optString("event", ""))
                 jsonOk()
+            }
+            "clipboard_write" -> {
+                val text = args.optString("text", "")
+                if (text.isEmpty()) return JSONObject().put("ok", false).put("error", "empty text")
+                try {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("mimic-log", text))
+                    appendLog("log", "clipboard_write ok chars=${text.length}")
+                    jsonOk().put("chars", text.length)
+                } catch (e: Exception) {
+                    JSONObject().put("ok", false).put("error", e.message ?: "clipboard failed")
+                }
+            }
+            "share_text" -> {
+                val text = args.optString("text", "")
+                if (text.isEmpty()) return JSONObject().put("ok", false).put("error", "empty text")
+                try {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text.take(500_000))
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    main.post {
+                        context.startActivity(
+                            Intent.createChooser(send, "Mimic logs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                    appendLog("log", "share_text ok chars=${text.length}")
+                    jsonOk().put("chars", text.length)
+                } catch (e: Exception) {
+                    JSONObject().put("ok", false).put("error", e.message ?: "share failed")
+                }
+            }
+            "export_live_log" -> {
+                // Full ring + live.log for share/copy — no WebView clipboard needed.
+                val fromFile = try {
+                    if (logFile.exists()) logFile.readText() else ""
+                } catch (_: Exception) {
+                    ""
+                }
+                val fromRing = synchronized(ring) { ring.joinToString("\n") }
+                val content = if (fromFile.length >= fromRing.length) fromFile else fromRing
+                JSONObject().put("ok", true).put("content", content).put("chars", content.length)
             }
             "read_live_log" -> JSONObject().put("lines", ring.joinToString("\n"))
             "read_logs" -> {
@@ -606,7 +667,7 @@ class AndroidHost(
         val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
         val line = "[$ts] [$tagName] $msg"
         synchronized(ring) {
-            if (ring.size >= 500) ring.removeFirst()
+            if (ring.size >= 2000) ring.removeFirst()
             ring.addLast(line)
         }
         try {

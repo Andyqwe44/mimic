@@ -61,6 +61,11 @@ export function PeerRemoteView({
   const [videoAspect, setVideoAspect] = useState(16 / 9)
   const [expanded, setExpanded] = useState(false)
   const [kbOpen, setKbOpen] = useState(false)
+  const [portrait, setPortrait] = useState(
+    typeof window !== 'undefined' ? window.innerHeight >= window.innerWidth : true,
+  )
+  const keyRecvRef = useRef(0)
+  const deltaDropRef = useRef(0)
 
   const requestKeyframe = (reason: string) => {
     const now = performance.now()
@@ -143,20 +148,15 @@ export function PeerRemoteView({
       if (!decoder || decoder.state === 'closed') return
       const key = ((flags & 1) !== 0) || annexbHasIdr(annexb)
       recvCountRef.current++
-      const nowDiag = performance.now()
-      if (nowDiag - lastDiagTsRef.current >= 2000) {
-        lastDiagTsRef.current = nowDiag
-        addLog(
-          `[Decode] recv=${recvCountRef.current} fps≈${framesRef.current} needKey=${needKeyRef.current} q=${decoder.decodeQueueSize}`,
-        )
-      }
       if (needKeyRef.current && !key) {
         requestKeyframe('sync')
+        deltaDropRef.current++
         return
       }
       // After sync, a lost IDR still leaves deltas undecodable — pull key early.
       if (!key && decoder.decodeQueueSize > 0) {
         dropCountRef.current++
+        deltaDropRef.current++
         if (dropCountRef.current >= 2) {
           dropCountRef.current = 0
           requestKeyframe('drop')
@@ -172,13 +172,25 @@ export function PeerRemoteView({
         if (key) {
           needKeyRef.current = false
           dropCountRef.current = 0
+          keyRecvRef.current++
           setStatus(t('peer.live'))
+          if (keyRecvRef.current <= 3 || keyRecvRef.current % 30 === 0) {
+            addLog(`[Decode] IDR #${keyRecvRef.current} ${w}x${h} bytes=${annexb.byteLength}`)
+          }
         }
       } catch (e: unknown) {
         requestKeyframe('decode')
         const msg = e instanceof Error ? e.message : String(e)
         setStatus(t('peer.decode_error', { msg }))
         addLog(`[Decode] decode() throw: ${msg}`)
+      }
+      const nowDiag = performance.now()
+      if (nowDiag - lastDiagTsRef.current >= 1500) {
+        lastDiagTsRef.current = nowDiag
+        addLog(
+          `[Decode] recv=${recvCountRef.current} idr=${keyRecvRef.current} dropDelta=${deltaDropRef.current} fps≈${framesRef.current} needKey=${needKeyRef.current} q=${decoder.decodeQueueSize}`,
+        )
+        deltaDropRef.current = 0
       }
     }
     window.addEventListener('peer-h264', onFrame)
@@ -187,6 +199,17 @@ export function PeerRemoteView({
       closeDecoder()
     }
   }, [active, t])
+
+  useEffect(() => {
+    const onResize = () => setPortrait(window.innerHeight >= window.innerWidth)
+    onResize()
+    window.addEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('orientationchange', onResize)
+    }
+  }, [])
 
   useEffect(() => {
     if (!expanded) {
@@ -220,7 +243,7 @@ export function PeerRemoteView({
 
   if (!active) return null
 
-  const stage = (
+  const stageInner = (
     <div
       className={`relative bg-black flex items-center justify-center overflow-hidden ${
         expanded
@@ -299,12 +322,35 @@ export function PeerRemoteView({
   )
 
   if (expanded) {
+    // Portrait WebView: CSS-rotate a landscape plane so user can hold phone sideways.
+    // Already landscape (after lock/turn): no rotate — fill screen with contain.
+    const landscapePlane = portrait
     return (
-      <div className="fixed inset-0 z-[80] bg-black flex flex-col">
-        {toolbar}
-        {stage}
-        <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
-          {t('peer.expand_hint')}
+      <div className="fixed inset-0 z-[80] bg-black overflow-hidden">
+        <div
+          className="flex flex-col bg-black"
+          style={
+            landscapePlane
+              ? {
+                  position: 'absolute',
+                  width: '100dvh',
+                  height: '100dvw',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%) rotate(90deg)',
+                  transformOrigin: 'center center',
+                }
+              : {
+                  position: 'absolute',
+                  inset: 0,
+                }
+          }
+        >
+          {toolbar}
+          {stageInner}
+          <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
+            {t('peer.expand_hint')}
+          </div>
         </div>
       </div>
     )
@@ -313,7 +359,7 @@ export function PeerRemoteView({
   return (
     <div className={`${fill && !compact ? 'flex-1 flex flex-col min-h-0' : 'shrink-0'} rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden`}>
       {toolbar}
-      {stage}
+      {stageInner}
     </div>
   )
 }

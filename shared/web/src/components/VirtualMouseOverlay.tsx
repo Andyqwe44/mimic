@@ -1,9 +1,12 @@
-// UU-style virtual mouse overlay — visible cursor + L/R/wheel; coords via peer_send_control.
-import { useCallback, useRef, useState } from 'react'
+// UU-style virtual mouse — joystick-style relative drag (finger delta moves cursor; tap does not jump).
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MousePointer2 } from 'lucide-react'
 import { Tooltip } from './Toolkit'
 import { TEXT } from '../lib/design'
+
+/** How many remote-screen widths one full stage-width finger drag covers. */
+const SENSITIVITY = 1.15
 
 export function VirtualMouseOverlay({
   enabled,
@@ -18,6 +21,8 @@ export function VirtualMouseOverlay({
   const { t } = useTranslation()
   const stageRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
+  const lastPtrRef = useRef({ x: 0, y: 0 })
+  const posRef = useRef({ x: 0.5, y: 0.5 })
   const [pos, setPos] = useState({ x: 0.5, y: 0.5 })
 
   const clampNorm = (x: number, y: number) => ({
@@ -25,17 +30,18 @@ export function VirtualMouseOverlay({
     y_norm: Math.min(1, Math.max(0, y)),
   })
 
-  const normFromClient = useCallback((clientX: number, clientY: number) => {
+  const applyDelta = (clientX: number, clientY: number, held: boolean) => {
     const el = stageRef.current
-    if (!el) return { x_norm: pos.x, y_norm: pos.y }
+    if (!el) return
     const r = el.getBoundingClientRect()
-    if (r.width <= 0 || r.height <= 0) return { x_norm: pos.x, y_norm: pos.y }
-    return clampNorm((clientX - r.left) / r.width, (clientY - r.top) / r.height)
-  }, [pos.x, pos.y])
-
-  const moveTo = (x_norm: number, y_norm: number, held: boolean) => {
-    setPos({ x: x_norm, y: y_norm })
-    onAction({ type: 'move', held, button: 'left', x_norm, y_norm })
+    if (r.width <= 0 || r.height <= 0) return
+    const dx = ((clientX - lastPtrRef.current.x) / r.width) * SENSITIVITY
+    const dy = ((clientY - lastPtrRef.current.y) / r.height) * SENSITIVITY
+    lastPtrRef.current = { x: clientX, y: clientY }
+    const next = clampNorm(posRef.current.x + dx, posRef.current.y + dy)
+    posRef.current = { x: next.x_norm, y: next.y_norm }
+    setPos({ x: next.x_norm, y: next.y_norm })
+    onAction({ type: 'move', held, button: 'left', x_norm: next.x_norm, y_norm: next.y_norm })
   }
 
   if (!enabled) return null
@@ -44,7 +50,6 @@ export function VirtualMouseOverlay({
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col pointer-events-none" data-no-page-swipe>
-      {/* Letterboxed hit stage matching remote aspect (contain). */}
       <div className="flex-1 min-h-0 flex items-center justify-center p-1">
         <div
           ref={stageRef}
@@ -54,13 +59,12 @@ export function VirtualMouseOverlay({
             if (e.button !== 0) return
             ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
             draggingRef.current = true
-            const n = normFromClient(e.clientX, e.clientY)
-            moveTo(n.x_norm, n.y_norm, false)
+            // Joystick: remember finger start only — do NOT snap cursor under finger.
+            lastPtrRef.current = { x: e.clientX, y: e.clientY }
           }}
           onPointerMove={(e) => {
             if (!draggingRef.current) return
-            const n = normFromClient(e.clientX, e.clientY)
-            moveTo(n.x_norm, n.y_norm, true)
+            applyDelta(e.clientX, e.clientY, true)
           }}
           onPointerUp={() => { draggingRef.current = false }}
           onPointerCancel={() => { draggingRef.current = false }}
@@ -74,7 +78,6 @@ export function VirtualMouseOverlay({
         </div>
       </div>
 
-      {/* Action pad */}
       <div className="shrink-0 flex items-center justify-center gap-2 pb-1 px-2 pointer-events-auto">
         <Tooltip text={t('peer.vmouse_left')}>
           <button

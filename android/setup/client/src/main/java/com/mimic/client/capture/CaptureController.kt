@@ -64,10 +64,17 @@ class CaptureController(private val context: Context) {
         }
         return try {
             stopInternal(clearConsent = false)
-            // FGS must be running before getMediaProjection on modern Android.
+            // FGS must be running (with mediaProjection type) before getMediaProjection.
+            CaptureService.resetReady()
             val i = Intent(context, CaptureService::class.java)
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i)
             else context.startService(i)
+            if (!CaptureService.awaitForeground(2500L)) {
+                Log.e(tag, "CaptureService foreground not ready in time")
+                return JSONObject()
+                    .put("ok", false)
+                    .put("error", "android: CaptureService foreground not ready")
+            }
             val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val proj = mgr.getMediaProjection(mediaProjectionResultCode, mediaProjectionData!!)
                 ?: return JSONObject().put("ok", false).put("error", "getMediaProjection returned null")
@@ -76,6 +83,7 @@ class CaptureController(private val context: Context) {
             projection = proj
 
             val dm = context.resources.displayMetrics
+            Log.i(tag, "starting encoder ${dm.widthPixels}x${dm.heightPixels} target=$targetId")
             val enc = ScreenEncoder(
                 width = dm.widthPixels,
                 height = dm.heightPixels,

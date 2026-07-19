@@ -5,13 +5,18 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Foreground service required for MediaProjection on modern Android.
- * Actual VirtualDisplay + MediaCodec wiring lands in CaptureController.
+ * Must call startForeground with MEDIA_PROJECTION type before getMediaProjection (API 34+).
  */
 class CaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -24,8 +29,30 @@ class CaptureService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
-        startForeground(NOTIF_ID, n)
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(
+                    NOTIF_ID,
+                    n,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                )
+            } else {
+                startForeground(NOTIF_ID, n)
+            }
+            markForegroundReady()
+            Log.i(TAG, "startForeground mediaProjection OK")
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed", e)
+            // Still mark so waiter does not hang forever; getMediaProjection may fail next.
+            markForegroundReady()
+            throw e
+        }
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        foregroundReady = false
+        super.onDestroy()
     }
 
     private fun ensureChannel() {
@@ -37,7 +64,37 @@ class CaptureService : Service() {
     }
 
     companion object {
+        private const val TAG = "MimicCapSvc"
         const val CHANNEL = "mimic_capture"
         const val NOTIF_ID = 42
+
+        @Volatile var foregroundReady: Boolean = false
+            private set
+        private val readyLatch = AtomicReference<CountDownLatch?>(null)
+
+        private fun markForegroundReady() {
+            foregroundReady = true
+            readyLatch.getAndSet(null)?.countDown()
+        }
+
+        /** Block until [startForeground] completed (or timeout). */
+        fun awaitForeground(timeoutMs: Long = 2500L): Boolean {
+            if (foregroundReady) return true
+            val latch = CountDownLatch(1)
+            readyLatch.set(latch)
+            if (foregroundReady) {
+                readyLatch.compareAndSet(latch, null)
+                return true
+            }
+            return try {
+                latch.await(timeoutMs, TimeUnit.MILLISECONDS) || foregroundReady
+            } catch (_: InterruptedException) {
+                false
+            }
+        }
+
+        fun resetReady() {
+            foregroundReady = false
+        }
     }
 }

@@ -1,6 +1,20 @@
-// Safe clipboard copy — Android WebView often rejects navigator.clipboard (NotAllowedError).
+// Safe clipboard / share — Android WebView often rejects navigator.clipboard.
+import { hostCall } from './bridge'
+import { getHostPlatform } from './platform'
+
 export async function copyText(text: string): Promise<boolean> {
   if (!text) return false
+
+  // Prefer native clipboard on Android (avoids NotAllowedError).
+  if (getHostPlatform() === 'android') {
+    try {
+      const r = await hostCall('clipboard_write', { text })
+      if (r && r.ok !== false) return true
+    } catch {
+      /* fall through */
+    }
+  }
+
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
@@ -9,6 +23,7 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     /* fall through */
   }
+
   try {
     const ta = document.createElement('textarea')
     ta.value = text
@@ -24,5 +39,34 @@ export async function copyText(text: string): Promise<boolean> {
     return ok
   } catch {
     return false
+  }
+}
+
+/** Share sheet (Android) or clipboard fallback — best way to get logs off-device. */
+export async function shareText(text: string): Promise<boolean> {
+  if (!text) return false
+  if (getHostPlatform() === 'android') {
+    try {
+      const r = await hostCall('share_text', { text })
+      if (r && r.ok !== false) return true
+    } catch {
+      /* fall through */
+    }
+  }
+  return copyText(text)
+}
+
+/** Pull full live log from host (Android ring + file). */
+export async function exportLiveLog(): Promise<string> {
+  try {
+    if (getHostPlatform() === 'android') {
+      const r = await hostCall('export_live_log')
+      if (typeof r?.content === 'string' && r.content) return r.content
+    }
+    const res = await hostCall('read_live_log')
+    const raw = typeof res === 'string' ? res : res?.lines || ''
+    return raw
+  } catch {
+    return ''
   }
 }
