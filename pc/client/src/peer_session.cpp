@@ -19,6 +19,8 @@ void peer_h264_bridge_push(const uint8_t* packed, size_t len);
 #include <bcrypt.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <sstream>
@@ -68,6 +70,14 @@ uint16_t g_lan_port = 0;
 std::mutex g_lan_send_mtx;
 std::atomic<uint32_t> g_lan_h264_sent{0};
 std::atomic<uint32_t> g_udp_h264_fallback{0};
+std::atomic<uint32_t> g_lan_h264_dropped{0};
+
+// Async H.264 writer — single-slot drop-old so encode thread never blocks on TCP.
+std::mutex g_lan_q_mtx;
+std::condition_variable g_lan_q_cv;
+std::vector<uint8_t> g_lan_pending_h264;
+std::atomic<bool> g_lan_writer_run{false};
+std::thread g_lan_writer;
 
 void ensure_wsa() {
     if (g_wsa.load()) return;
@@ -405,7 +415,7 @@ bool ws_handshake(SOCKET s, const std::string& host, uint16_t port, const std::s
 
 void lan_stop_unlocked();
 
-void lan_send_frame(uint8_t type, const uint8_t* data, size_t len) {
+void lan_send_frame_sync(uint8_t type, const uint8_t* data, size_t len) {
     // Prefer reliable LAN TCP whenever the socket is up (H.264 + control).
     // UDP is only for true P2P when LAN is down — fragmented H.264 over UDP
     // causes macroblock corruption on any lost fragment (same-LAN tearing).
@@ -437,9 +447,64 @@ void lan_send_frame(uint8_t type, const uint8_t* data, size_t len) {
     if (type == 1) {
         uint32_t c = g_lan_h264_sent.fetch_add(1) + 1;
         if (c <= 3 || c % 120 == 0) {
-            LOG("peer", "H264 via LAN TCP #%u bytes=%zu", c, len);
+            LOG("peer", "H264 via LAN TCP #%u bytes=%zu dropped=%u",
+                c, len, g_lan_h264_dropped.load());
         }
     }
+}
+
+void lan_writer_loop() {
+    while (g_lan_writer_run.load()) {
+        std::vector<uint8_t> frame;
+        {
+            std::unique_lock<std::mutex> lk(g_lan_q_mtx);
+            g_lan_q_cv.wait_for(lk, std::chrono::milliseconds(50), [] {
+                return !g_lan_pending_h264.empty() || !g_lan_writer_run.load();
+            });
+            if (!g_lan_writer_run.load() && g_lan_pending_h264.empty()) break;
+            if (g_lan_pending_h264.empty()) continue;
+            frame.swap(g_lan_pending_h264);
+        }
+        lan_send_frame_sync(1, frame.data(), frame.size());
+    }
+}
+
+void lan_ensure_writer() {
+    if (g_lan_writer_run.load()) return;
+    bool expected = false;
+    if (!g_lan_writer_run.compare_exchange_strong(expected, true)) return;
+    if (g_lan_writer.joinable()) {
+        g_lan_writer.join();
+    }
+    g_lan_writer = std::thread(lan_writer_loop);
+}
+
+void lan_stop_writer() {
+    g_lan_writer_run = false;
+    g_lan_q_cv.notify_all();
+    if (g_lan_writer.joinable()) g_lan_writer.join();
+    std::lock_guard<std::mutex> lk(g_lan_q_mtx);
+    g_lan_pending_h264.clear();
+}
+
+void lan_send_frame(uint8_t type, const uint8_t* data, size_t len) {
+    if (type == 1) {
+        // Drop-old single slot — encode/WGC path must not block on TCP flush.
+        {
+            std::lock_guard<std::mutex> lk(g_lan_q_mtx);
+            if (!g_lan_pending_h264.empty()) {
+                uint32_t d = g_lan_h264_dropped.fetch_add(1) + 1;
+                if (d <= 3 || d % 60 == 0) {
+                    LOG("peer", "LAN H264 drop-old #%u (keep latest)", d);
+                }
+            }
+            g_lan_pending_h264.assign(data, data + len);
+        }
+        lan_ensure_writer();
+        g_lan_q_cv.notify_one();
+        return;
+    }
+    lan_send_frame_sync(type, data, len);
 }
 
 std::mutex g_frame_mtx;
@@ -639,9 +704,11 @@ void lan_stop_unlocked() {
     peer_udp_stop();
     if (g_lan_listen != INVALID_SOCKET) { closesocket(g_lan_listen); g_lan_listen = INVALID_SOCKET; }
     {
+        // Close first so a writer blocked in send_all unblocks before join.
         std::lock_guard<std::mutex> lk(g_lan_send_mtx);
         if (g_lan_sock != INVALID_SOCKET) { closesocket(g_lan_sock); g_lan_sock = INVALID_SOCKET; }
     }
+    lan_stop_writer();
     if (g_lan_accept.joinable()) {
         // accept may block — closing listen unblocks
         g_lan_accept.detach();

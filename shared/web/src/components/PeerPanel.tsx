@@ -1,6 +1,6 @@
 // ═══ Peer panel — signaling login + same-account devices (UU-style) ═══
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Cable, Monitor, Phone, PhoneOff, Bot, User, Radar } from 'lucide-react'
+import { Cable, Monitor, PhoneOff, Bot, User, Radar } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { hostCall, addLog, onNativePush } from '../lib/bridge'
 import { getHostPlatform } from '../lib/platform'
@@ -65,7 +65,6 @@ export function PeerPanel({
   const [devices, setDevices] = useState<Device[]>([])
   const [myId, setMyId] = useState('')
   const [transport, setTransport] = useState('none')
-  const [incoming, setIncoming] = useState<{ fromDeviceId: string; fromDeviceName: string } | null>(null)
   const [status, setStatus] = useState('')
   const [probe, setProbe] = useState<ProbeState>('idle')
   const [rttMs, setRttMs] = useState<number | null>(null)
@@ -103,7 +102,9 @@ export function PeerPanel({
         }
       } else {
         const bin = Uint8Array.from(atob(fr.b64), (c) => c.charCodeAt(0))
-        window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
+        window.dispatchEvent(new CustomEvent('peer-h264', {
+          detail: { ...fr, bytes: bin, source: 'remote' },
+        }))
       }
     }).catch((e) => addLog(`[Decode] peer_get_frame failed: ${e}`))
       .finally(() => {
@@ -130,7 +131,7 @@ export function PeerPanel({
         if (!buf || buf.byteLength < 16) return
         const bytes = new Uint8Array(buf.slice(0))
         window.dispatchEvent(new CustomEvent('peer-h264', {
-          detail: { w: meta.w, h: meta.h, flags: meta.flags, bytes },
+          detail: { w: meta.w, h: meta.h, flags: meta.flags, bytes, source: 'remote' },
         }))
       } catch { /* ignore non-h264 / parse errors */ }
     }
@@ -241,20 +242,14 @@ export function PeerPanel({
         setDevices(d.devices as Device[])
         addLog(`[Peer] devices update: ${(d.devices as Device[]).length}`)
       } else if (d.type === 'invite') {
-        setIncoming({
-          fromDeviceId: String(d.fromDeviceId || ''),
-          fromDeviceName: String(d.fromDeviceName || d.fromDeviceId || ''),
-        })
+        // Banner owns incoming UX + log; only sync role here (avoid ×2 invite logs).
         setRole('ringing')
-        addLog(`[Peer] invite from ${d.fromDeviceName || d.fromDeviceId}`)
       } else if (d.type === 'invite_sent') {
         setRole('outgoing')
       } else if (d.type === 'invite_rejected') {
-        setIncoming(null)
         setRole('idle')
         setStatus(t('peer.invite_rejected'))
       } else if (d.type === 'session_start') {
-        setIncoming(null)
         setStatus(t('peer.session_started'))
         // Role must be synced before Monitor workspace switches layout.
         void refreshStatus().then(() => onSessionStart?.())
@@ -398,23 +393,6 @@ export function PeerPanel({
     else setStatus(t('peer.invite_sent'))
   }
 
-  const accept = async () => {
-    if (!incoming) return
-    // Accept = authorize remote control for this session (stream starts on set_target).
-    await hostCall('peer_accept', { fromDeviceId: incoming.fromDeviceId })
-    try {
-      await hostCall('set_control_gate', { on: true })
-    } catch { /* host may not expose gates yet */ }
-    setIncoming(null)
-  }
-
-  const reject = async () => {
-    if (!incoming) return
-    await hostCall('peer_reject', { fromDeviceId: incoming.fromDeviceId })
-    setIncoming(null)
-    setRole('idle')
-  }
-
   const hangup = async () => {
     try { await hostCall('set_stream_gate', { enabled: false }) } catch { /* */ }
     try { await hostCall('set_control_gate', { enabled: false }) } catch { /* */ }
@@ -516,17 +494,7 @@ export function PeerPanel({
             <button type="button" className="text-[11px] text-accent shrink-0" onClick={logout}>{t('peer.logout')}</button>
           </div>
 
-          {incoming && (
-            <div className="rounded-lg bg-warn-soft p-2 space-y-2 min-w-0">
-              <div className="text-xs text-text-primary truncate">{t('peer.invite_from', { name: incoming.fromDeviceName })}</div>
-              <div className="flex flex-wrap gap-2">
-                <ActionBtn icon={<Phone className="w-3.5 h-3.5" />} label={t('peer.accept')} title={t('peer.accept_tip')}
-                  variant="primary" onClick={accept} />
-                <ActionBtn icon={<PhoneOff className="w-3.5 h-3.5" />} label={t('peer.reject')} title={t('peer.reject_tip')}
-                  variant="outline" onClick={reject} />
-              </div>
-            </div>
-          )}
+          {/* Incoming accept/reject lives in IncomingCallBanner (single UX). */}
 
           {(role === 'controller' || role === 'controlled') && (
             <div className="flex flex-wrap gap-2 items-center min-w-0">

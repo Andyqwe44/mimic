@@ -195,12 +195,10 @@ class PeerSession(
                 Log.w(tag, "resent IDR failed", e)
             }
         }
-        main.post {
-            try { onRequestKeyframe?.invoke() } catch (_: Exception) {}
-        }
+        // Single keyframe request — AndroidHost also kicks once after encoder start.
         main.postDelayed({
             try { onRequestKeyframe?.invoke() } catch (_: Exception) {}
-        }, 400L)
+        }, 120L)
     }
 
     fun login(args: JSONObject): JSONObject {

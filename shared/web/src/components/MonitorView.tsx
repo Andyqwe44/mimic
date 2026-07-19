@@ -812,17 +812,34 @@ export function MonitorView({
   }, [lanReady, isController, remotePeerWindows, remoteTargetId, pickDefaultRemoteTarget, pickRemoteTarget])
 
   // Controlled: mirror outbound H.264 into the same WebCodecs path as remote view.
+  // Single-flight coalesce — Android base64 local_get_frame must not pile up.
+  const localBusyRef = useRef(false)
+  const localPendingRef = useRef(false)
   useEffect(() => {
     if (!isControlled) return
-    return onNativePush((d: Record<string, unknown>) => {
-      if (d.type !== 'local_preview') return
+    const pull = () => {
+      if (localBusyRef.current) {
+        localPendingRef.current = true
+        return
+      }
+      localBusyRef.current = true
+      localPendingRef.current = false
       hostCall('local_get_frame').then((fr: {
         ok?: boolean; w?: number; h?: number; flags?: number; b64?: string
       }) => {
         if (!fr?.ok || !fr.b64) return
         const bin = Uint8Array.from(atob(fr.b64), (c) => c.charCodeAt(0))
-        window.dispatchEvent(new CustomEvent('peer-h264', { detail: { ...fr, bytes: bin } }))
-      }).catch(() => {})
+        window.dispatchEvent(new CustomEvent('peer-h264', {
+          detail: { ...fr, bytes: bin, source: 'local' },
+        }))
+      }).catch(() => {}).finally(() => {
+        localBusyRef.current = false
+        if (localPendingRef.current) pull()
+      })
+    }
+    return onNativePush((d: Record<string, unknown>) => {
+      if (d.type !== 'local_preview') return
+      pull()
     })
   }, [isControlled])
 

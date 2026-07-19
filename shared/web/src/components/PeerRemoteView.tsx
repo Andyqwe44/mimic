@@ -29,6 +29,7 @@ type PeerH264Detail = {
   h?: number
   flags?: number
   bytes: Uint8Array
+  source?: 'remote' | 'local'
 }
 
 /** Largest box of `aspect` that fits inside (cw × ch). */
@@ -206,6 +207,9 @@ export function PeerRemoteView({
     const onFrame = (ev: Event) => {
       const d = (ev as CustomEvent<PeerH264Detail>).detail
       if (!d?.bytes || d.bytes.byteLength < 16) return
+      // Global peer-h264 bus — ignore the other path (local preview vs remote).
+      const src = d.source || 'remote'
+      if (src !== source) return
       const view = new DataView(d.bytes.buffer, d.bytes.byteOffset, d.bytes.byteLength)
       const w = d.w || view.getUint32(0, true)
       const h = d.h || view.getUint32(4, true)

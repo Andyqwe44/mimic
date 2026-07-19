@@ -82,6 +82,9 @@ export function IncomingCallBanner({
     dismiss()
     try {
       await hostCall('peer_accept', { fromDeviceId: cur.fromDeviceId })
+      try {
+        await hostCall('set_control_gate', { enabled: true })
+      } catch { /* host may not expose gates yet */ }
       addLog(`[Peer] accept (banner) ${cur.fromDeviceName}`)
       onAcceptedRef.current?.()
     } catch (e) {

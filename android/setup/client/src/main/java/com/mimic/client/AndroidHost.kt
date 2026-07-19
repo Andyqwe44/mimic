@@ -55,7 +55,8 @@ class AndroidHost(
     /** Last outbound H.264 packed frame for on-device controlled preview. */
     @Volatile private var lastLocalPreview: ByteArray? = null
     @Volatile private var lastPreviewPushMs = 0L
-    private val previewPushIntervalMs = 80L
+    /** Local preview notify interval — base64 decode is expensive on WebView. */
+    private val previewPushIntervalMs = 200L
     /** After MediaProjection consent, start capture if stream gate / set_target requested it. */
     @Volatile private var pendingStartAfterConsent = false
     private val caps = CapabilityManager(context)
@@ -243,11 +244,11 @@ class AndroidHost(
             // to kill/suspend WebView + OkHttp WS (reconnect storm → LAN media die).
             // User can manually switch apps; CaptureService FGS keeps encoding alive.
             appendLog("cap", "display target streaming — stay foreground (no auto-minimize)")
-            listOf(80L, 250L, 700L, 1600L).forEach { delayMs ->
-                main.postDelayed({
-                    try { capture.requestKeyframe() } catch (_: Exception) {}
-                }, delayMs)
-            }
+            // One delayed IDR kick — PeerSession.onMediaLinkReady also requests once.
+            // Avoid the old 4× storm (80/250/700/1600) that flooded TCP + decoder.
+            main.postDelayed({
+                try { capture.requestKeyframe() } catch (_: Exception) {}
+            }, 200L)
             started.put("id", tid).put("peer_proto", 2)
         } else {
             JSONObject()
@@ -261,34 +262,61 @@ class AndroidHost(
         capture.setProjectionResult(resultCode, data)
         val ok = resultCode != 0 && data != null
         appendLog("cap", if (ok) "MediaProjection granted" else "MediaProjection denied")
-        var startedOk = false
-        var startError = ""
         // Only MediaProjection path uses this consent — never auto-start app:* here.
         val tid = activeTargetId
-        if (ok && tid.startsWith("display:") &&
-            (pendingStartAfterConsent || allowStream) && !capture.streaming
-        ) {
-            val started = startCaptureForActiveTarget(tid)
-            startedOk = started.optBoolean("ok", false)
-            if (!startedOk) {
-                startError = started.optString("error", "capture start failed")
-                appendLog("cap", "auto-start failed: $startError")
-            } else {
-                appendLog("cap", "auto-start after projection consent target=$tid")
-            }
-        } else if (ok && tid.startsWith("app:")) {
-            startError = "consent for display but activeTargetId=$tid"
-            appendLog("cap", startError)
-        }
         if (!ok) pendingStartAfterConsent = false
-        main.post {
-            val msg = JSONObject()
-                .put("type", "projection_result")
-                .put("ok", ok)
-                .put("started", startedOk)
-                .put("target_id", tid)
-            if (startError.isNotBlank()) msg.put("error", startError)
-            pushToJs(msg)
+        if (ok && tid.startsWith("app:")) {
+            appendLog("cap", "consent for display but activeTargetId=$tid")
+            main.post {
+                pushToJs(
+                    JSONObject()
+                        .put("type", "projection_result")
+                        .put("ok", true)
+                        .put("started", false)
+                        .put("target_id", tid)
+                        .put("error", "consent for display but activeTargetId=$tid"),
+                )
+            }
+            return
+        }
+        val shouldStart = ok && tid.startsWith("display:") &&
+            (pendingStartAfterConsent || allowStream) && !capture.streaming
+        if (!shouldStart) {
+            main.post {
+                pushToJs(
+                    JSONObject()
+                        .put("type", "projection_result")
+                        .put("ok", ok)
+                        .put("started", false)
+                        .put("target_id", tid),
+                )
+            }
+            return
+        }
+        // CRITICAL: Activity-result callback runs on the main thread. Starting
+        // CaptureService.awaitForeground + MediaCodec.configure here froze the
+        // whole app (and QQ share) on first MediaProjection consent.
+        appendLog("cap", "defer encoder start off main thread target=$tid")
+        io.execute {
+            try {
+                // Let Activity/WebView resume after the system consent UI.
+                Thread.sleep(180)
+            } catch (_: InterruptedException) {
+            }
+            val started = startCaptureForActiveTarget(tid)
+            val startedOk = started.optBoolean("ok", false)
+            val startError = if (startedOk) "" else started.optString("error", "capture start failed")
+            if (!startedOk) appendLog("cap", "auto-start failed: $startError")
+            else appendLog("cap", "auto-start after projection consent target=$tid")
+            main.post {
+                val msg = JSONObject()
+                    .put("type", "projection_result")
+                    .put("ok", true)
+                    .put("started", startedOk)
+                    .put("target_id", tid)
+                if (startError.isNotBlank()) msg.put("error", startError)
+                pushToJs(msg)
+            }
         }
     }
 

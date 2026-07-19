@@ -478,6 +478,8 @@ export default function App() {
   const [peerControlMode, setPeerControlMode] = useState<'human' | 'ai'>('human')
   const [peerTransport, setPeerTransport] = useState('none')
   const [peerRole, setPeerRole] = useState('idle')
+  /** Dedup Banner onAccepted + session_start → Nav (was ×2). */
+  const peerNavDoneRef = useRef(false)
   const [remotePeerWindows, setRemotePeerWindows] = useState<Array<{ title: string; hwnd: number; id?: string }>>([])
   const [encodeHint, setEncodeHint] = useState('')
   const snapshotRef = useRef(false)            // true while waiting for snapshot frame
@@ -787,6 +789,7 @@ export default function App() {
           opStateRef.current = 'streaming'
         }
       } else if (d.type === 'session_end') {
+        peerNavDoneRef.current = false
         setEncodeHint('')
         setAcceptControl(false)
         setPreviewing(false)
@@ -1005,6 +1008,9 @@ export default function App() {
   }
 
   const onPeerSessionStart = useCallback(() => {
+    // Banner accept + session_start push both used to call this → ×2 Nav logs.
+    if (peerNavDoneRef.current) return
+    peerNavDoneRef.current = true
     setPage('Monitor')
     addLog('[Nav] session → Monitor')
   }, [])

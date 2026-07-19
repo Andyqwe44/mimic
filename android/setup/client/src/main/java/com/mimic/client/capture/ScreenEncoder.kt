@@ -33,6 +33,10 @@ class ScreenEncoder(
     @Volatile private var running = false
     private var projectionCallback: MediaProjection.Callback? = null
     private var projectionRef: MediaProjection? = null
+    private var lastEncodeLogMs = 0L
+    private var encodeCount = 0
+    private var lastFrameMs = 0L
+    private var gapMaxMs = 0L
 
     fun start(projection: MediaProjection) {
         stop()
@@ -151,6 +155,22 @@ class ScreenEncoder(
                                     annex = spsPps + annex
                                 }
                                 val ts = (info.presentationTimeUs / 1000).toInt()
+                                val now = System.currentTimeMillis()
+                                if (lastFrameMs > 0) {
+                                    val gap = now - lastFrameMs
+                                    if (gap > gapMaxMs) gapMaxMs = gap
+                                }
+                                lastFrameMs = now
+                                encodeCount++
+                                if (now - lastEncodeLogMs >= 2000 || encodeCount <= 3) {
+                                    lastEncodeLogMs = now
+                                    Log.i(
+                                        tag,
+                                        "encode #$encodeCount key=$key bytes=${annex.size} " +
+                                            "gapMax=${gapMaxMs}ms",
+                                    )
+                                    gapMaxMs = 0
+                                }
                                 onFrame(H264AnnexB.pack(w, h, key, ts, annex))
                             }
                         }

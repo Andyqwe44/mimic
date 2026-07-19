@@ -1,5 +1,5 @@
 // Floating link/decode stats — sits beside the preview, never covers video pixels.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Activity, GripHorizontal } from 'lucide-react'
 import { TEXT, RADIUS, RING } from '../lib/design'
@@ -28,7 +28,8 @@ export function LinkStatsFloat({ visible }: { visible: boolean }) {
   const { t } = useTranslation()
   const [st, setSt] = useState<Stats | null>(null)
   const [pos, setPos] = useState({ x: 12, y: 72 })
-  const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null)
+  const dragRef = useRef<{ pointerId: number; dx: number; dy: number } | null>(null)
+  const gripRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const onStats = (ev: Event) => {
@@ -44,22 +45,34 @@ export function LinkStatsFloat({ visible }: { visible: boolean }) {
     return () => window.removeEventListener('peer-decode-stats', onStats)
   }, [])
 
+  // Android WebView: window-level pointermove is unreliable after leave-grip.
+  // Capture on the grip element (same pattern as AbsolutePointerOverlay / PagePager).
   useEffect(() => {
-    if (!drag) return
+    const el = gripRef.current
+    if (!el) return
     const onMove = (e: PointerEvent) => {
+      const d = dragRef.current
+      if (!d || e.pointerId !== d.pointerId) return
       setPos({
-        x: Math.max(4, Math.min(window.innerWidth - 160, e.clientX - drag.dx)),
-        y: Math.max(4, Math.min(window.innerHeight - 80, e.clientY - drag.dy)),
+        x: Math.max(4, Math.min(window.innerWidth - 160, e.clientX - d.dx)),
+        y: Math.max(4, Math.min(window.innerHeight - 80, e.clientY - d.dy)),
       })
     }
-    const onUp = () => setDrag(null)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
+    const onUp = (e: PointerEvent) => {
+      const d = dragRef.current
+      if (!d || e.pointerId !== d.pointerId) return
+      dragRef.current = null
+      try { el.releasePointerCapture(e.pointerId) } catch { /* */ }
     }
-  }, [drag])
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
+    return () => {
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
+    }
+  }, [visible, st])
 
   if (!visible || !st) return null
 
@@ -74,10 +87,13 @@ export function LinkStatsFloat({ visible }: { visible: boolean }) {
       data-no-page-swipe
     >
       <div
-        className="flex items-center gap-1 px-2 h-7 border-b border-border cursor-grab active:cursor-grabbing"
+        ref={gripRef}
+        className="flex items-center gap-1 px-2 h-7 border-b border-border cursor-grab active:cursor-grabbing touch-none"
         onPointerDown={(e) => {
           e.preventDefault()
-          setDrag({ dx: e.clientX - pos.x, dy: e.clientY - pos.y })
+          e.stopPropagation()
+          dragRef.current = { pointerId: e.pointerId, dx: e.clientX - pos.x, dy: e.clientY - pos.y }
+          try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* */ }
         }}
       >
         <Activity className="w-3.5 h-3.5 text-accent shrink-0" />
