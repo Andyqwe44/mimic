@@ -31,8 +31,10 @@ android/setup/     # Gradle 双模块
     …/peer/                    # HTTP/WS 信令 + LAN type=1/2 帧
 ```
 
-**能力档：** 普通 = MediaProjection + 无障碍；Shizuku/root 依赖与特权服务尚未打包（fail-closed）。
+**能力档：** 普通 = MediaProjection + 无障碍（仅 `display:0` 整屏）；**Shizuku** = 独立 VirtualDisplay 沙箱（`app:*` 硬隔离）。Root 接口预留未接。
 **Peer：** 登录/邀请/LAN offer 已接线；与 PC 共用 peer proto v2（`list_targets` / `id`）。
+
+**版本真相源：** `android/version.json`（+ `android/package.json`）。`Build-Android.ps1` / `mimic-version.gradle.kts` 写入 APK `versionName`/`versionCode`；UI `get_version` 读 PackageManager，勿再手改 `build.gradle.kts` 里的版本号。
 
 ## 构建
 

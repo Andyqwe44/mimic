@@ -31,6 +31,26 @@ if (Test-Path $aj) {
     if ($jv.app) { $ver = [string]$jv.app }
 }
 
+# PackageManager versionName/versionCode must match version.json (UI get_version).
+# Semver a.b.c → versionCode = a*1e6 + b*1e3 + c (0.1.18 → 1018).
+$verCode = 1
+if ($ver -match '^(\d+)\.(\d+)\.(\d+)') {
+    $verCode = [int]$Matches[1] * 1000000 + [int]$Matches[2] * 1000 + [int]$Matches[3]
+}
+Write-Note "APK versionName=$ver versionCode=$verCode (from android/version.json)"
+
+# Keep android/package.json in sync (铁律 8 SSOT pair).
+$pkgPath = Join-Path $root 'android\package.json'
+if (Test-Path $pkgPath) {
+    $pkg = Get-Content -Raw $pkgPath | ConvertFrom-Json
+    if ([string]$pkg.version -ne $ver) {
+        $pkg.version = $ver
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [IO.File]::WriteAllText($pkgPath, (($pkg | ConvertTo-Json -Depth 8) + "`n"), $utf8NoBom)
+        Write-Ok "android/package.json version → $ver"
+    }
+}
+
 # ── shared/web → android assets ──
 Write-Step "frontend (shared/web → assets/www) v$ver"
 $web = Join-Path $root 'shared\web'
@@ -60,10 +80,12 @@ if (-not $gradleBat) { throw 'Gradle 8.7 not found under ~/.gradle/wrapper/dists
 $taskSetup = if ($Configuration -eq 'release') { ':setup:assembleRelease' } else { ':setup:assembleDebug' }
 $taskClient = if ($Configuration -eq 'release') { ':client:assembleRelease' } else { ':client:assembleDebug' }
 
-Write-Step "gradle $Configuration"
+Write-Step "gradle $Configuration (versionName=$ver versionCode=$verCode)"
 Push-Location $proj
 try {
-    & $gradleBat $taskSetup $taskClient --no-daemon
+    & $gradleBat $taskSetup $taskClient --no-daemon `
+        "-PmimicAppVersion=$ver" `
+        "-PmimicVersionCode=$verCode"
     if ($LASTEXITCODE) { throw 'gradle build failed' }
 } finally { Pop-Location }
 

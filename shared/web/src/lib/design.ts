@@ -182,6 +182,20 @@ export const SOFT = {
   scrim: 'bg-scrim',
 } as const
 
+/** Peer Monitor workspace: preview ~30% / targets ~70% (MAA-Meow-style). */
+export const PEER_WORKSPACE = {
+  previewWeight: 'basis-[30%] max-h-[32vh] min-h-[120px]',
+  panelWeight: 'flex-1 min-h-0',
+} as const
+
+/** Floating UU-style virtual mouse panel. */
+export const VMOUSE = {
+  panel: 'w-[148px]',
+  btnH: 'h-10',
+  wheelW: 'w-9',
+  handleH: 'h-6',
+} as const
+
 // ── Misc ──
 export const RING = 'ring-1 ring-inset ring-border'
 

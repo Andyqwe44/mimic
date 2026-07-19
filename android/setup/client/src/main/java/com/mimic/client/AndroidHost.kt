@@ -54,8 +54,8 @@ class AndroidHost(
     /** After MediaProjection consent, start capture if stream gate / set_target requested it. */
     @Volatile private var pendingStartAfterConsent = false
     private val caps = CapabilityManager(context)
-    private val capture = CaptureController(context)
-    private val input = InputController(context)
+    private val capture = CaptureController(context, caps)
+    private val input = InputController(context, caps)
     private val peer = PeerSession(context, pushToJs)
     /** Set by MainActivity to launch the system screen-capture consent dialog. */
     var requestProjection: (() -> Unit)? = null
@@ -136,7 +136,8 @@ class AndroidHost(
 
     /**
      * Controller picked a remote target — apply on controlled Android (parity with PC).
-     * Auto-opens stream/control gates; starts capture when MediaProjection consent exists.
+     * display:* → MediaProjection whole screen.
+     * app:* → Shizuku VirtualDisplay sandbox only (铁律 5: no soft-confine fake).
      */
     private fun applyRemoteSetTarget(json: JSONObject): JSONObject {
         val id = json.optString("id", json.optString("target_id", ""))
@@ -151,27 +152,6 @@ class AndroidHost(
         activeTargetId = tid
         appendLog("peer", "set_target id=$tid")
 
-        // display:* = whole screen, keep current UI state (do NOT go Home).
-        // app:* = launch that app and confine control inside it.
-        if (tid.startsWith("app:")) {
-            val rest = tid.removePrefix("app:")
-            val slash = rest.indexOf('/')
-            val pkg = if (slash >= 0) rest.substring(0, slash) else rest
-            val act = if (slash >= 0) rest.substring(slash + 1) else ""
-            if (pkg.isNotBlank()) {
-                MimicAccessibilityService.setConfine(pkg, act.ifBlank { null })
-                val launch = AppLauncher.launch(context, pkg, act.ifBlank { null })
-                if (!launch.optBoolean("ok", false)) {
-                    appendLog("peer", "set_target launch failed: ${launch.optString("error")}")
-                } else {
-                    appendLog("peer", "launched+confined $pkg")
-                }
-            }
-        } else {
-            MimicAccessibilityService.clearConfine()
-            appendLog("peer", "display target — no launch, keep current screen")
-        }
-
         allowStream = true
         acceptControl = true
         main.post {
@@ -183,6 +163,32 @@ class AndroidHost(
                     .put("target_id", tid),
             )
         }
+
+        if (tid.startsWith("app:")) {
+            MimicAccessibilityService.clearConfine()
+            input.vdDisplayActive = true
+            // Stop any MediaProjection stream first.
+            try { capture.stop() } catch (_: Exception) {}
+            val startArgs = JSONObject()
+                .put("target_id", tid)
+                .put("id", tid)
+                .put("method", "virtualdisplay")
+                .put("virtualDisplay", true)
+            val started = capture.start(startArgs, caps.active)
+            if (!started.optBoolean("ok", false)) {
+                input.vdDisplayActive = false
+                appendLog("peer", "app sandbox failed: ${started.optString("error")}")
+                return started.put("id", tid).put("peer_proto", 2)
+            }
+            appendLog("peer", "app sandbox ok displayId=${started.optInt("displayId", -1)}")
+            return started.put("id", tid).put("peer_proto", 2)
+        }
+
+        // display:* — whole screen MediaProjection; clear any VD sandbox.
+        input.vdDisplayActive = false
+        MimicAccessibilityService.clearConfine()
+        try { caps.shizuku.stopSession() } catch (_: Exception) {}
+        appendLog("peer", "display target — MediaProjection path")
 
         if (!capture.hasProjectionConsent()) {
             pendingStartAfterConsent = true
@@ -440,6 +446,8 @@ class AndroidHost(
                 allowStream = false
                 acceptControl = false
                 pendingStartAfterConsent = false
+                input.vdDisplayActive = false
+                try { caps.shizuku.stopSession() } catch (_: Exception) {}
                 try { capture.stop() } catch (_: Exception) {}
                 val r = peer.hangup()
                 val end = JSONObject().put("type", "session_end").put("reason", "hangup")
@@ -463,8 +471,31 @@ class AndroidHost(
                 appendLog("gate", "allow_stream=$allowStream")
                 if (!allowStream) {
                     pendingStartAfterConsent = false
+                    input.vdDisplayActive = false
+                    try { caps.shizuku.stopSession() } catch (_: Exception) {}
                     capture.stop()
                     return@dispatch jsonOk().put("allow_stream", false)
+                }
+                // App sandbox uses Shizuku VD — no MediaProjection consent.
+                if (activeTargetId.startsWith("app:")) {
+                    input.vdDisplayActive = true
+                    if (capture.streaming) {
+                        return@dispatch jsonOk().put("allow_stream", true).put("streaming", true)
+                    }
+                    val startArgs = JSONObject()
+                        .put("target_id", activeTargetId)
+                        .put("id", activeTargetId)
+                        .put("method", "virtualdisplay")
+                        .put("virtualDisplay", true)
+                    val started = capture.start(startArgs, caps.active)
+                    if (!started.optBoolean("ok", false)) {
+                        input.vdDisplayActive = false
+                        return@dispatch JSONObject()
+                            .put("ok", false)
+                            .put("error", started.optString("error", "vd capture start failed"))
+                            .put("allow_stream", true)
+                    }
+                    return@dispatch jsonOk().put("allow_stream", true).put("streaming", true)
                 }
                 if (!capture.hasProjectionConsent()) {
                     pendingStartAfterConsent = true
@@ -541,6 +572,7 @@ class AndroidHost(
     /** v2 targets: main display + installed launchable apps. */
     private fun listTargets(): JSONObject {
         val dm = context.resources.displayMetrics
+        val priv = caps.canVirtualDisplay()
         val targets = JSONArray()
         targets.put(
             TargetDescriptor(
@@ -549,8 +581,8 @@ class AndroidHost(
                 title = "Main Display",
                 displayId = 0,
                 hwnd = 0,
-                capture = false,
-                control = false,
+                capture = true,
+                control = true,
                 launch = false,
                 virtualDisplay = false,
             ).toJson()
@@ -558,9 +590,20 @@ class AndroidHost(
                 .put("h", dm.heightPixels)
         )
         for (app in AppEnumerator.listLaunchable(context)) {
-            targets.put(app.toJson())
+            targets.put(
+                app.copy(
+                    capture = priv,
+                    control = priv,
+                    launch = true,
+                    virtualDisplay = priv,
+                ).toJson()
+            )
         }
-        return JSONObject().put("ok", true).put("targets", targets).put("peer_proto", 2)
+        return JSONObject()
+            .put("ok", true)
+            .put("targets", targets)
+            .put("peer_proto", 2)
+            .put("virtual_display_ready", priv)
     }
 
     /** Temporary Windows-shaped array so existing TargetPicker does not crash. */

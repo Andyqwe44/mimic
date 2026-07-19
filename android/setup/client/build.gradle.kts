@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = rootProject.file("mimic-version.gradle.kts"))
+
+val mimicVersionName: String by extra
+val mimicVersionCode: Int by extra
+
 android {
     namespace = "com.mimic.client"
     compileSdk = 34
@@ -11,8 +16,8 @@ android {
         applicationId = "com.mimic.client"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.1.13"
+        versionCode = mimicVersionCode
+        versionName = mimicVersionName
     }
 
     buildTypes {
@@ -32,6 +37,7 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+        aidl = true
     }
 }
 
@@ -45,4 +51,7 @@ dependencies {
     implementation("androidx.webkit:webkit:1.11.0")
     // Peer signaling WebSocket + HTTP (parity with pc/client peer_session)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Privileged VirtualDisplay / InputManager (app sandbox)
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

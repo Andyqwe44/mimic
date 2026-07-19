@@ -447,6 +447,15 @@ export function PeerPanel({
             <div className="flex flex-wrap gap-2 items-center min-w-0">
               <ActionBtn icon={<PhoneOff className="w-3.5 h-3.5" />} label={t('peer.hangup')} title={t('peer.hangup_tip')}
                 variant="danger" onClick={hangup} />
+              {role === 'controller' && transport !== 'none' && onSessionStart && (
+                <ActionBtn
+                  icon={<Monitor className="w-3.5 h-3.5" />}
+                  label={t('peer.enter_monitor')}
+                  title={t('peer.enter_monitor_tip')}
+                  variant="primary"
+                  onClick={() => onSessionStart()}
+                />
+              )}
               {role === 'controller' && (
                 <div className="flex gap-1 ml-auto">
                   <Tooltip text={t('peer.human_tip')}>

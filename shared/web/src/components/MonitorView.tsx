@@ -17,7 +17,7 @@ import { SessionPanicBar } from './SessionPanicBar'
 import { STATE_LABEL, codeToName, resolveInputMethods } from '../lib/constants'
 import { THIN_CLIENT } from '../lib/features'
 import { addLog, hostCall } from '../lib/bridge'
-import { RADIUS, RING, SHELL_PAD, TEXT } from '../lib/design'
+import { RADIUS, RING, SHELL_PAD, TEXT, PEER_WORKSPACE } from '../lib/design'
 import type { WindowInfo, Rect } from '../lib/types'
 
 // ── Types ──
@@ -760,6 +760,7 @@ export function MonitorView({
 
   // ── Thin client: peer workspace (remote view / controlled panic) ──
   const [remoteTargetId, setRemoteTargetId] = useState('')
+  const autoPickedRef = useRef(false)
   const isController = peerRole === 'controller'
   const isControlled = peerRole === 'controlled'
   const lanReady = peerTransport !== 'none'
@@ -778,8 +779,41 @@ export function MonitorView({
       .catch((e) => addLog(`[Peer] set_target failed: ${e}`))
   }, [])
 
+  /** Prefer Main Display / Entire Desktop as default remote target. */
+  const pickDefaultRemoteTarget = useCallback((wins: Array<{ title: string; hwnd: number; id?: string }>) => {
+    if (!wins.length) return null
+    const byDisplay = wins.find((w) => (w.id || '') === 'display:0')
+    if (byDisplay) return byDisplay
+    const byDesktopId = wins.find((w) => (w.id || '').startsWith('desktop:'))
+    if (byDesktopId) return byDesktopId
+    const byHwnd0 = wins.find((w) => w.hwnd === 0)
+    if (byHwnd0) return byHwnd0
+    return wins[0]
+  }, [])
+
+  // LAN down → clear selection so next session auto-picks again.
+  useEffect(() => {
+    if (!lanReady) {
+      setRemoteTargetId('')
+      autoPickedRef.current = false
+    }
+  }, [lanReady])
+
+  // Auto set_target once when remote target list first arrives.
+  useEffect(() => {
+    if (!lanReady || !isController || autoPickedRef.current) return
+    if (!remotePeerWindows.length || remoteTargetId) return
+    const def = pickDefaultRemoteTarget(remotePeerWindows)
+    if (!def) return
+    autoPickedRef.current = true
+    pickRemoteTarget(def)
+    addLog(`[Peer] auto set_target ${def.title}${def.id ? ` (${def.id})` : ''}`)
+  }, [lanReady, isController, remotePeerWindows, remoteTargetId, pickDefaultRemoteTarget, pickRemoteTarget])
+
   const hangupSession = useCallback(async () => {
     // Hangup = end video + control (not just signaling).
+    setRemoteTargetId('')
+    autoPickedRef.current = false
     try { await hostCall('set_stream_gate', { enabled: false }) } catch { /* */ }
     try { await hostCall('set_control_gate', { enabled: false }) } catch { /* */ }
     try {
@@ -831,18 +865,21 @@ export function MonitorView({
               </div>
             </div>
             <div className={`flex-1 flex flex-col min-h-0 ${SHELL_PAD.page} gap-2`}>
-              <PeerRemoteView
-                active={lanReady}
-                humanControl={peerControlMode === 'human'}
-                compact
-                encodeHint={encodeHint}
-              />
+              <div className={`${PEER_WORKSPACE.previewWeight} shrink-0 flex flex-col min-h-0`}>
+                <PeerRemoteView
+                  active={lanReady}
+                  humanControl={peerControlMode === 'human'}
+                  compact
+                  fill
+                  encodeHint={encodeHint}
+                />
+              </div>
               {peerControlMode === 'ai' && lanReady && (
-                <div className={`${TEXT.smallMono} text-amber-500 bg-warn-soft ${RADIUS.lg} px-2 py-1.5`}>
+                <div className={`${TEXT.smallMono} text-amber-500 bg-warn-soft ${RADIUS.lg} px-2 py-1.5 shrink-0`}>
                   {t('peer.ai_mode_hint')}
                 </div>
               )}
-              <div className={`${RADIUS.xl} bg-bg-secondary ${RING} p-2 space-y-1 flex-1 min-h-0 overflow-y-auto`}>
+              <div className={`${RADIUS.xl} bg-bg-secondary ${RING} p-2 space-y-1 ${PEER_WORKSPACE.panelWeight} overflow-y-auto`}>
                 <div className={`${TEXT.smallMono} font-medium text-text-secondary px-1 flex items-center justify-between gap-2`}>
                   <span>{t('peer.remote_targets')}</span>
                   {lanReady && (
@@ -869,6 +906,7 @@ export function MonitorView({
                 {remotePeerWindows.map((w) => {
                   const key = w.id || String(w.hwnd)
                   const selected = remoteTargetId === key
+                  const needsPriv = (w.id || '').startsWith('app:')
                   return (
                     <button
                       key={key}
@@ -879,6 +917,7 @@ export function MonitorView({
                       onClick={() => pickRemoteTarget(w)}
                     >
                       {w.title || w.id || `(hwnd ${w.hwnd})`}
+                      {needsPriv ? ` · ${t('peer.app_needs_shizuku')}` : ''}
                     </button>
                   )
                 })}

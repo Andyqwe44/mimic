@@ -258,7 +258,9 @@ export function PeerRemoteView({
   const landscapePlane = expanded && portrait
   const shellClass = expanded
     ? 'fixed inset-0 z-[80] bg-black overflow-hidden'
-    : `${fill && !compact ? 'flex-1 flex flex-col min-h-0' : 'shrink-0'} rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden`
+    : compact || fill
+      ? 'flex-1 flex flex-col min-h-0 h-full rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden'
+      : 'shrink-0 rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden'
 
   const planeStyle: CSSProperties = landscapePlane
     ? {
@@ -272,12 +274,12 @@ export function PeerRemoteView({
       }
     : expanded
       ? { position: 'absolute', inset: 0, width: '100%', height: '100%' }
-      : { display: 'flex', flexDirection: 'column', width: '100%', height: fill && !compact ? '100%' : undefined }
+      : { display: 'flex', flexDirection: 'column', width: '100%', height: (fill || compact) ? '100%' : undefined }
 
   const stageClass = expanded
     ? 'relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full'
     : compact
-      ? 'relative bg-black flex items-center justify-center overflow-hidden w-full aspect-video max-h-[28vh] shrink-0'
+      ? 'relative bg-black flex items-center justify-center overflow-hidden w-full h-full min-h-0'
       : fill
         ? 'relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0'
         : 'relative bg-black flex items-center justify-center overflow-hidden min-h-[160px] max-h-[280px]'
@@ -295,7 +297,7 @@ export function PeerRemoteView({
           <span className="ml-auto truncate min-w-0">
             {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
           </span>
-          {humanControl && (
+          {humanControl && expanded && (
             <Tooltip text={kbOpen ? t('peer.soft_kb_close') : t('peer.soft_kb_open')}>
               <button
                 type="button"
@@ -335,10 +337,12 @@ export function PeerRemoteView({
             <VirtualMouseOverlay
               enabled
               videoAspect={videoAspect}
+              rotated={landscapePlane}
+              showPanel={expanded}
               onAction={send}
             />
           )}
-          {humanControl && (
+          {humanControl && expanded && (
             <SoftKeyboardOverlay
               open={kbOpen}
               onClose={() => setKbOpen(false)}

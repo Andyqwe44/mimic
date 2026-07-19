@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+apply(from = rootProject.file("mimic-version.gradle.kts"))
+
+val mimicVersionName: String by extra
+val mimicVersionCode: Int by extra
+
 android {
     namespace = "com.mimic.setup"
     compileSdk = 34
@@ -11,8 +16,8 @@ android {
         applicationId = "com.mimic.setup"
         minSdk = 26
         targetSdk = 34
-        versionCode = 14
-        versionName = "0.1.13"
+        versionCode = mimicVersionCode
+        versionName = mimicVersionName
     }
 
     buildTypes {
