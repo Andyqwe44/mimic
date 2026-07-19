@@ -146,7 +146,7 @@ export function PeerPanel({
     return () => { if (saveCredsRef.current) clearTimeout(saveCredsRef.current) }
   }, [credsReady, url, user, password, deviceName])
 
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (opts?: { pullDevices?: boolean }) => {
     try {
       const st = await hostCall('peer_status')
       // Keep device-list UI while logged in / reconnecting (socket may be down).
@@ -161,8 +161,9 @@ export function PeerPanel({
         setTransport(st.transport)
         onTransport?.(st.transport)
       }
-      // Pull fresh same-account device list (server push can be missed on half-open WS).
-      if (st?.online) {
+      // Device roster is server-pushed on join/leave/meta change.
+      // Explicit pull only on login/reconnect recovery (not on a timer).
+      if (opts?.pullDevices && st?.online) {
         hostCall('peer_list_devices').catch(() => {})
       }
     } catch { /* */ }
@@ -293,6 +294,8 @@ export function PeerPanel({
         setReconnecting(false)
         setStatus(t('peer.online'))
         if (d.reconnected) addLog('[Peer] reconnected')
+        // Catch-up once after (re)connect — roster is then event-pushed.
+        void refreshStatus({ pullDevices: true })
       }
     }
   }, [onRemoteWindows, onTransport, onRole, onSessionStart, refreshStatus, t, pullPeerFrame])
@@ -304,8 +307,9 @@ export function PeerPanel({
   }, [])
 
   useEffect(() => {
-    pollRef.current = window.setInterval(() => { refreshStatus() }, 3000) as unknown as number
-    refreshStatus()
+    // Light status poll only (role / transport). Device list is event-driven from server.
+    pollRef.current = window.setInterval(() => { void refreshStatus() }, 15000) as unknown as number
+    void refreshStatus({ pullDevices: true })
     return () => clearInterval(pollRef.current)
   }, [refreshStatus])
 
@@ -335,6 +339,7 @@ export function PeerPanel({
       setMyId(res.deviceId || '')
       setStatus(t('peer.online'))
       addLog(`[Peer] logged in as ${user}`)
+      void refreshStatus({ pullDevices: true })
     } catch (e) {
       setStatus(String(e))
     }

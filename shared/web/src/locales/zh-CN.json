@@ -216,7 +216,24 @@
     "shizuku_refresh_tip": "刷新状态",
     "shizuku_use_normal": "改用普通档",
     "shizuku_use_normal_tip": "退回 MediaProjection + 无障碍（无 App 沙箱）",
-    "shizuku_using_normal": "已切换为普通档"
+    "shizuku_using_normal": "已切换为普通档",
+    "shizuku_guide_btn": "设置教程",
+    "shizuku_guide_btn_tip": "如何下载、启动并授权 Shizuku",
+    "shizuku_guide_title": "Shizuku 设置教程",
+    "shizuku_guide_subtitle": "参考 MAA / 官方文档的引导流程",
+    "shizuku_guide_close": "关闭",
+    "shizuku_guide_intro": "App 沙箱（独立虚拟屏）需要 Shizuku 特权。按下面四步完成后，回到本页点「连接 Shizuku」。",
+    "shizuku_guide_s1_title": "下载并安装 Shizuku",
+    "shizuku_guide_s1_body": "从应用商店搜索「Shizuku」，或打开官网 https://shizuku.rikka.app/ 下载安装。安装后不要卸载。",
+    "shizuku_guide_s2_title": "启动 Shizuku 服务",
+    "shizuku_guide_s2_body": "打开 Shizuku 应用。Android 11+ 可用「无线调试」一键启动；也可连接电脑用 ADB（adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh）。页面显示「正在运行」即可。",
+    "shizuku_guide_s3_title": "授权 Mimic",
+    "shizuku_guide_s3_body": "在 Shizuku 的「应用管理」里找到 Mimic，打开授权开关。若系统弹出授权框，请点允许。",
+    "shizuku_guide_s4_title": "回到 Mimic 连接",
+    "shizuku_guide_s4_body": "返回本页，点「连接 Shizuku」。状态变为「已连接」后，即可使用 App 沙箱目标。",
+    "shizuku_guide_note": "提示：每次重启手机后需重新启动 Shizuku；无线调试配对码会过期，按 Shizuku 应用内提示操作即可。",
+    "shizuku_guide_download": "下载 / 官网",
+    "shizuku_guide_download_tip": "打开应用商店或 Shizuku 官网"
   },
 
   "screenshot": {

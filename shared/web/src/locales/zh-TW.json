@@ -216,7 +216,24 @@
     "shizuku_refresh_tip": "重新整理狀態",
     "shizuku_use_normal": "改用一般檔",
     "shizuku_use_normal_tip": "退回 MediaProjection + 無障礙（無 App 沙箱）",
-    "shizuku_using_normal": "已切換為一般檔"
+    "shizuku_using_normal": "已切換為一般檔",
+    "shizuku_guide_btn": "設置教程",
+    "shizuku_guide_btn_tip": "如何下載、啟動並授權 Shizuku",
+    "shizuku_guide_title": "Shizuku 設置教程",
+    "shizuku_guide_subtitle": "參考 MAA / 官方文件的引導流程",
+    "shizuku_guide_close": "關閉",
+    "shizuku_guide_intro": "App 沙箱（獨立虛擬螢幕）需要 Shizuku 特權。按下面四步完成後，回到本頁點「連接 Shizuku」。",
+    "shizuku_guide_s1_title": "下載並安裝 Shizuku",
+    "shizuku_guide_s1_body": "從應用商店搜尋「Shizuku」，或開啟官網 https://shizuku.rikka.app/ 下載安裝。安裝後請勿解除安裝。",
+    "shizuku_guide_s2_title": "啟動 Shizuku 服務",
+    "shizuku_guide_s2_body": "開啟 Shizuku 應用。Android 11+ 可用「無線偵錯」一鍵啟動；也可連接電腦用 ADB。頁面顯示「正在執行」即可。",
+    "shizuku_guide_s3_title": "授權 Mimic",
+    "shizuku_guide_s3_body": "在 Shizuku 的「應用管理」裡找到 Mimic，打開授權開關。若系統彈出授權框，請點允許。",
+    "shizuku_guide_s4_title": "回到 Mimic 連接",
+    "shizuku_guide_s4_body": "返回本頁，點「連接 Shizuku」。狀態變為「已連接」後，即可使用 App 沙箱目標。",
+    "shizuku_guide_note": "提示：每次重啟手機後需重新啟動 Shizuku；無線偵錯配對碼會過期，依 Shizuku 應用內提示操作即可。",
+    "shizuku_guide_download": "下載 / 官網",
+    "shizuku_guide_download_tip": "開啟應用商店或 Shizuku 官網"
   },
 
   "screenshot": {

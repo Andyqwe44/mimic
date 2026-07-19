@@ -1,4 +1,5 @@
 // Peer remote view — WebCodecs H.264 decode + platform pointer + soft keyboard.
+// Canvas stays mounted across expand/collapse so VideoDecoder never paints a detached context.
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Expand, Keyboard, Minimize2 } from 'lucide-react'
@@ -110,10 +111,39 @@ export function PeerRemoteView({
     decoderRef.current = null
   }
 
+  const paintFrame = (frame: VideoFrame) => {
+    const canvas = canvasRef.current
+    if (!canvas) {
+      frame.close()
+      return
+    }
+    const { w, h } = videoSizeRef.current
+    if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
+      canvas.width = w
+      canvas.height = h
+    }
+    const ctx = canvas.getContext('2d')
+    ctx?.drawImage(frame, 0, 0, canvas.width, canvas.height)
+    frame.close()
+    framesRef.current++
+    const now = performance.now()
+    if (now - lastFpsTsRef.current >= 1000) {
+      setFps(framesRef.current)
+      framesRef.current = 0
+      lastFpsTsRef.current = now
+    }
+  }
+
   const ensureDecoder = (w: number, h: number) => {
     const canvas = canvasRef.current
     if (!canvas || w <= 0 || h <= 0) return
-    if (decoderRef.current && videoSizeRef.current.w === w && videoSizeRef.current.h === h) return
+    if (decoderRef.current && videoSizeRef.current.w === w && videoSizeRef.current.h === h) {
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w
+        canvas.height = h
+      }
+      return
+    }
     closeDecoder()
     videoSizeRef.current = { w, h }
     canvas.width = w
@@ -126,19 +156,8 @@ export function PeerRemoteView({
       setStatus(t('peer.webcodecs_unavailable'))
       return
     }
-    const ctx = canvas.getContext('2d')
     decoderRef.current = new VideoDecoder({
-      output: (frame) => {
-        ctx?.drawImage(frame, 0, 0, canvas.width, canvas.height)
-        frame.close()
-        framesRef.current++
-        const now = performance.now()
-        if (now - lastFpsTsRef.current >= 1000) {
-          setFps(framesRef.current)
-          framesRef.current = 0
-          lastFpsTsRef.current = now
-        }
-      },
+      output: paintFrame,
       error: (e) => {
         closeDecoder()
         videoSizeRef.current = { w: 0, h: 0 }
@@ -290,9 +309,8 @@ export function PeerRemoteView({
       } catch { /* */ }
       return
     }
-    const tmr = window.setTimeout(() => requestKeyframe('expand'), 80)
+    // Canvas stays mounted — no keyframe storm on expand.
     return () => {
-      window.clearTimeout(tmr)
       try {
         const o = screen.orientation as ScreenOrientation & { unlock?: () => void }
         o?.unlock?.()
@@ -341,11 +359,9 @@ export function PeerRemoteView({
   const viewportPortrait =
     typeof window !== 'undefined' && window.innerHeight > window.innerWidth
   const rotated = expanded && landscapeVideo && viewportPortrait
-  // Portrait remote (typical Android app): taller preview on PC; landscape: wider/shorter.
   const maxPreviewH = portraitVideo ? 'min(72vh, 720px)' : 'min(42vh, 480px)'
   const androidCtl = isAndroidHost()
 
-  // Rotated: pre-rotate box = (stageH × stageW). Keyboard lives inside when open.
   const contentW = rotated ? stageBox.h : stageBox.w
   const contentHFull = rotated ? stageBox.w : stageBox.h
   const kbReserve = rotated && kbOpen ? kbH : 0
@@ -355,10 +371,6 @@ export function PeerRemoteView({
     videoAreaH > 0 ? videoAreaH : 1,
     videoAspect > 0 ? videoAspect : 16 / 9,
   )
-
-  const shellClass = expanded
-    ? 'fixed inset-0 z-[80] bg-black overflow-hidden'
-    : 'shrink-0 rounded-t-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden w-full'
 
   const shellStyle: CSSProperties | undefined = expanded
     ? undefined
@@ -370,7 +382,6 @@ export function PeerRemoteView({
         marginInline: portraitVideo ? 'auto' : undefined,
       }
 
-  // Non-rotated: push plane up with fixed keyboard. Rotated: keyboard inside rotate box.
   const planeBottom = !rotated && kbOpen ? kbH : 0
   const planeStyle: CSSProperties = expanded
     ? {
@@ -436,40 +447,59 @@ export function PeerRemoteView({
     </div>
   )
 
-  const statusRow = (
-    <div className="h-7 px-2 flex items-center gap-2 text-[11px] text-text-tertiary shrink-0">
-      <span className="font-medium text-text-secondary">
-        {source === 'local' ? t('peer.local_preview') : t('peer.remote_view')}
-      </span>
-      <span className="tabular-nums">{dims}</span>
-      <span className="tabular-nums">{fps} fps</span>
-      {encodeHint && (
-        <span className="text-amber-500 truncate">{encodeHint}</span>
-      )}
-      {latHint && (
-        <span className="tabular-nums text-text-muted truncate min-w-0">{latHint}</span>
-      )}
-      <span className="ml-auto truncate min-w-0">
-        {status}{!humanControl ? ` · ${t('peer.ai_mode_short')}` : ''}
-      </span>
-      {!expanded && (
-        <Tooltip text={t('peer.expand_view')}>
-          <button
-            type="button"
-            className="h-6 w-6 rounded flex items-center justify-center shrink-0 hover:bg-bg-hover text-text-secondary"
-            onClick={() => setExpanded(true)}
-          >
-            <Expand className="w-3.5 h-3.5" />
-          </button>
-        </Tooltip>
-      )}
-    </div>
-  )
+  const titleLabel = source === 'local' ? t('peer.local_preview') : t('peer.remote_view')
+  const hudPrimary = [dims || '—', `${fps} fps`].filter(Boolean).join(' · ')
+  const hudSecondary = [
+    status,
+    !humanControl ? t('peer.ai_mode_short') : '',
+  ].filter(Boolean).join(' · ')
 
   return (
-    <div className={expanded ? shellClass : 'shrink-0 flex flex-col w-full gap-0'}>
-      {expanded ? (
-        <div className={shellClass} style={shellStyle}>
+    <div
+      className={
+        expanded
+          ? 'fixed inset-0 z-[80] bg-black overflow-hidden'
+          : 'shrink-0 flex flex-col w-full'
+      }
+    >
+      <div
+        className={
+          expanded
+            ? 'absolute inset-0 bg-black overflow-hidden'
+            : 'relative shrink-0 rounded-xl bg-bg-secondary ring-1 ring-inset ring-border overflow-hidden w-full'
+        }
+        style={shellStyle}
+      >
+        {/* Compact HUD over preview — no separate status strip below */}
+        {!expanded && (
+          <div
+            className="absolute inset-x-0 bottom-0 z-10 pointer-events-none"
+            data-no-page-swipe
+          >
+            <div className="flex items-end gap-2 px-2 pb-1.5 pt-8 bg-gradient-to-t from-black/75 via-black/35 to-transparent">
+              <div className="min-w-0 flex-1 text-white/95 drop-shadow-sm">
+                <div className={`${TEXT.tiny} font-medium truncate`}>
+                  {titleLabel}
+                  {hudPrimary ? ` · ${hudPrimary}` : ''}
+                </div>
+                <div className={`${TEXT.tiny} text-white/70 truncate`}>
+                  {hudSecondary}
+                </div>
+              </div>
+              <Tooltip text={t('peer.expand_view')}>
+                <button
+                  type="button"
+                  className="pointer-events-auto h-8 w-8 rounded-lg flex items-center justify-center shrink-0 bg-black/45 ring-1 ring-inset ring-white/20 text-white hover:bg-black/60"
+                  onClick={() => setExpanded(true)}
+                >
+                  <Expand className="w-3.5 h-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+        )}
+
+        {expanded && (
           <div
             className="fixed z-[90] flex items-center gap-2 pointer-events-auto"
             style={{
@@ -479,8 +509,9 @@ export function PeerRemoteView({
             data-no-page-swipe
           >
             {!rotated && (
-              <div className="max-w-[min(50vw,320px)] truncate text-[11px] text-text-muted bg-bg-secondary/90 ring-1 ring-inset ring-border rounded-lg px-2 h-9 flex items-center">
-                <span className="tabular-nums mr-2">{fps} fps</span>
+              <div className="max-w-[min(55vw,360px)] truncate text-[11px] text-text-muted bg-bg-secondary/90 ring-1 ring-inset ring-border rounded-lg px-2 h-9 flex items-center gap-2">
+                <span className="font-medium text-text-secondary shrink-0">{titleLabel}</span>
+                <span className="tabular-nums shrink-0">{hudPrimary}</span>
                 <span className="truncate">{status}</span>
               </div>
             )}
@@ -507,68 +538,67 @@ export function PeerRemoteView({
               </button>
             </Tooltip>
           </div>
-          <div className="flex flex-col bg-black" style={planeStyle}>
+        )}
+
+        <div className="flex flex-col bg-black" style={planeStyle}>
+          <div
+            ref={stageRef}
+            className={
+              expanded
+                ? 'relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full'
+                : 'absolute inset-0 bg-black flex items-center justify-center overflow-hidden'
+            }
+            data-no-page-swipe={humanControl ? true : undefined}
+          >
+            {/* Single wrapper — never remount canvas when rotate/expand toggles */}
             <div
-              ref={stageRef}
-              className="relative bg-black flex items-center justify-center overflow-hidden flex-1 min-h-0 w-full"
-              data-no-page-swipe={humanControl ? true : undefined}
+              className="flex flex-col items-center justify-center"
+              style={
+                rotated
+                  ? {
+                      position: 'absolute',
+                      width: contentW > 0 ? contentW : '100%',
+                      height: contentHFull > 0 ? contentHFull : '100%',
+                      left: '50%',
+                      top: '50%',
+                      transform: 'translate(-50%, -50%) rotate(90deg)',
+                      transformOrigin: 'center center',
+                      flexShrink: 0,
+                      minWidth: contentW > 0 ? contentW : undefined,
+                      minHeight: contentHFull > 0 ? contentHFull : undefined,
+                    }
+                  : {
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                    }
+              }
             >
-              {rotated ? (
-                <div
-                  className="flex flex-col"
-                  style={{
-                    position: 'absolute',
-                    width: contentW > 0 ? contentW : '100%',
-                    height: contentHFull > 0 ? contentHFull : '100%',
-                    left: '50%',
-                    top: '50%',
-                    transform: 'translate(-50%, -50%) rotate(90deg)',
-                    transformOrigin: 'center center',
-                    flexShrink: 0,
-                    minWidth: contentW > 0 ? contentW : undefined,
-                    minHeight: contentHFull > 0 ? contentHFull : undefined,
-                  }}
-                >
-                  {videoStack}
-                  {softKb}
-                </div>
-              ) : (
-                <div
-                  className="flex items-center justify-center"
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-                >
-                  {videoStack}
-                </div>
-              )}
+              {videoStack}
+              {rotated ? softKb : null}
             </div>
-            {expanded && !rotated && !kbOpen && (
-              <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
-                {t('peer.expand_hint')}
-              </div>
-            )}
           </div>
-          {!rotated && softKb && (
-            <div className="fixed inset-x-0 bottom-0 z-[95] pointer-events-auto" data-no-page-swipe>
-              {softKb}
+          {expanded && !rotated && !kbOpen && (
+            <div className={`${TEXT.tiny} text-center text-text-muted py-1 shrink-0`}>
+              {t('peer.expand_hint')}
             </div>
           )}
         </div>
-      ) : (
-        <>
-          <div className={shellClass} style={{ ...shellStyle, position: 'relative' }}>
-            <div
-              ref={stageRef}
-              className="absolute inset-0 bg-black flex items-center justify-center overflow-hidden"
-              data-no-page-swipe={humanControl ? true : undefined}
-            >
-              {videoStack}
-            </div>
+
+        {expanded && !rotated && softKb && (
+          <div className="fixed inset-x-0 bottom-0 z-[95] pointer-events-auto" data-no-page-swipe>
+            {softKb}
           </div>
-          {/* Status below preview — does not steal video height */}
-          <div className="rounded-b-xl bg-bg-secondary ring-1 ring-inset ring-border border-t-0 -mt-px">
-            {statusRow}
-          </div>
-        </>
+        )}
+      </div>
+
+      {/* Dev/diag line kept out of the preview chrome; only when encode/latency present */}
+      {!expanded && (encodeHint || latHint) && (
+        <div className={`${TEXT.tiny} text-text-muted px-1 pt-1 truncate`}>
+          {encodeHint && <span className="text-amber-500 mr-2">{encodeHint}</span>}
+          {latHint && <span className="tabular-nums">{latHint}</span>}
+        </div>
       )}
     </div>
   )

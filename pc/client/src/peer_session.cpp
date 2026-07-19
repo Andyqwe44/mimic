@@ -364,8 +364,8 @@ std::string build_presence_json() {
 }
 
 void presence_heartbeat_loop() {
-    // Keep NAT/mappings alive and force server to re-broadcast devices to all
-    // same-account peers (so A sees B without re-login).
+    // Keep session lastSeen alive. Device roster is server-pushed on join/leave
+    // (and presence only when lanIps/name/platform actually change).
     while (g_sig_running.load()) {
         for (int i = 0; i < 150 && g_sig_running.load(); ++i)
             Sleep(100); // ~15s
@@ -377,7 +377,6 @@ void presence_heartbeat_loop() {
             LOG_WARN("peer", "presence heartbeat send failed");
             break;
         }
-        ws_send_text(s, R"({"type":"list_devices"})");
     }
 }
 

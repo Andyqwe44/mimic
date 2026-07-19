@@ -1,12 +1,13 @@
 // Android Shizuku / privilege gate — Peers page (MAA-Meow-style readiness card).
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Shield, RefreshCw, ExternalLink } from 'lucide-react'
+import { Shield, RefreshCw, ExternalLink, BookOpen } from 'lucide-react'
 import { hostCall, addLog, onNativePush } from '../lib/bridge'
 import { isAndroidHost } from '../lib/platform'
 import { ActionBtn, Tooltip } from './Toolkit'
 import { RailCard, type RailBadgeTone } from './RailCard'
 import { TEXT, RADIUS } from '../lib/design'
+import { ShizukuGuideModal } from './ShizukuGuideModal'
 
 type CapStatus = {
   ok?: boolean
@@ -30,6 +31,7 @@ export function ShizukuConnectCard({
   const [st, setSt] = useState<CapStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [guideOpen, setGuideOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -203,7 +205,20 @@ export function ShizukuConnectCard({
           onClick={openApp}
         />
       </div>
+      <ActionBtn
+        icon={<BookOpen className="w-3.5 h-3.5" />}
+        label={t('peer.shizuku_guide_btn')}
+        title={t('peer.shizuku_guide_btn_tip')}
+        variant="outline"
+        size="fill"
+        onClick={() => setGuideOpen(true)}
+      />
       {msg && <div className={`${TEXT.tiny} text-text-muted break-words`}>{msg}</div>}
+      <ShizukuGuideModal
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        onOpenApp={openApp}
+      />
     </RailCard>
   )
 }

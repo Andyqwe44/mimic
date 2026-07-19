@@ -92,7 +92,7 @@ class PeerSession(
                         .put("platform", "android")
                         .put("peerProto", 2),
                 )
-                sendWs(JSONObject().put("type", "list_devices"))
+                // Device list is server-pushed on join/leave; no periodic list_devices.
             } catch (e: Exception) {
                 Log.w(tag, "presence hb", e)
             }

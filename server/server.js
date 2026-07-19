@@ -383,6 +383,14 @@ function broadcastDevices(user) {
   }
 }
 
+function sameLanIps(a, b) {
+  const aa = Array.isArray(a) ? a.map(String) : [];
+  const bb = Array.isArray(b) ? b.map(String) : [];
+  if (aa.length !== bb.length) return false;
+  for (let i = 0; i < aa.length; i++) if (aa[i] !== bb[i]) return false;
+  return true;
+}
+
 function send(s, obj) {
   if (s && s.ws && s.ws.readyState === 1) {
     try { s.ws.send(JSON.stringify(obj)); } catch { /* */ }
@@ -664,13 +672,28 @@ wss.on('connection', (ws, req) => {
     const type = msg.type;
 
     if (type === 'presence') {
-      if (Array.isArray(msg.lanIps)) sess.lanIps = msg.lanIps;
-      if (typeof msg.deviceName === 'string' && msg.deviceName) sess.deviceName = msg.deviceName;
-      if (typeof msg.platform === 'string' && msg.platform) sess.platform = msg.platform;
-      if (msg.peerProto != null || msg.peer_proto != null) {
-        sess.peerProto = Number(msg.peerProto || msg.peer_proto) || sess.peerProto || 1;
+      // Keep lastSeen above; only push devices when visible metadata changes.
+      let metaChanged = false;
+      if (Array.isArray(msg.lanIps) && !sameLanIps(msg.lanIps, sess.lanIps)) {
+        sess.lanIps = msg.lanIps;
+        metaChanged = true;
       }
-      broadcastDevices(sess.user);
+      if (typeof msg.deviceName === 'string' && msg.deviceName && msg.deviceName !== sess.deviceName) {
+        sess.deviceName = msg.deviceName;
+        metaChanged = true;
+      }
+      if (typeof msg.platform === 'string' && msg.platform && msg.platform !== sess.platform) {
+        sess.platform = msg.platform;
+        metaChanged = true;
+      }
+      if (msg.peerProto != null || msg.peer_proto != null) {
+        const nextProto = Number(msg.peerProto || msg.peer_proto) || sess.peerProto || 1;
+        if (nextProto !== (sess.peerProto || 1)) {
+          sess.peerProto = nextProto;
+          metaChanged = true;
+        }
+      }
+      if (metaChanged) broadcastDevices(sess.user);
       return;
     }
 

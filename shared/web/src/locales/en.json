@@ -216,7 +216,24 @@
     "shizuku_refresh_tip": "Refresh status",
     "shizuku_use_normal": "Use normal",
     "shizuku_use_normal_tip": "Fall back to MediaProjection + Accessibility (no app sandbox)",
-    "shizuku_using_normal": "Switched to normal backend"
+    "shizuku_using_normal": "Switched to normal backend",
+    "shizuku_guide_btn": "Setup guide",
+    "shizuku_guide_btn_tip": "How to download, start, and authorize Shizuku",
+    "shizuku_guide_title": "Shizuku setup guide",
+    "shizuku_guide_subtitle": "MAA / official-style walkthrough",
+    "shizuku_guide_close": "Close",
+    "shizuku_guide_intro": "App sandbox (isolated virtual display) needs Shizuku. Finish the four steps below, then tap Connect Shizuku on this page.",
+    "shizuku_guide_s1_title": "Download and install Shizuku",
+    "shizuku_guide_s1_body": "Search for “Shizuku” in your app store, or open https://shizuku.rikka.app/ to download. Keep it installed.",
+    "shizuku_guide_s2_title": "Start the Shizuku service",
+    "shizuku_guide_s2_body": "Open Shizuku. On Android 11+ use Wireless debugging; or start via ADB from a PC. The app should show Running.",
+    "shizuku_guide_s3_title": "Authorize Mimic",
+    "shizuku_guide_s3_body": "In Shizuku → App management, enable Mimic. Accept the system permission prompt if shown.",
+    "shizuku_guide_s4_title": "Connect in Mimic",
+    "shizuku_guide_s4_body": "Return here and tap Connect Shizuku. When the badge shows Connected, app-sandbox targets are available.",
+    "shizuku_guide_note": "Tip: restart Shizuku after each phone reboot. Wireless-debug pairing codes expire — follow in-app prompts.",
+    "shizuku_guide_download": "Download / site",
+    "shizuku_guide_download_tip": "Open the store or Shizuku website"
   },
 
   "screenshot": {
