@@ -53,19 +53,27 @@ powershell -File scripts\Build-Android.ps1
 - 已装但更旧 → 下载并覆盖安装  
 - 按钮「Re-download」可强制重下  
 
-## 应用内更新（全量 APK，不是 PC 增量）
+## 应用内更新（全量 APK + 按流量进度）
 
-安卓安装单元是**整包签名 APK**，没有 PC 那种「多文件 sha256 差量覆盖目录」的 updater。
+安卓安装单元是**整包签名 APK**（`PackageInstaller`），没有 PC 那种「多文件 sha256 覆盖目录」的 updater。
 
-当前设计（正确且刻意）：
+当前：
 
-1. CDN `version.json`：`full_update: true` + `client_apk` + `client_sha256`  
-2. 下载整包 APK → **SHA-256 校验** → 系统安装器同 `applicationId` 覆盖安装  
-3. UI / 原生改动都打进 APK（`shared/web` 在 assets），所以每次更新都是整包  
+1. CDN `version.json`：`full_update: true` + `client_apk` + `client_sha256` + `client_size`
+2. 下载整包 APK → **按字节推送进度**（`done_bytes`/`total_bytes`）→ SHA-256 → 系统安装器覆盖安装
+3. UI / 原生改动都打进 APK（`shared/web` 在 assets）
 
-若将来要「更小下载」，应做 **APK 二进制差分（bsdiff）** 或上 Play 分发，而不是移植 PC 的 `files{}` 清单。
+### 为何游戏能「增量」而我们还不行
 
-Settings → Check Update 走 `check_update` / `download_update`（shared/web 同一套 UI，`mode: full`）。
+| 技术 | 谁在用 | 说明 |
+|------|--------|------|
+| **Play 差分 / bsdiff** | Google Play、部分渠道 | 商店侧对两个 APK 做二进制差分；客户端下 patch 再合成。自建 CDN 需存旧包 + 生成 patch + 原生 `bspatch` |
+| **资源分包** | 大型手游 | 母包小，玩法资源 OBB / AssetBundle / PAD 另下；可按文件增量 |
+| **热更 JS/资源** | 部分 Hybrid / Unity | 可写目录覆盖资源；**不改** native so/Kotlin |
+
+Mimic 当前是整包 Hybrid（Web 在 APK assets），所以发版默认仍是**全量 APK**。下一步若要明显减小流量：优先做 **www 热更**（仅前端变更时下 `www.zip` 解压到可写目录，WebView 优先加载），Kotlin/权限变更仍走整包。
+
+Settings → Check Update 走 `check_update` / `download_update`（与 PC 同 UI；进度条按**流量字节**）。
 
 ## 手机测试
 

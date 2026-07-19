@@ -134,6 +134,8 @@ export function ShizukuConnectCard({
   }
 
   const detail = sh?.detail || ''
+  // One primary action: connect XOR fall back to normal.
+  const primaryConnected = connected
 
   return (
     <RailCard
@@ -147,6 +149,20 @@ export function ShizukuConnectCard({
       expanded={expanded}
       onToggle={onToggle}
       maxBodyClass="max-h-[360px]"
+      headerActions={(
+        <Tooltip text={t('peer.shizuku_refresh_tip')}>
+          <button
+            type="button"
+            className="p-1 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+            onClick={(e) => {
+              e.stopPropagation()
+              void refresh()
+            }}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
+      )}
     >
       <p className={`${TEXT.xs} text-text-muted leading-relaxed`}>
         {t('peer.shizuku_body')}
@@ -156,17 +172,28 @@ export function ShizukuConnectCard({
         <div>{t('peer.shizuku_state', { state: shState })}</div>
         {detail ? <div className="truncate">{detail}</div> : null}
       </div>
-      <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-        <ActionBtn
-          icon={<Shield className="w-3.5 h-3.5" />}
-          label={busy ? t('peer.shizuku_connecting') : t('peer.shizuku_connect')}
-          title={t('peer.shizuku_connect_tip')}
-          variant="primary"
-          size="fill"
-          onClick={() => { if (!busy && !connected) void connect() }}
-          className={busy || connected ? 'opacity-50 pointer-events-none' : undefined}
-        />
+      <div className="grid grid-cols-2 gap-2">
+        {primaryConnected ? (
+          <ActionBtn
+            icon={<Shield className="w-3.5 h-3.5" />}
+            label={t('peer.shizuku_use_normal')}
+            title={t('peer.shizuku_use_normal_tip')}
+            variant="outline"
+            size="fill"
+            onClick={() => { if (!busy) void useNormal() }}
+            className={busy ? 'opacity-50 pointer-events-none' : undefined}
+          />
+        ) : (
+          <ActionBtn
+            icon={<Shield className="w-3.5 h-3.5" />}
+            label={busy ? t('peer.shizuku_connecting') : t('peer.shizuku_connect')}
+            title={t('peer.shizuku_connect_tip')}
+            variant="primary"
+            size="fill"
+            onClick={() => { if (!busy) void connect() }}
+            className={busy ? 'opacity-50 pointer-events-none' : undefined}
+          />
+        )}
         <ActionBtn
           icon={<ExternalLink className="w-3.5 h-3.5" />}
           label={t('peer.shizuku_open_app')}
@@ -175,27 +202,6 @@ export function ShizukuConnectCard({
           size="fill"
           onClick={openApp}
         />
-        <Tooltip text={t('peer.shizuku_refresh_tip')}>
-          <button
-            type="button"
-            className="h-7 w-7 rounded-md flex items-center justify-center text-text-muted hover:bg-bg-hover shrink-0"
-            onClick={() => { void refresh() }}
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
-        </Tooltip>
-      </div>
-      {backend === 'shizuku' && (
-        <ActionBtn
-          icon={<Shield className="w-3.5 h-3.5" />}
-          label={t('peer.shizuku_use_normal')}
-          title={t('peer.shizuku_use_normal_tip')}
-          variant="outline"
-          size="fill"
-          onClick={() => { if (!busy) void useNormal() }}
-          className={busy ? 'opacity-50 pointer-events-none' : undefined}
-        />
-      )}
       </div>
       {msg && <div className={`${TEXT.tiny} text-text-muted break-words`}>{msg}</div>}
     </RailCard>

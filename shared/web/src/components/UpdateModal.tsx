@@ -392,7 +392,17 @@ export function UpdateModal({
               <div className="space-y-1.5">
                 <div className="text-xs text-text-secondary">
                   {progress.phase === 'download' && (
-                    <>{t('update.progress_download', { file: progress.file || '...', current: Math.min(progress.current_file, progress.total_files) || 1, total: progress.total_files })}</>
+                    progress.total_bytes > 0
+                      ? <>{t('update.progress_download_bytes', {
+                          file: progress.file || '...',
+                          done: fmtSize(progress.done_bytes),
+                          total: fmtSize(progress.total_bytes),
+                        })}</>
+                      : <>{t('update.progress_download', {
+                          file: progress.file || '...',
+                          current: Math.min(progress.current_file, progress.total_files) || 1,
+                          total: progress.total_files,
+                        })}</>
                   )}
                   {progress.phase === 'done' && <>{t('update.progress_done')}</>}
                   {progress.phase === 'error' && (
@@ -402,7 +412,7 @@ export function UpdateModal({
                 {progress.phase !== 'error' && (
                   <div className="h-2 rounded-full bg-bg-tertiary overflow-hidden">
                     <div
-                      className="h-full bg-accent transition-all duration-100"
+                      className="h-full bg-accent transition-all duration-75"
                       style={{
                         width: progress.total_bytes > 0
                           ? `${Math.min(100, (progress.done_bytes / progress.total_bytes) * 100)}%`

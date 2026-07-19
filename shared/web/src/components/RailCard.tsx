@@ -40,6 +40,7 @@ export function RailCard({
   onToggle,
   pinned,
   onTogglePin,
+  headerActions,
   children,
   maxBodyClass = 'max-h-[360px]',
 }: {
@@ -50,6 +51,8 @@ export function RailCard({
   onToggle: () => void
   pinned?: boolean
   onTogglePin?: () => void
+  /** Extra header controls (e.g. refresh) — sit left of the fold chevron. Must stopPropagation. */
+  headerActions?: ReactNode
   children: ReactNode
   maxBodyClass?: string
 }) {
@@ -91,6 +94,7 @@ export function RailCard({
               </button>
             </Tooltip>
           )}
+          {headerActions}
           <ChevronDown
             className={`w-4 h-4 text-text-muted transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`}
           />

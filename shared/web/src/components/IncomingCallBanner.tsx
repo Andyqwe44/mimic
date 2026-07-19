@@ -15,14 +15,17 @@ type Incoming = { fromDeviceId: string; fromDeviceName: string }
 export function IncomingCallBanner({
   onAccepted,
 }: {
-  /** Optional — jump to Monitor after accept (same as PeerPanel). */
   onAccepted?: () => void
 }) {
   const { t } = useTranslation()
   const android = isAndroidHost()
   const [incoming, setIncoming] = useState<Incoming | null>(null)
   const [visible, setVisible] = useState(false)
+  /** Remaining fraction 1 → 0 over INCOMING_TIMEOUT_MS. */
+  const [remain, setRemain] = useState(1)
   const timerRef = useRef<number | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const startedAtRef = useRef(0)
   const incomingRef = useRef<Incoming | null>(null)
   const onAcceptedRef = useRef(onAccepted)
   onAcceptedRef.current = onAccepted
@@ -33,6 +36,38 @@ export function IncomingCallBanner({
       window.clearTimeout(timerRef.current)
       timerRef.current = null
     }
+    if (rafRef.current != null) {
+      window.cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  }
+
+  const startCountdown = () => {
+    clearTimer()
+    startedAtRef.current = performance.now()
+    setRemain(1)
+    const tick = () => {
+      const elapsed = performance.now() - startedAtRef.current
+      const r = Math.max(0, 1 - elapsed / INCOMING_TIMEOUT_MS)
+      setRemain(r)
+      if (r > 0) rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    timerRef.current = window.setTimeout(() => {
+      void (async () => {
+        const cur = incomingRef.current
+        if (!cur) return
+        clearTimer()
+        setVisible(false)
+        window.setTimeout(() => setIncoming(null), 280)
+        try {
+          await hostCall('peer_reject', { fromDeviceId: cur.fromDeviceId })
+          addLog(`[Peer] reject (banner/timeout) ${cur.fromDeviceName}`)
+        } catch (e) {
+          addLog(`[Peer] reject failed: ${e}`)
+        }
+      })()
+    }, INCOMING_TIMEOUT_MS)
   }
 
   const dismiss = () => {
@@ -75,24 +110,9 @@ export function IncomingCallBanner({
           fromDeviceName: String(d.fromDeviceName || d.fromDeviceId || ''),
         }
         if (!next.fromDeviceId) return
-        clearTimer()
         setIncoming(next)
         requestAnimationFrame(() => setVisible(true))
-        timerRef.current = window.setTimeout(() => {
-          void (async () => {
-            const cur = incomingRef.current
-            if (!cur) return
-            clearTimer()
-            setVisible(false)
-            window.setTimeout(() => setIncoming(null), 280)
-            try {
-              await hostCall('peer_reject', { fromDeviceId: cur.fromDeviceId })
-              addLog(`[Peer] reject (banner/timeout) ${cur.fromDeviceName}`)
-            } catch (e) {
-              addLog(`[Peer] reject failed: ${e}`)
-            }
-          })()
-        }, INCOMING_TIMEOUT_MS)
+        startCountdown()
         addLog(`[Peer] incoming banner: ${next.fromDeviceName}`)
       } else if (
         d.type === 'invite_rejected' ||
@@ -115,6 +135,15 @@ export function IncomingCallBanner({
     ? t('peer.call_banner_android', { name: incoming.fromDeviceName })
     : t('peer.call_banner_pc', { name: incoming.fromDeviceName })
 
+  const progressBar = (
+    <div className="mt-2.5 -mx-3 -mb-2.5 h-1 overflow-hidden rounded-b-[inherit] bg-bg-tertiary">
+      <div
+        className="h-full bg-accent origin-left"
+        style={{ width: `${remain * 100}%`, transition: 'width 50ms linear' }}
+      />
+    </div>
+  )
+
   if (android) {
     return (
       <div
@@ -123,7 +152,7 @@ export function IncomingCallBanner({
         data-no-page-swipe
       >
         <div
-          className={`pointer-events-auto mx-3 max-w-md w-full ${RADIUS.xl} bg-bg-secondary/95 backdrop-blur-md ring-1 ring-inset ring-border shadow-lg px-3 py-2.5 transition-transform duration-300 ease-out ${
+          className={`pointer-events-auto mx-3 max-w-md w-full ${RADIUS.xl} bg-bg-secondary/95 backdrop-blur-md ring-1 ring-inset ring-border shadow-lg px-3 pt-2.5 overflow-hidden transition-transform duration-300 ease-out ${
             visible ? 'translate-y-0 opacity-100' : '-translate-y-[120%] opacity-0'
           }`}
         >
@@ -146,6 +175,7 @@ export function IncomingCallBanner({
               onClick={() => { void reject('user') }}
             />
           </div>
+          {progressBar}
         </div>
       </div>
     )
@@ -161,7 +191,7 @@ export function IncomingCallBanner({
       data-no-page-swipe
     >
       <div
-        className={`pointer-events-auto w-[min(320px,92vw)] ${RADIUS.xl} bg-bg-secondary/95 backdrop-blur-md ring-1 ring-inset ring-border shadow-lg px-3 py-2.5 transition-transform duration-300 ease-out ${
+        className={`pointer-events-auto w-[min(320px,92vw)] ${RADIUS.xl} bg-bg-secondary/95 backdrop-blur-md ring-1 ring-inset ring-border shadow-lg px-3 pt-2.5 overflow-hidden transition-transform duration-300 ease-out ${
           visible ? 'translate-x-0 opacity-100' : 'translate-x-[110%] opacity-0'
         }`}
       >
@@ -184,6 +214,7 @@ export function IncomingCallBanner({
             onClick={() => { void reject('user') }}
           />
         </div>
+        {progressBar}
       </div>
     </div>
   )

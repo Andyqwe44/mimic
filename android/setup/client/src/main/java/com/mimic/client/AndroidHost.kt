@@ -763,14 +763,20 @@ class AndroidHost(
         val apkName = manifest.optString("client_apk", manifest.optString("apk", ""))
         if (apkName.isBlank()) throw Exception("client_apk missing")
         val expectSha = manifest.optString("client_sha256", "").lowercase()
+        val expectSize = manifest.optLong("client_size", 0).takeIf { it > 0 }
+            ?: tryHeadSize(base + apkName)
         val url = base + apkName
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val out = File(dir, apkName)
-        pushProgress("download", apkName, 0, 1)
+        // Seed progress with known total so UI starts on a byte bar (not file-count).
+        pushBytes(apkName, 0L, expectSize.coerceAtLeast(1L))
         httpDownload(url, out) { read, total ->
-            if (total > 0) {
-                pushBytes(apkName, read, total)
+            val tot = when {
+                total > 0L -> total
+                expectSize > 0L -> expectSize
+                else -> read.coerceAtLeast(1L)
             }
+            pushBytes(apkName, read, tot)
         }
         if (expectSha.isNotBlank()) {
             val actual = sha256File(out)
@@ -781,7 +787,9 @@ class AndroidHost(
             }
             appendLog("update", "apk sha256 ok")
         }
-        pushProgress("done", apkName)
+        // Final 100% before installer prompt.
+        pushBytes(apkName, out.length(), out.length().coerceAtLeast(1L))
+        pushProgress("done", apkName, doneBytes = out.length(), totalBytes = out.length())
         main.post { promptInstall(out) }
     }
 
@@ -866,7 +874,14 @@ class AndroidHost(
         main.post { pushToJs(push) }
     }
 
-    private fun pushProgress(phase: String, file: String = "", doneFiles: Int = 0, totalFiles: Int = 1) {
+    private fun pushProgress(
+        phase: String,
+        file: String = "",
+        doneFiles: Int = 0,
+        totalFiles: Int = 1,
+        doneBytes: Long = 0L,
+        totalBytes: Long = 0L,
+    ) {
         val o = JSONObject()
             .put("type", "update_progress")
             .put("phase", phase)
@@ -874,8 +889,8 @@ class AndroidHost(
             .put("total_files", totalFiles)
             .put("skipped_files", 0)
             .put("file", file)
-            .put("done_bytes", 0)
-            .put("total_bytes", 0)
+            .put("done_bytes", doneBytes)
+            .put("total_bytes", totalBytes)
             .put("skipped_bytes", 0)
         if (phase == "error") o.put("error_file", file)
         main.post { pushToJs(o) }
@@ -890,7 +905,7 @@ class AndroidHost(
             .put("skipped_files", 0)
             .put("file", file)
             .put("done_bytes", done)
-            .put("total_bytes", total)
+            .put("total_bytes", total.coerceAtLeast(done).coerceAtLeast(1L))
             .put("skipped_bytes", 0)
         main.post { pushToJs(o) }
     }

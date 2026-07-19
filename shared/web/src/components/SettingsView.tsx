@@ -4,10 +4,11 @@ import { useTranslation } from 'react-i18next'
 import {
   Camera, Play, Cpu, Sun, RefreshCw, ChevronDown,
   Monitor, MousePointer2, Keyboard, Pencil, FolderOpen,
+  Shield, ExternalLink,
 } from 'lucide-react'
 import { Tooltip, ActionBtn } from './Toolkit'
 import { CollapsibleBody } from './CollapsibleBody'
-import { hostCall, addLog } from '../lib/bridge'
+import { hostCall, addLog, onNativePush } from '../lib/bridge'
 import {
   COLLAPSIBLE_HEADER, SELECTABLE_BTN, CAPTURE_METHODS, RENDER_METHODS,
   MOUSE_MODES, KEYBOARD_MODES, codeToName,
@@ -98,86 +99,168 @@ function StatusBar({ screen, appVersion }: { screen: string; appVersion: string 
   )
 }
 
-/** Android privilege backend cards — fail-closed via hostCall (铁律 5). */
+/** Android privilege backend — aligned with Peers「Shizuku 特权」card. */
 function AndroidCapabilityCards() {
   const { t } = useTranslation()
   const [backend, setBackend] = useState('normal')
   const [available, setAvailable] = useState<string[]>(['normal'])
+  const [shState, setShState] = useState('unavailable')
+  const [shDetail, setShDetail] = useState('')
+  const [restoring, setRestoring] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const st = await hostCall('get_capability_backend')
-        if (cancelled || !st) return
-        if (typeof st.backend === 'string') setBackend(st.backend)
-        if (Array.isArray(st.available)) setAvailable(st.available.map(String))
-      } catch {
-        /* keep defaults */
-      }
-    })()
-    return () => { cancelled = true }
+  const refresh = useCallback(async () => {
+    try {
+      const st = await hostCall('get_capability_backend')
+      if (!st) return
+      if (typeof st.backend === 'string') setBackend(st.backend)
+      if (Array.isArray(st.available)) setAvailable(st.available.map(String))
+      const sh = st.shizuku as { state?: string; detail?: string; available?: boolean; granted?: boolean } | undefined
+      setShState(String(sh?.state || (sh?.available ? 'available' : 'unavailable')).toLowerCase())
+      setShDetail(String(sh?.detail || ''))
+      setRestoring(!!st.restoring || String(sh?.state || '').toLowerCase() === 'connecting')
+    } catch (e) {
+      setErr(String(e))
+    }
   }, [])
 
+  useEffect(() => {
+    void refresh()
+    const id = window.setInterval(() => { void refresh() }, 5000)
+    const off = onNativePush((msg: { type?: string; status?: Record<string, unknown> }) => {
+      if (msg?.type === 'capability_status' && msg.status) {
+        const st = msg.status
+        if (typeof st.backend === 'string') setBackend(st.backend)
+        if (Array.isArray(st.available)) setAvailable(st.available.map(String))
+        const sh = st.shizuku as { state?: string; detail?: string } | undefined
+        if (sh) {
+          setShState(String(sh.state || 'unavailable').toLowerCase())
+          setShDetail(String(sh.detail || ''))
+        }
+        setRestoring(!!st.restoring)
+      }
+    })
+    return () => {
+      clearInterval(id)
+      off()
+    }
+  }, [refresh])
+
+  const connected = backend === 'shizuku'
+  const shizukuAvail = available.includes('shizuku') || shState === 'available' || shState === 'connected'
+
+  let badgeTone = 'muted'
+  let badgeText = t('peer.shizuku_badge_off')
+  if (connected) {
+    badgeTone = 'success'
+    badgeText = t('peer.shizuku_badge_on')
+  } else if (restoring) {
+    badgeTone = 'warn'
+    badgeText = t('peer.shizuku_badge_restoring')
+  } else if (shizukuAvail) {
+    badgeTone = 'warn'
+    badgeText = t('peer.shizuku_badge_need_auth')
+  } else if (shState === 'unavailable') {
+    badgeTone = 'error'
+    badgeText = t('peer.shizuku_badge_missing')
+  }
+
   const pick = async (id: string) => {
+    setBusy(true)
+    setErr('')
     try {
       const res = await hostCall('set_capability_backend', { backend: id })
       if (res?.ok === false) {
+        setErr(String(res.error || t('peer.shizuku_connect_failed')))
         addLog(`[Perm] ${id} refused: ${res.error || 'error'}`)
         return
       }
       setBackend(res?.backend || id)
       addLog(`[Perm] capability backend = ${res?.backend || id}`)
-    } catch (e: any) {
-      addLog(`[Perm] ${id} failed: ${e?.message || e}`)
+      await refresh()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setErr(msg)
+      addLog(`[Perm] ${id} failed: ${msg}`)
+    } finally {
+      setBusy(false)
     }
   }
 
-  const levelKey =
-    backend === 'shizuku'
-      ? 'settings.capability_shizuku'
-      : backend === 'root'
-        ? 'settings.capability_root'
-        : 'settings.capability_normal'
+  const openApp = async () => {
+    try {
+      const res = await hostCall('open_shizuku')
+      if (res?.ok === false) {
+        setErr(String(res.error || t('peer.shizuku_open_failed')))
+      }
+    } catch (e) {
+      setErr(String(e))
+    }
+  }
+
+  const badgeCls =
+    badgeTone === 'success' ? 'text-emerald-500 bg-success-soft'
+      : badgeTone === 'warn' ? 'text-amber-500 bg-warn-soft'
+        : badgeTone === 'error' ? 'text-error bg-error-soft'
+          : 'text-text-muted bg-bg-tertiary'
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         <label className="text-sm text-text-secondary w-24 shrink-0">{t('settings.capability')}</label>
-        <span className="text-[10px] px-1.5 py-0.5 rounded text-text-muted bg-bg-tertiary">
-          {t('settings.capability_current', { level: t(levelKey) })}
-        </span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${badgeCls}`}>{badgeText}</span>
+        <Tooltip text={t('peer.shizuku_refresh_tip')}>
+          <button
+            type="button"
+            className="p-1 rounded-md text-text-muted hover:bg-bg-hover"
+            onClick={() => { void refresh() }}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip>
       </div>
-      <div className="grid grid-cols-1 min-[480px]:grid-cols-3 gap-2" role="radiogroup" aria-label={t('settings.capability')}>
-        {([
-          ['normal', 'settings.capability_normal', 'settings.capability_normal_tip'],
-          ['shizuku', 'settings.capability_shizuku', 'settings.capability_shizuku_tip'],
-          ['root', 'settings.capability_root', 'settings.capability_root_tip'],
-        ] as const).map(([id, nameKey, tipKey]) => {
-          const selected = backend === id
-          const enabled = id === 'normal' || available.includes(id)
-          return (
-            <Tooltip key={id} text={t(tipKey)}>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                disabled={!enabled}
-                onClick={() => pick(id)}
-                className={`text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors border
-                  ${selected
-                    ? 'border-accent bg-accent-soft text-accent'
-                    : enabled
-                      ? 'border-border bg-bg-primary text-text-secondary hover:bg-bg-hover'
-                      : 'border-border bg-bg-primary text-text-secondary opacity-60 cursor-not-allowed'}`}
-              >
-                <div className="font-medium">{t(nameKey)}</div>
-                <div className="text-[10px] text-text-muted mt-0.5 leading-snug">{t(tipKey)}</div>
-              </button>
-            </Tooltip>
-          )
-        })}
+      <p className="text-[11px] text-text-muted leading-relaxed">{t('settings.capability_align_hint')}</p>
+      <div className="grid grid-cols-2 gap-2">
+        {connected ? (
+          <ActionBtn
+            icon={<Shield className="w-3.5 h-3.5" />}
+            label={t('peer.shizuku_use_normal')}
+            title={t('peer.shizuku_use_normal_tip')}
+            variant="outline"
+            size="fill"
+            onClick={() => { if (!busy) void pick('normal') }}
+            className={busy ? 'opacity-50 pointer-events-none' : undefined}
+          />
+        ) : (
+          <ActionBtn
+            icon={<Shield className="w-3.5 h-3.5" />}
+            label={busy ? t('peer.shizuku_connecting') : t('peer.shizuku_connect')}
+            title={t('peer.shizuku_connect_tip')}
+            variant="primary"
+            size="fill"
+            onClick={() => { if (!busy && shizukuAvail) void pick('shizuku') }}
+            className={busy || !shizukuAvail ? 'opacity-50 pointer-events-none' : undefined}
+          />
+        )}
+        <ActionBtn
+          icon={<ExternalLink className="w-3.5 h-3.5" />}
+          label={t('peer.shizuku_open_app')}
+          title={t('peer.shizuku_open_app_tip')}
+          variant="outline"
+          size="fill"
+          onClick={openApp}
+        />
       </div>
+      <div className="text-[10px] text-text-muted bg-bg-tertiary rounded-lg px-2 py-1.5 space-y-0.5">
+        <div>{t('settings.capability_current', {
+          level: t(connected ? 'settings.capability_shizuku' : 'settings.capability_normal'),
+        })}</div>
+        <div>{t('peer.shizuku_state', { state: shState })}</div>
+        {shDetail ? <div className="truncate">{shDetail}</div> : null}
+        <div className="text-text-tertiary">{t('settings.capability_root_soon')}</div>
+      </div>
+      {err && <div className="text-[10px] text-error break-words">{err}</div>}
     </div>
   )
 }

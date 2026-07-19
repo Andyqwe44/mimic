@@ -282,10 +282,14 @@ export function PeerRemoteView({
   const rotated = expanded && landscapeVideo && viewportPortrait
   const maxPreviewH = portraitVideo ? 'min(58vh, 640px)' : 'min(36vh, 420px)'
 
-  // When rotated, the pre-rotate content box swaps axes so post-rotate fills the stage.
+  // Rotated: pre-rotate box = (stageH × stageW), absolute (NOT flex — flex would shrink it).
   const contentW = rotated ? stageBox.h : stageBox.w
   const contentH = rotated ? stageBox.w : stageBox.h
-  const fit = fitContain(contentW, contentH, videoAspect > 0 ? videoAspect : 16 / 9)
+  const fit = fitContain(
+    contentW > 0 ? contentW : 1,
+    contentH > 0 ? contentH : 1,
+    videoAspect > 0 ? videoAspect : 16 / 9,
+  )
 
   const shellClass = expanded
     ? 'fixed inset-0 z-[80] bg-black overflow-hidden'
@@ -381,29 +385,33 @@ export function PeerRemoteView({
           data-no-page-swipe={humanControl ? true : undefined}
         >
           <div
-            className="relative flex items-center justify-center"
+            className="flex items-center justify-center"
             style={
               rotated
                 ? {
+                    position: 'absolute',
                     width: contentW > 0 ? contentW : '100%',
                     height: contentH > 0 ? contentH : '100%',
-                    transform: 'rotate(90deg)',
+                    left: '50%',
+                    top: '50%',
+                    transform: 'translate(-50%, -50%) rotate(90deg)',
                     transformOrigin: 'center center',
+                    // Prevent flex/parent from shrinking the swapped box before rotate.
+                    flexShrink: 0,
+                    minWidth: contentW > 0 ? contentW : undefined,
+                    minHeight: contentH > 0 ? contentH : undefined,
                   }
-                : { width: '100%', height: '100%' }
+                : { position: 'absolute', inset: 0, width: '100%', height: '100%' }
             }
           >
             <canvas
               ref={canvasRef}
               width={640}
               height={360}
-              className="pointer-events-none"
+              className="pointer-events-none shrink-0"
               style={{
                 width: fit.w > 0 ? fit.w : '100%',
                 height: fit.h > 0 ? fit.h : '100%',
-                maxWidth: '100%',
-                maxHeight: '100%',
-                objectFit: 'contain',
               }}
             />
             {humanControl && (

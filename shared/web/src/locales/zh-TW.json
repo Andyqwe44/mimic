@@ -332,6 +332,8 @@
     "capability_shizuku_tip": "經 Shizuku/ADB 授權 — 可鏡像主螢幕、建立虛擬顯示、注入輸入",
     "capability_root_tip": "裝置已 Root — 完整 Display/Input 特權能力",
     "capability_current": "目前: {level}",
+    "capability_align_hint": "與「對等」頁的 Shizuku 特權一致：連線特權檔或退回一般檔；開啟 Shizuku 應用完成授權。",
+    "capability_root_soon": "Root 檔暫未接入 — 請用一般或 Shizuku。",
 
     "theme": "主題",
     "theme_light": "亮色",
@@ -482,6 +484,7 @@
     },
 
     "progress_download": "正在下載 {file}（{current}/{total}）",
+    "progress_download_bytes": "正在下載 {file}（{done} / {total}）",
     "progress_done": "下載完成，正在重啟安裝…",
     "progress_error": "下載失敗：{file}",
     "progress_preparing": "正在準備下載…",

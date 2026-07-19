@@ -332,6 +332,8 @@
     "capability_shizuku_tip": "经 Shizuku/ADB 授权 — 可镜像主屏、创建虚拟显示、注入输入",
     "capability_root_tip": "设备已 Root — 完整 Display/Input 特权能力",
     "capability_current": "当前: {level}",
+    "capability_align_hint": "与「对等」页的 Shizuku 特权一致：连接特权档或退回普通档；打开 Shizuku 应用完成授权。",
+    "capability_root_soon": "Root 档暂未接入 — 请用普通或 Shizuku。",
 
     "theme": "主题",
     "theme_light": "亮色",
@@ -482,6 +484,7 @@
     },
 
     "progress_download": "正在下载 {file}（{current}/{total}）",
+    "progress_download_bytes": "正在下载 {file}（{done} / {total}）",
     "progress_done": "下载完成，正在重启安装…",
     "progress_error": "下载失败：{file}",
     "progress_preparing": "正在准备下载…",
