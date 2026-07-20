@@ -213,8 +213,9 @@ export function PagePager({
   const gestureStartT = useRef(0)
   const velocity = useRef(0)
   const windowListening = useRef(false)
-  const lastMoveLogT = useRef(0)
   const hitNoSwipe = useRef(false)
+  /** Touch path owns paint on phones — avoid pointer+touch double-apply (halves FPS). */
+  const touchOwnsDrag = useRef(false)
 
   const progressHost = () => progressHostRef?.current ?? null
 
@@ -384,16 +385,8 @@ export function PagePager({
       if (Math.abs(p - startPage.current) >= Math.abs(peakProgress.current - startPage.current)) {
         peakProgress.current = p
       }
+      // Direct DOM transform only — no React, no addLog (logs killed H-swipe FPS).
       paint(p, true)
-
-      const now = performance.now()
-      if (now - lastMoveLogT.current > 120) {
-        lastMoveLogT.current = now
-        addLog(
-          `[pager] drag p=${p.toFixed(3)} peak=${peakProgress.current.toFixed(3)} `
-          + `dx=${dx.toFixed(0)}`,
-        )
-      }
     }
 
     /**
@@ -457,10 +450,9 @@ export function PagePager({
 
     function onWindowMove(e: PointerEvent) {
       if (pointerId.current !== e.pointerId || !dragging.current) return
-      if (widthRef.current <= 0) {
-        addLog('[pager] move skip w=0')
-        return
-      }
+      // On touch devices touchmove already paints — skip duplicate pointermove.
+      if (touchOwnsDrag.current) return
+      if (widthRef.current <= 0) return
 
       const dx = e.clientX - startX.current
       const dy = e.clientY - startY.current
@@ -488,6 +480,7 @@ export function PagePager({
     const onTouchMove = (e: TouchEvent) => {
       if (!dragging.current || pointerId.current === null) return
       if (e.touches.length !== 1) return
+      touchOwnsDrag.current = true
       const t = e.touches[0]
       // Always track last point so pointercancel promote has real adx/ady.
       lastX.current = t.clientX
@@ -541,7 +534,7 @@ export function PagePager({
       lastT.current = e.timeStamp
       gestureStartT.current = performance.now()
       velocity.current = 0
-      lastMoveLogT.current = 0
+      touchOwnsDrag.current = e.pointerType === 'touch'
 
       addLog(
         `[pager] down id=${e.pointerId} type=${e.pointerType} `

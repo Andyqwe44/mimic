@@ -138,12 +138,12 @@ export function Tooltip({
           }, NAV.tooltipLongPressMs)
           const onMove = (ev: PointerEvent) => {
             if (ev.pointerId !== id) return
-            // Finger drifted — cancel long-press (treat as scroll/drag, not tip).
+            // Before tip shows: cancel long-press if finger drifts (treat as scroll).
+            // After tip shows: keep tip — finger may move aside to uncover the text.
+            if (longPress.current) return
             if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 10) {
               clearTimeout(timer.current)
               timer.current = 0
-              cleanup()
-              if (longPress.current) hide()
             }
           }
           const onUp = (ev: PointerEvent) => {

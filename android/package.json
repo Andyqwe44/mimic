@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.46",
-    "mimicReleaseNote":  "Pager: ViewPager-style H cone + touch-driven drag; Android tooltip long-press",
+    "version":  "0.1.47",
+    "mimicReleaseNote":  "Pager: higher H-swipe FPS (no drag logs / no double paint); tip stays while finger down",
     "description":  "Mimic Android shell 闂?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",
