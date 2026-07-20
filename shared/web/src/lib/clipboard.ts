@@ -60,7 +60,21 @@ export async function shareText(text: string, filename = 'mimic-log.txt'): Promi
   return copyText(text)
 }
 
-/** Pull full live log from host (Android ring + file). */
+/**
+ * Share live log file via system sheet without round-tripping content through JS
+ * (large evaluateJavascript freezes WebView / QQ on first share).
+ */
+export async function shareLiveLogFile(filename = 'mimic-log.txt'): Promise<boolean> {
+  if (getHostPlatform() !== 'android') return false
+  try {
+    const r = await hostCall('share_live_log', { filename })
+    return !!(r && r.ok !== false)
+  } catch {
+    return false
+  }
+}
+
+/** Pull full live log from host (Android ring + file). Prefer for copy, not share. */
 export async function exportLiveLog(): Promise<string> {
   try {
     if (getHostPlatform() === 'android') {

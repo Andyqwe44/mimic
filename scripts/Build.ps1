@@ -154,7 +154,7 @@ function Build-MimicClient {
         $cflags = @('/nologo', '/EHsc', '/std:c++17', '/source-charset:utf-8') + $inc + @('/DNDEBUG', '/O2', '/GS-', '/Gy', '/Gw', '/MT')
         $lflags = @('d3d11.lib', 'dxgi.lib', 'windowsapp.lib', 'user32.lib', 'gdi32.lib', 'ole32.lib',
             'oleaut32.lib', 'ws2_32.lib', 'windowscodecs.lib', 'dwmapi.lib', 'shell32.lib', 'shlwapi.lib',
-            'winhttp.lib', 'bcrypt.lib', 'advapi32.lib', 'mfplat.lib', 'mf.lib', 'mfuuid.lib', 'wmcodecdspuuid.lib')
+            'winhttp.lib', 'bcrypt.lib', 'advapi32.lib', 'iphlpapi.lib', 'mfplat.lib', 'mf.lib', 'mfuuid.lib', 'wmcodecdspuuid.lib')
         $linkflags = @('/OPT:REF', '/OPT:ICF', '/Brepro')
         $srcs = @('src\main.cpp', 'src\commands.cpp', 'src\h264_encoder.cpp', 'src\ws_client.cpp',
             'src\peer_session.cpp', 'src\peer_udp.cpp',

@@ -6,7 +6,8 @@ import { FileText, ChevronDown, ArrowDown, Copy, Check, RefreshCw, Pin, Share2 }
 import { Tooltip } from './Toolkit'
 import { useTranslation } from 'react-i18next'
 import { logMgr, addLog, hostCall } from '../lib/bridge'
-import { copyText, shareText, exportLiveLog } from '../lib/clipboard'
+import { copyText, shareText, exportLiveLog, shareLiveLogFile } from '../lib/clipboard'
+import { getHostPlatform } from '../lib/platform'
 import { COLLAPSIBLE_HEADER } from '../lib/constants'
 import { SHELL_PAD } from '../lib/design'
 import type { HistoryFile } from '../lib/types'
@@ -107,6 +108,13 @@ export function LogPanel({
   const displayLines = compact ? currentLines.slice(-200) : currentLines.slice(-2000)
 
   const copyOrShareSession = async (preferShare: boolean) => {
+    // Android share: native copies live.log → FileProvider. Never shuttle MBs through JS.
+    if (preferShare && getHostPlatform() === 'android') {
+      const ok = await shareLiveLogFile('mimic-log.txt')
+      if (!ok) addLog(`[Log] ${t('log.copy_failed')}`)
+      else addLog(`[Log] ${t('log.share_ok')}`)
+      return ok
+    }
     let text = displayLines.join('\n')
     try {
       const exported = await exportLiveLog()

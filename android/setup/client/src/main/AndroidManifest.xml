@@ -18,6 +18,18 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- Share sheet URI grants (Android 11+ package visibility) -->
+        <package android:name="com.tencent.mobileqq" />
+        <package android:name="com.tencent.tim" />
+        <package android:name="com.tencent.mm" />
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="*/*" />
+        </intent>
     </queries>
 
     <application

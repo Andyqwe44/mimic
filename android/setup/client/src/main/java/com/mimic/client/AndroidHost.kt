@@ -359,6 +359,75 @@ class AndroidHost(
                     JSONObject().put("ok", false).put("error", e.message ?: "clipboard failed")
                 }
             }
+            "share_live_log" -> {
+                // Share live.log via FileProvider — never round-trip MBs through WebView.
+                // Tail-read only; QQ cold-start freezes on huge text/plain streams.
+                try {
+                    val maxBytes = 256 * 1024
+                    val fromFile = try {
+                        if (logFile.exists()) readFileTail(logFile, maxBytes) else ""
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    val fromRing = synchronized(ring) {
+                        val joined = ring.joinToString("\n")
+                        if (joined.length <= maxBytes) joined else joined.takeLast(maxBytes)
+                    }
+                    val content = if (fromFile.length >= fromRing.length) fromFile else fromRing
+                    if (content.isEmpty()) {
+                        return JSONObject().put("ok", false).put("error", "empty log")
+                    }
+                    val dir = File(context.cacheDir, "share").also { it.mkdirs() }
+                    dir.listFiles()?.forEach { f ->
+                        if (f.isFile && f.name.startsWith("mimic-log") &&
+                            System.currentTimeMillis() - f.lastModified() > 86_400_000L
+                        ) f.delete()
+                    }
+                    val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                    val file = File(dir, "mimic-log_$stamp.txt")
+                    file.writeText(content)
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file,
+                    )
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, "Mimic logs")
+                        clipData = ClipData.newUri(context.contentResolver, "mimic-log", uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    // Activity context: do NOT set NEW_TASK (odd task stack → looks frozen until QQ killed).
+                    val chooser = Intent.createChooser(send, "Mimic logs").apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    for (pkg in listOf(
+                        "com.tencent.mobileqq",
+                        "com.tencent.tim",
+                        "com.tencent.mm",
+                    )) {
+                        try {
+                            context.grantUriPermission(
+                                pkg,
+                                uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                            )
+                        } catch (_: Exception) { /* not installed */ }
+                    }
+                    main.post {
+                        try {
+                            context.startActivity(chooser)
+                        } catch (e: Exception) {
+                            appendLog("log", "share_live_log startActivity: ${e.message}")
+                        }
+                    }
+                    appendLog("log", "share_live_log ok path=${file.name} chars=${content.length}")
+                    jsonOk().put("chars", content.length).put("file", file.name).put("mode", "file")
+                } catch (e: Exception) {
+                    JSONObject().put("ok", false).put("error", e.message ?: "share_live_log failed")
+                }
+            }
             "share_text" -> {
                 val text = args.optString("text", "")
                 if (text.isEmpty()) return JSONObject().put("ok", false).put("error", "empty text")
@@ -392,13 +461,27 @@ class AndroidHost(
                             putExtra(Intent.EXTRA_SUBJECT, "Mimic logs")
                             clipData = ClipData.newUri(context.contentResolver, "mimic-log", uri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        val chooser = Intent.createChooser(send, "Mimic logs").apply {
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        for (pkg in listOf(
+                            "com.tencent.mobileqq",
+                            "com.tencent.tim",
+                            "com.tencent.mm",
+                        )) {
+                            try {
+                                context.grantUriPermission(
+                                    pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                                )
+                            } catch (_: Exception) { }
                         }
                         main.post {
-                            context.startActivity(
-                                Intent.createChooser(send, "Mimic logs")
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
+                            try {
+                                context.startActivity(chooser)
+                            } catch (e: Exception) {
+                                appendLog("log", "share_file startActivity: ${e.message}")
+                            }
                         }
                         appendLog("log", "share_file ok path=${file.name} chars=${text.length}")
                         jsonOk().put("chars", text.length).put("file", file.name).put("mode", "file")
@@ -887,6 +970,30 @@ class AndroidHost(
             .put("node_count", nodeCount)
             .put("role", health.optString("role", ""))
             .put("instanceId", health.optString("instanceId", ""))
+    }
+
+    /** Read last maxBytes of a UTF-8 text file without loading the whole file. */
+    private fun readFileTail(file: File, maxBytes: Int): String {
+        val len = file.length()
+        if (len <= 0L) return ""
+        FileInputStream(file).use { fis ->
+            if (len > maxBytes) {
+                fis.skip(len - maxBytes)
+            }
+            val buf = ByteArray(minOf(len, maxBytes.toLong()).toInt())
+            var off = 0
+            while (off < buf.size) {
+                val n = fis.read(buf, off, buf.size - off)
+                if (n <= 0) break
+                off += n
+            }
+            // Drop possible partial UTF-8 lead byte at start after skip.
+            var start = 0
+            if (len > maxBytes) {
+                while (start < off && (buf[start].toInt() and 0xC0) == 0x80) start++
+            }
+            return String(buf, start, off - start, Charsets.UTF_8)
+        }
     }
 
     private fun appendLog(tagName: String, msg: String) {

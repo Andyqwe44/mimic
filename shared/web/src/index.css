@@ -181,6 +181,15 @@ svg.lucide {
   }
 }
 
+/* PagePager: children must not claim horizontal pan — leave it to JS tab swipe.
+   touch-action does not inherit; without this, overflow-y-auto steals the gesture. */
+[data-page-pager] .overflow-y-auto,
+[data-page-pager] .overflow-y-scroll,
+[data-page-pager] .overflow-auto,
+[data-page-pager] .overflow-scroll {
+  touch-action: pan-y;
+}
+
 /* ── Skeleton screen shimmer (startup placeholder) ── */
 /* Base grey block (bg-tertiary) with a lighter band (bg-hover) sweeping across.
    Both are theme vars, so it adapts to light/dark automatically. */

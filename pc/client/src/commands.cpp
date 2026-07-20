@@ -1159,8 +1159,10 @@ static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& me
     // cmd_capture_stream_stop();
 
     HWND h = (HWND)(uintptr_t)hwnd;
+    const bool want_desktop_blt =
+        method == "dxgi" || method == "DXGI" ||
+        method == "desktopblt" || method == "DesktopBlt";
 
-    // Frontend decides method; C++ only executes.
     if (method == "wgc" || method == "WGC") {
         if (h == nullptr) {
             g_stream_handle = wgc_stream_start_monitor(
@@ -1168,40 +1170,123 @@ static std::string cmd_capture_stream_start(uint64_t hwnd, const std::string& me
         } else {
             g_stream_handle = wgc_stream_start(h, kRemoteEncodeMaxWHw);
         }
-    } else if (method == "dxgi" || method == "DXGI") {
-        // DXGI Desktop Duplication stream not yet implemented.
-        // Frontend should use 'wgc' for streaming until DXGI stream is ready.
-        LOG("cmd", "stream_start: DXGI stream not implemented, use 'wgc'");
-        return R"({"ok":false,"error":"DXGI stream not implemented; use 'wgc' for streaming"})";
+        if (!g_stream_handle) {
+            LOG("cmd", "stream_start: WGC FAILED");
+            return R"({"ok":false,"error":"wgc_stream_start failed"})";
+        }
+        // GPU encode before Map — no local SharedBuffer preview.
+        wgc_stream_set_gpu_frame_callback(g_stream_handle, on_wgc_gpu_frame, nullptr);
+        wgc_stream_set_cpu_readback(g_stream_handle, 0);
+    } else if (want_desktop_blt) {
+        // Continuous DesktopBlt @ ~30fps → H.264. Avoids WGC event-driven starvation
+        // on static desktops (Android controlling PC Entire Desktop).
+        g_stream_handle = nullptr;
     } else {
         LOG("cmd", "stream_start: unknown method '%s'", method.c_str());
         return R"({"ok":false,"error":"unknown stream method"})";
     }
 
-    if (!g_stream_handle) {
-        LOG("cmd", "stream_start: FAILED");
-        return R"({"ok":false,"error":"wgc_stream_start failed"})";
-    }
-    // GPU encode before Map — no local SharedBuffer preview.
-    wgc_stream_set_gpu_frame_callback(g_stream_handle, on_wgc_gpu_frame, nullptr);
-    wgc_stream_set_cpu_readback(g_stream_handle, 0);
-
     g_control_hwnd.store(hwnd);
     g_allow_stream.store(true);
     // Window targets: composite onto virtual-screen canvas (screen aspect + placement).
-    g_stream_screen_canvas.store(hwnd != 0);
+    g_stream_screen_canvas.store(hwnd != 0 && !want_desktop_blt);
     g_streaming = true;
     g_stream_session.fetch_add(1);
     g_h264_need_key.store(true);
 
-    // WGC worker owns capture+encode; this thread only waits for stop.
-    g_stream_thread = std::thread([]() {
-        while (g_streaming) Sleep(50);
-        std::lock_guard<std::mutex> lk(g_h264_mtx);
-        g_h264.shutdown();
-    });
+    if (want_desktop_blt) {
+        g_stream_thread = std::thread([]() {
+            LOG("cmd", "DesktopBlt stream loop start (continuous ~30fps)");
+            std::vector<uint8_t> buf(MAX_PX);
+            std::vector<uint8_t> scaled;
+            ULONGLONG last_enc = 0;
+            int enc_w = 0, enc_h = 0;
+            bool give_up = false;
+            const ULONGLONG interval_ms = 33; // ~30fps
+            while (g_streaming.load()) {
+                ULONGLONG now = GetTickCount64();
+                if (now - last_enc < interval_ms) {
+                    Sleep((DWORD)(interval_ms - (now - last_enc)));
+                    continue;
+                }
+                if (!g_allow_stream.load() || !remote_has_viewers() || give_up) {
+                    Sleep(50);
+                    continue;
+                }
+                int w = 0, h = 0;
+                int size = capture_desktop_bitblt(buf.data(), MAX_PX, &w, &h);
+                if (size <= 0 || w < 16 || h < 16) {
+                    Sleep(20);
+                    continue;
+                }
+                last_enc = GetTickCount64();
 
-    LOG("cmd", "stream_start: hwnd=%llu method=%s transport=%s gpu_encode=1 (no local preview)",
+                int ew = w & ~1, eh = h & ~1;
+                if (ew > kRemoteEncodeMaxWHw) {
+                    ew = kRemoteEncodeMaxWHw & ~1;
+                    eh = ((int)((int64_t)h * ew / w)) & ~1;
+                    if (eh < 16) eh = 16;
+                }
+                const uint8_t* pixels = buf.data();
+                if (ew != (w & ~1) || eh != (h & ~1)) {
+                    scaled.resize((size_t)ew * eh * 4);
+                    // Nearest-neighbor scale BGRA
+                    for (int y = 0; y < eh; ++y) {
+                        int sy = y * h / eh;
+                        for (int x = 0; x < ew; ++x) {
+                            int sx = x * w / ew;
+                            size_t di = ((size_t)y * ew + x) * 4;
+                            size_t si = ((size_t)sy * w + sx) * 4;
+                            scaled[di] = buf[si];
+                            scaled[di + 1] = buf[si + 1];
+                            scaled[di + 2] = buf[si + 2];
+                            scaled[di + 3] = buf[si + 3];
+                        }
+                    }
+                    pixels = scaled.data();
+                }
+
+                std::lock_guard<std::mutex> lk(g_h264_mtx);
+                if (!g_h264.ready() || enc_w != ew || enc_h != eh) {
+                    g_h264.shutdown();
+                    if (!g_h264.init(ew, eh, 30, 6000)) {
+                        give_up = true;
+                        LOG_WARN("cmd", "DesktopBlt H.264 init failed %dx%d", ew, eh);
+                        continue;
+                    }
+                    enc_w = ew;
+                    enc_h = eh;
+                    g_h264_need_key.store(true);
+                    LOG("cmd", "H.264 DesktopBlt %s %dx%d",
+                        g_h264.hardware() ? "HARDWARE" : "SOFTWARE", ew, eh);
+                    peer_ui_enqueue(
+                        std::string("{\"type\":\"h264_encode\",\"path\":\"") +
+                        (g_h264.hardware() ? "hardware" : "software") +
+                        "\",\"method\":\"dxgi\",\"w\":" + std::to_string(ew) +
+                        ",\"h\":" + std::to_string(eh) + "}");
+                }
+                if (g_h264_need_key.exchange(false))
+                    g_h264.request_keyframe();
+                std::vector<H264Packet> pkts;
+                if (!g_h264.encode_bgra(pixels, ew, eh, pkts) || pkts.empty()) continue;
+                for (auto& pkt : pkts) broadcast_h264_all(pkt);
+            }
+            {
+                std::lock_guard<std::mutex> lk(g_h264_mtx);
+                g_h264.shutdown();
+            }
+            LOG("cmd", "DesktopBlt stream loop exit");
+        });
+    } else {
+        // WGC worker owns capture+encode; this thread only waits for stop.
+        g_stream_thread = std::thread([]() {
+            while (g_streaming) Sleep(50);
+            std::lock_guard<std::mutex> lk(g_h264_mtx);
+            g_h264.shutdown();
+        });
+    }
+
+    LOG("cmd", "stream_start: hwnd=%llu method=%s transport=%s",
         (unsigned long long)hwnd, method.c_str(), transport.c_str());
     return R"({"ok":true,"allow_stream":true})";
 }
@@ -3710,8 +3795,10 @@ void backend_init() {
             // Restart stream on target change so controller sees the new surface.
             if (g_streaming.load())
                 cmd_capture_stream_stop();
-            std::string method = "wgc"; // hwnd=0 → monitor mode inside stream_start
-            {
+            // Desktop (hwnd=0): continuous DesktopBlt→H.264 (dxgi), not event-driven WGC.
+            // Window: WGC GPU path. Frontend/remote_cfg may override windows only.
+            std::string method = (effective == 0) ? "dxgi" : "wgc";
+            if (effective != 0) {
                 std::lock_guard<std::mutex> lk(g_remote_cfg_mtx);
                 if (!g_remote_capture.empty()) method = g_remote_capture;
             }

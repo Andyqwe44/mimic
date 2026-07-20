@@ -26,6 +26,7 @@ class LanMedia(
     private val onJson: (JSONObject) -> Unit,
     private val onH264: (ByteArray) -> Unit,
     private val onReady: (() -> Unit)? = null,
+    private val onClosed: (() -> Unit)? = null,
 ) {
     private val tag = "MimicLan"
     private val running = AtomicBoolean(false)
@@ -60,6 +61,14 @@ class LanMedia(
         thread(name = "mimic-lan-accept", isDaemon = true) {
             try {
                 val s = ss.accept()
+                if (ready) {
+                    try { s.close() } catch (_: Exception) {}
+                    Log.i(tag, "accept ignored — already connected")
+                    return@thread
+                }
+                // Stop listening once accepted.
+                try { server?.close() } catch (_: Exception) {}
+                server = null
                 attach(s)
             } catch (e: Exception) {
                 if (running.get()) Log.w(tag, "accept failed", e)
@@ -69,10 +78,17 @@ class LanMedia(
     }
 
     fun connect(host: String, port: Int): Boolean {
-        stop()
+        if (ready) {
+            Log.i(tag, "connect skipped — already ready")
+            return true
+        }
         return try {
             val s = Socket()
+            s.tcpNoDelay = true
             s.connect(InetSocketAddress(host, port), 5000)
+            // Only tear down listen AFTER outbound succeeds (reverse-dial race).
+            try { server?.close() } catch (_: Exception) {}
+            server = null
             attach(s)
             true
         } catch (e: Exception) {
@@ -117,7 +133,13 @@ class LanMedia(
             } catch (e: Exception) {
                 if (running.get()) Log.w(tag, "read end", e)
             } finally {
+                val wasReady = ready
                 ready = false
+                if (wasReady) {
+                    try { onClosed?.invoke() } catch (ex: Exception) {
+                        Log.w(tag, "onClosed", ex)
+                    }
+                }
             }
         }
     }
@@ -224,7 +246,13 @@ class LanMedia(
             }
         } catch (e: Exception) {
             Log.w(tag, "send failed", e)
+            val wasReady = ready
             ready = false
+            if (wasReady) {
+                try { onClosed?.invoke() } catch (ex: Exception) {
+                    Log.w(tag, "onClosed", ex)
+                }
+            }
         }
     }
 

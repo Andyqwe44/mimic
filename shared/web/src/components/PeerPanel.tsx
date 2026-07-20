@@ -96,7 +96,7 @@ export function PeerPanel({
       if (!fr?.ok || !fr.b64) {
         // Rate-limit empty-slot logs (structural coalesce should make these rare).
         const now = Date.now()
-        if (fr?.error && now - frameEmptyLogRef.current > 2000) {
+        if (fr?.error && fr.error !== 'no frame' && now - frameEmptyLogRef.current > 2000) {
           frameEmptyLogRef.current = now
           addLog(`[Decode] peer_get_frame: ${fr.error}`)
         }

@@ -1,4 +1,5 @@
 // Horizontal page track — four primary pages side-by-side with drag/swipe animation.
+// Android WebView: prefer TouchEvent (PointerEvent cancel is unreliable with overflow-y-auto).
 import {
   Children,
   useCallback,
@@ -12,16 +13,18 @@ import {
 import { NAV } from '../lib/design'
 import { PRIMARY_PAGES, fractionalPageIndex, pageIndex, type AppPage } from '../lib/pages'
 
-const MIN_DX = 36
+const MIN_DX = 28
 /** Horizontal wins unless clearly vertical (Clash-Royale-style tab swipe). */
-const MAX_SLOPE = 0.85
-/** Screen-edge strips always allow horizontal page swipe (even over scroll/canvas). */
-const EDGE_PX = 40
+const MAX_SLOPE = 1.0
+/** Edge strips always allow swipe even over canvas / data-no-page-swipe. */
+const EDGE_PX = 48
 
 function blockedTarget(t: EventTarget | null): boolean {
   if (!(t instanceof Element)) return false
+  // Do NOT block on bare canvas — Monitor chrome must stay swipeable.
+  // Only hard-block form fields and explicit opt-outs (remote control overlays).
   return !!t.closest(
-    'input, textarea, select, [contenteditable="true"], canvas, [data-no-page-swipe]',
+    'input, textarea, select, [contenteditable="true"], [data-no-page-swipe]',
   )
 }
 
@@ -45,6 +48,14 @@ export function writeNavProgress(
   host.classList.toggle('nav-dragging', dragging)
 }
 
+type Gesture = {
+  x: number
+  y: number
+  id: number
+  blocked: boolean
+  axis: 'undecided' | 'h' | 'v'
+}
+
 export function PagePager({
   page,
   onPageChange,
@@ -63,13 +74,7 @@ export function PagePager({
   const [width, setWidth] = useState(0)
   const [dragPx, setDragPx] = useState(0)
   const [dragging, setDragging] = useState(false)
-  const start = useRef<{
-    x: number
-    y: number
-    id: number
-    blocked: boolean
-    axis: 'undecided' | 'h' | 'v'
-  } | null>(null)
+  const start = useRef<Gesture | null>(null)
   const indexRef = useRef(index)
   indexRef.current = index
   const widthRef = useRef(width)
@@ -77,6 +82,7 @@ export function PagePager({
   const onPageChangeRef = useRef(onPageChange)
   onPageChangeRef.current = onPageChange
   const reduceMotion = useRef(prefersReducedMotion())
+  const dragPxRef = useRef(0)
 
   useLayoutEffect(() => {
     const el = viewportRef.current
@@ -96,12 +102,10 @@ export function PagePager({
     return () => mq.removeEventListener('change', sync)
   }, [])
 
-  // Snap drag offset when page changes from tabs (not mid-drag)
   useEffect(() => {
     if (!dragging) setDragPx(0)
   }, [index, dragging])
 
-  // Keep nav pill in sync (CSS vars — no App re-render during drag)
   useLayoutEffect(() => {
     const frac = fractionalPageIndex(index, dragPx, width)
     writeNavProgress(progressHostRef?.current ?? null, frac, dragging)
@@ -112,6 +116,7 @@ export function PagePager({
     const clamped = Math.max(0, Math.min(PRIMARY_PAGES.length - 1, nextIdx))
     setDragging(false)
     setDragPx(0)
+    dragPxRef.current = 0
     if (clamped !== cur) {
       onPageChangeRef.current(PRIMARY_PAGES[clamped])
     }
@@ -121,65 +126,64 @@ export function PagePager({
     const el = viewportRef.current
     if (!el || width <= 0) return
 
-    const onDown = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return
+    const begin = (clientX: number, clientY: number, id: number, target: EventTarget | null) => {
       const w = widthRef.current
-      const edge = nearHorizontalEdge(e.clientX, w)
+      const edge = nearHorizontalEdge(clientX, w)
       start.current = {
-        x: e.clientX,
-        y: e.clientY,
-        id: e.pointerId,
-        // Edge swipe always wins so Monitor canvas / scroll areas don't trap navigation.
-        blocked: edge ? false : blockedTarget(e.target),
+        x: clientX,
+        y: clientY,
+        id,
+        blocked: edge ? false : blockedTarget(target),
         axis: 'undecided',
       }
     }
 
-    const onMove = (e: PointerEvent) => {
+    const move = (clientX: number, clientY: number, id: number, ev: Event) => {
       const s = start.current
-      if (!s || s.blocked || s.id !== e.pointerId) return
-      const dx = e.clientX - s.x
-      const dy = e.clientY - s.y
+      if (!s || s.blocked || s.id !== id) return
+      const dx = clientX - s.x
+      const dy = clientY - s.y
 
       if (s.axis === 'undecided') {
-        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
-        s.axis = Math.abs(dx) > Math.abs(dy) * (1 / MAX_SLOPE) ? 'h' : 'v'
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return
+        // Prefer horizontal when comparable — Clash Royale tab feel.
+        s.axis = Math.abs(dx) >= Math.abs(dy) * (1 / MAX_SLOPE) ? 'h' : 'v'
         if (s.axis === 'v') return
         setDragging(true)
-        try {
-          el.setPointerCapture(e.pointerId)
-        } catch { /* */ }
+        el.style.touchAction = 'none'
       }
       if (s.axis !== 'h') return
 
-      e.preventDefault()
+      ev.preventDefault()
       const i = indexRef.current
-      // Rubber-band at ends
       let next = dx
       if ((i === 0 && dx > 0) || (i === PRIMARY_PAGES.length - 1 && dx < 0)) {
         next = dx * 0.35
       }
+      dragPxRef.current = next
       setDragPx(next)
     }
 
-    const onUp = (e: PointerEvent) => {
+    const end = (clientX: number, id: number) => {
       const s = start.current
       start.current = null
-      if (!s || s.blocked || s.id !== e.pointerId) {
+      el.style.touchAction = ''
+      if (!s || s.blocked || s.id !== id) {
         setDragging(false)
         setDragPx(0)
+        dragPxRef.current = 0
         return
       }
       if (s.axis !== 'h') {
         setDragging(false)
         setDragPx(0)
+        dragPxRef.current = 0
         return
       }
-
-      const dx = e.clientX - s.x
+      const dx = clientX - s.x
       const i = indexRef.current
       const w = widthRef.current
-      const threshold = Math.max(MIN_DX, w * 0.22)
+      const threshold = Math.max(MIN_DX, w * 0.18)
       if (dx <= -threshold && i < PRIMARY_PAGES.length - 1) {
         settleTo(i + 1)
       } else if (dx >= threshold && i > 0) {
@@ -187,27 +191,83 @@ export function PagePager({
       } else {
         setDragging(false)
         setDragPx(0)
+        dragPxRef.current = 0
       }
-      try {
-        el.releasePointerCapture(e.pointerId)
-      } catch { /* */ }
     }
 
-    const onCancel = () => {
+    const cancel = () => {
       start.current = null
+      el.style.touchAction = ''
       setDragging(false)
       setDragPx(0)
+      dragPxRef.current = 0
     }
 
-    el.addEventListener('pointerdown', onDown)
-    el.addEventListener('pointermove', onMove, { passive: false })
-    el.addEventListener('pointerup', onUp)
-    el.addEventListener('pointercancel', onCancel)
+    // Touch first — reliable on Android WebView over scrollable children.
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return
+      const t = e.touches[0]
+      begin(t.clientX, t.clientY, t.identifier, e.target)
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      const s = start.current
+      if (!s) return
+      let t: Touch | null = null
+      for (let i = 0; i < e.touches.length; i++) {
+        if (e.touches[i].identifier === s.id) {
+          t = e.touches[i]
+          break
+        }
+      }
+      if (!t) return
+      move(t.clientX, t.clientY, s.id, e)
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      const s = start.current
+      if (!s) return
+      let clientX = s.x
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === s.id) {
+          clientX = e.changedTouches[i].clientX
+          break
+        }
+      }
+      end(clientX, s.id)
+    }
+
+    // Mouse / pen fallback (desktop emulator, stylus).
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return // handled by TouchEvent
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+      begin(e.clientX, e.clientY, e.pointerId, e.target)
+    }
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return
+      move(e.clientX, e.clientY, e.pointerId, e)
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return
+      end(e.clientX, e.pointerId)
+    }
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
+    el.addEventListener('touchend', onTouchEnd, { capture: true })
+    el.addEventListener('touchcancel', cancel, { capture: true })
+    el.addEventListener('pointerdown', onPointerDown)
+    el.addEventListener('pointermove', onPointerMove, { passive: false })
+    el.addEventListener('pointerup', onPointerUp)
+    el.addEventListener('pointercancel', cancel)
     return () => {
-      el.removeEventListener('pointerdown', onDown)
-      el.removeEventListener('pointermove', onMove)
-      el.removeEventListener('pointerup', onUp)
-      el.removeEventListener('pointercancel', onCancel)
+      el.removeEventListener('touchstart', onTouchStart, true)
+      el.removeEventListener('touchmove', onTouchMove, true)
+      el.removeEventListener('touchend', onTouchEnd, true)
+      el.removeEventListener('touchcancel', cancel, true)
+      el.removeEventListener('pointerdown', onPointerDown)
+      el.removeEventListener('pointermove', onPointerMove)
+      el.removeEventListener('pointerup', onPointerUp)
+      el.removeEventListener('pointercancel', cancel)
+      el.style.touchAction = ''
     }
   }, [width, settleTo])
 
@@ -215,7 +275,12 @@ export function PagePager({
   const settleMs = reduceMotion.current ? 0 : NAV.settleMs
 
   return (
-    <div ref={viewportRef} className="flex-1 min-h-0 overflow-hidden relative touch-pan-y">
+    <div
+      ref={viewportRef}
+      className="flex-1 min-h-0 overflow-hidden relative"
+      style={{ touchAction: 'pan-y' }}
+      data-page-pager
+    >
       <div
         className="pager-track flex h-full will-change-transform"
         style={{

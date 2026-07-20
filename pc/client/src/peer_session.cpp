@@ -14,6 +14,7 @@ void peer_h264_bridge_push(const uint8_t* packed, size_t len);
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 #include <windows.h>
 #include <winhttp.h>
 #include <bcrypt.h>
@@ -31,6 +32,7 @@ void peer_h264_bridge_push(const uint8_t* packed, size_t len);
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "bcrypt.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace {
 
@@ -71,6 +73,9 @@ std::mutex g_lan_send_mtx;
 std::atomic<uint32_t> g_lan_h264_sent{0};
 std::atomic<uint32_t> g_udp_h264_fallback{0};
 std::atomic<uint32_t> g_lan_h264_dropped{0};
+// Last IDR while controlled — resent when LAN/UDP becomes ready (parity with Android).
+std::mutex g_outbound_key_mtx;
+std::vector<uint8_t> g_last_outbound_key;
 
 // Async H.264 writer — single-slot drop-old so encode thread never blocks on TCP.
 std::mutex g_lan_q_mtx;
@@ -175,22 +180,40 @@ void emit_ui(const std::string& json) {
 }
 
 std::vector<std::string> collect_lan_ips() {
+    // Enumerate all IPv4 adapters (hostname-only misses many Wi-Fi/Ethernet addrs).
     std::vector<std::string> ips;
-    char hostname[256] = {};
-    if (gethostname(hostname, sizeof(hostname)) != 0) return ips;
-    addrinfo hints = {}, *res = nullptr;
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(hostname, nullptr, &hints, &res) != 0) return ips;
-    for (addrinfo* p = res; p; p = p->ai_next) {
-        char buf[64];
-        auto* a = (sockaddr_in*)p->ai_addr;
-        inet_ntop(AF_INET, &a->sin_addr, buf, sizeof(buf));
-        std::string ip(buf);
-        if (ip.rfind("127.", 0) == 0) continue;
-        ips.push_back(ip);
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 0;
+    GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &size);
+    if (size == 0) return ips;
+    std::vector<uint8_t> buf(size);
+    auto* addrs = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+    if (GetAdaptersAddresses(AF_INET, flags, nullptr, addrs, &size) != NO_ERROR) return ips;
+    for (auto* a = addrs; a; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            auto* sa = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr);
+            char buf_ip[64] = {};
+            inet_ntop(AF_INET, &sa->sin_addr, buf_ip, sizeof(buf_ip));
+            std::string ip(buf_ip);
+            if (ip.empty() || ip.rfind("127.", 0) == 0) continue;
+            if (ip.rfind("169.254.", 0) == 0) continue; // link-local APIPA — never dial
+            // Prefer private LAN first; still include others (VPN etc. last).
+            bool dup = false;
+            for (const auto& x : ips) if (x == ip) { dup = true; break; }
+            if (dup) continue;
+            bool priv = ip.rfind("10.", 0) == 0
+                || ip.rfind("192.168.", 0) == 0;
+            if (!priv && ip.rfind("172.", 0) == 0) {
+                int second = atoi(ip.c_str() + 4);
+                priv = second >= 16 && second <= 31;
+            }
+            if (priv) ips.insert(ips.begin(), ip);
+            else ips.push_back(ip);
+        }
     }
-    freeaddrinfo(res);
     return ips;
 }
 
@@ -441,6 +464,8 @@ void lan_send_frame_sync(uint8_t type, const uint8_t* data, size_t len) {
         g_lan_sock = INVALID_SOCKET;
         g_media_ready = false;
         g_transport = "none";
+        LOG("peer", "LAN send failed → transport=none");
+        emit_ui(R"({"type":"peer_transport","mode":"none"})");
         return;
     }
     if (len) send_all(g_lan_sock, (const char*)data, (int)len);
@@ -641,16 +666,35 @@ bool lan_start_listen() {
     g_lan_accept = std::thread([] {
         SOCKET c = accept(g_lan_listen, nullptr, nullptr);
         if (c == INVALID_SOCKET) return;
+        // Bidirectional race: keep first ready socket, drop the late accept.
+        if (g_media_ready.load() && g_lan_sock != INVALID_SOCKET) {
+            closesocket(c);
+            LOG("peer", "LAN accept ignored — already connected");
+            return;
+        }
         int flag = 1;
         setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (const char*)&flag, sizeof(flag));
         {
             std::lock_guard<std::mutex> lk(g_lan_send_mtx);
+            if (g_lan_sock != INVALID_SOCKET) closesocket(g_lan_sock);
             g_lan_sock = c;
         }
         g_media_ready = true;
         g_transport = "lan";
         LOG("peer", "LAN peer connected (accepted) port=%u", (unsigned)g_lan_port);
         emit_ui(R"({"type":"peer_transport","mode":"lan"})");
+        if (g_cb.on_need_key) g_cb.on_need_key();
+        {
+            std::vector<uint8_t> key;
+            {
+                std::lock_guard<std::mutex> lk(g_outbound_key_mtx);
+                key = g_last_outbound_key;
+            }
+            if (!key.empty()) {
+                lan_send_frame(1, key.data(), key.size());
+                LOG("peer", "resent buffered IDR (%zu bytes) after LAN accept", key.size());
+            }
+        }
         g_lan_reader = std::thread(lan_reader_loop);
         if (g_lan_reader.joinable()) g_lan_reader.detach();
     });
@@ -658,6 +702,10 @@ bool lan_start_listen() {
 }
 
 bool lan_connect_to(const std::string& ip, uint16_t port) {
+    if (g_media_ready.load() && g_lan_sock != INVALID_SOCKET) {
+        LOG("peer", "LAN connect skipped — already ready");
+        return true;
+    }
     ensure_wsa();
     SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return false;
@@ -676,11 +724,28 @@ bool lan_connect_to(const std::string& ip, uint16_t port) {
     fd_set wfds;
     FD_ZERO(&wfds);
     FD_SET(s, &wfds);
-    timeval tv{1, 0};
+    timeval tv{3, 0};
     int sel = select(0, nullptr, &wfds, nullptr, &tv);
-    if (sel <= 0) { closesocket(s); return false; }
+    if (sel <= 0) {
+        LOG_WARN("peer", "LAN connect timeout %s:%u", ip.c_str(), (unsigned)port);
+        closesocket(s);
+        return false;
+    }
+    // Check SO_ERROR — select writable does not mean connect succeeded.
+    int soerr = 0;
+    int olen = sizeof(soerr);
+    getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&soerr, &olen);
+    if (soerr != 0) {
+        LOG_WARN("peer", "LAN connect refused %s:%u err=%d", ip.c_str(), (unsigned)port, soerr);
+        closesocket(s);
+        return false;
+    }
     nb = 0;
     ioctlsocket(s, FIONBIO, &nb);
+    if (g_media_ready.load() && g_lan_sock != INVALID_SOCKET) {
+        closesocket(s);
+        return true;
+    }
     {
         std::lock_guard<std::mutex> lk(g_lan_send_mtx);
         if (g_lan_sock != INVALID_SOCKET) closesocket(g_lan_sock);
@@ -691,6 +756,18 @@ bool lan_connect_to(const std::string& ip, uint16_t port) {
     g_transport = "lan";
     LOG("peer", "LAN connected to %s:%u", ip.c_str(), (unsigned)port);
     emit_ui(R"({"type":"peer_transport","mode":"lan"})");
+    if (g_cb.on_need_key) g_cb.on_need_key();
+    {
+        std::vector<uint8_t> key;
+        {
+            std::lock_guard<std::mutex> lk(g_outbound_key_mtx);
+            key = g_last_outbound_key;
+        }
+        if (!key.empty()) {
+            lan_send_frame(1, key.data(), key.size());
+            LOG("peer", "resent buffered IDR (%zu bytes) after LAN connect", key.size());
+        }
+    }
     g_lan_reader = std::thread(lan_reader_loop);
     if (g_lan_reader.joinable()) g_lan_reader.detach();
     return true;
@@ -796,6 +873,7 @@ void try_establish_lan_as_controlled(const PeerSessionInfo& /*sess*/,
         emit_ui(R"({"type":"peer_error","error":"lan listen failed"})");
         return;
     }
+    g_lan_ips = collect_lan_ips();
     char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"kind\":\"lan_offer\",\"port\":%u,\"ips\":[", (unsigned)g_lan_port);
@@ -805,11 +883,37 @@ void try_establish_lan_as_controlled(const PeerSessionInfo& /*sess*/,
         payload += "\"" + g_lan_ips[i] + "\"";
     }
     payload += "]}";
+    LOG("peer", "LAN offer port=%u ips=%zu", (unsigned)g_lan_port, g_lan_ips.size());
+    signal_send(g_peer_device_id, payload);
+}
+
+/** Controller also listens+offers so Controlled can dial out (Windows firewall often
+ *  blocks inbound to PC; Android inbound usually works — reverse dial fixes tx=none). */
+void try_establish_lan_as_controller() {
+    if (!lan_start_listen()) {
+        LOG_WARN("peer", "LAN listen (controller) failed — rely on dial-in only");
+        return;
+    }
+    g_lan_ips = collect_lan_ips();
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "{\"kind\":\"lan_offer\",\"port\":%u,\"ips\":[", (unsigned)g_lan_port);
+    std::string payload = buf;
+    for (size_t i = 0; i < g_lan_ips.size(); ++i) {
+        if (i) payload += ",";
+        payload += "\"" + g_lan_ips[i] + "\"";
+    }
+    payload += "]}";
+    LOG("peer", "LAN offer (controller) port=%u ips=%zu", (unsigned)g_lan_port, g_lan_ips.size());
     signal_send(g_peer_device_id, payload);
 }
 
 void try_connect_lan_offer(const std::string& payload) {
-    // Controller receives lan_offer
+    // Either role may receive lan_offer — dial if not already connected.
+    if (g_media_ready.load() && g_lan_sock != INVALID_SOCKET) {
+        LOG("peer", "lan_offer ignored — already connected");
+        return;
+    }
     uint16_t port = 0;
     size_t p = payload.find("\"port\":");
     if (p != std::string::npos) port = (uint16_t)atoi(payload.c_str() + p + 7);
@@ -825,15 +929,24 @@ void try_connect_lan_offer(const std::string& payload) {
             if (q1 == std::string::npos) break;
             size_t q2 = arr.find('"', q1 + 1);
             if (q2 == std::string::npos) break;
-            ips.push_back(arr.substr(q1 + 1, q2 - q1 - 1));
+            std::string ip = arr.substr(q1 + 1, q2 - q1 - 1);
+            if (ip.rfind("169.254.", 0) != 0 && ip.rfind("127.", 0) != 0)
+                ips.push_back(ip);
             i = q2 + 1;
         }
     }
     bool ok = false;
     for (const auto& ip : ips) {
+        LOG("peer", "LAN dial %s:%u …", ip.c_str(), (unsigned)port);
         if (lan_connect_to(ip, port)) { ok = true; break; }
     }
     if (!ok) {
+        // Only the Controller falls through to ICE after failing to dial Controlled.
+        // Controlled already listens — wait for reverse dial / ICE answer.
+        if (g_role != PeerRole::Controller) {
+            LOG_WARN("peer", "LAN dial-out failed (controlled still listening)");
+            return;
+        }
         LOG_WARN("peer", "LAN fail → ICE/STUN UDP punch (no TURN)");
         emit_ui(R"({"type":"peer_transport","mode":"ice"})");
         signal_send(g_peer_device_id, R"({"kind":"wan_probe","proto":"udp-punch","ver":1})");
@@ -943,6 +1056,9 @@ void on_sig_message(const std::string& json) {
         emit_ui(json);
         if (g_role == PeerRole::Controlled) {
             try_establish_lan_as_controlled(g_session, {});
+        } else if (g_role == PeerRole::Controller) {
+            // Reverse dial: Controlled can connect into us if our inbound is firewalled.
+            try_establish_lan_as_controller();
         }
         return;
     }
@@ -1337,13 +1453,18 @@ std::string peer_set_control_mode(const std::string& mode) {
 }
 
 void peer_send_h264(const H264Packet& pkt) {
-    if (g_role != PeerRole::Controlled || !g_media_ready.load()) return;
+    if (g_role != PeerRole::Controlled) return;
     uint32_t flags = pkt.keyframe ? 1u : 0u;
     std::vector<uint8_t> body(16 + pkt.annexb.size());
     uint32_t meta[4] = { (uint32_t)pkt.w, (uint32_t)pkt.h, flags, pkt.ts_ms };
     memcpy(body.data(), meta, 16);
     if (!pkt.annexb.empty())
         memcpy(body.data() + 16, pkt.annexb.data(), pkt.annexb.size());
+    if (pkt.keyframe) {
+        std::lock_guard<std::mutex> lk(g_outbound_key_mtx);
+        g_last_outbound_key = body;
+    }
+    if (!g_media_ready.load() && !peer_udp_ready()) return;
     lan_send_frame(1, body.data(), body.size());
 }
 

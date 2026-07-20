@@ -68,6 +68,13 @@ class PeerSession(
                 push(JSONObject().put("type", "peer_frame"))
         },
         onReady = { onMediaLinkReady("lan") },
+        onClosed = {
+            if (transport == "lan") {
+                transport = "none"
+                push(JSONObject().put("type", "peer_transport").put("mode", "none"))
+                Log.w(tag, "LAN closed → transport=none")
+            }
+        },
     )
     private var udp: UdpMedia? = null
     @Volatile private var iceStarted = false
@@ -440,15 +447,22 @@ class PeerSession(
     }
 
     private fun connectLanOffer(payload: JSONObject) {
+        if (lan.ready) {
+            Log.i(tag, "lan_offer ignored — already connected")
+            return
+        }
         val port = payload.optInt("port", 0)
         val ips = payload.optJSONArray("ips") ?: JSONArray()
         var ok = false
         for (i in 0 until ips.length()) {
             val ip = ips.optString(i)
-            if (ip.isNotBlank() && lan.connect(ip, port)) {
+            if (ip.isBlank() || ip.startsWith("169.254.") || ip.startsWith("127.")) continue
+            Log.i(tag, "LAN dial $ip:$port …")
+            if (lan.connect(ip, port)) {
                 ok = true
                 break
             }
+            Log.w(tag, "LAN dial failed $ip:$port")
         }
         if (ok) {
             if (peerDeviceId.isNotBlank()) {
@@ -460,6 +474,11 @@ class PeerSession(
                 )
             }
         } else {
+            // Controlled still listens for reverse dial; only Controller starts ICE.
+            if (role != "controller") {
+                Log.w(tag, "LAN dial-out failed (still listening for reverse)")
+                return
+            }
             Log.w(tag, "LAN fail → ICE/STUN UDP punch")
             push(JSONObject().put("type", "peer_transport").put("mode", "ice"))
             if (peerDeviceId.isNotBlank()) {
@@ -657,7 +676,10 @@ class PeerSession(
                         }
                         "session_start", "session_state" -> {
                             applySessionRole(msg)
-                            if (role == "controlled" && !lan.ready) startLanAsControlled()
+                            // Both roles listen+offer — reverse dial fixes PC inbound firewall.
+                            if ((role == "controlled" || role == "controller") && !lan.ready) {
+                                startLanAsControlled()
+                            }
                             if (lan.ready) transport = "lan"
                             push(msg)
                         }
@@ -668,8 +690,12 @@ class PeerSession(
                             when (payload?.optString("kind")) {
                                 "lan_offer" -> connectLanOffer(payload)
                                 "lan_ack" -> {
-                                    transport = "lan"
-                                    push(JSONObject().put("type", "peer_transport").put("mode", "lan"))
+                                    if (lan.ready) {
+                                        transport = "lan"
+                                        push(JSONObject().put("type", "peer_transport").put("mode", "lan"))
+                                    } else {
+                                        Log.w(tag, "lan_ack ignored — socket not ready")
+                                    }
                                 }
                                 "wan_probe" -> {
                                     Log.i(tag, "wan_probe → start ICE")
@@ -831,21 +857,27 @@ class PeerSession(
     }
 
     private fun collectLanIps(): List<String> {
-        val out = ArrayList<String>()
+        val priv = ArrayList<String>()
+        val other = ArrayList<String>()
         try {
-            val ifaces = NetworkInterface.getNetworkInterfaces() ?: return out
+            val ifaces = NetworkInterface.getNetworkInterfaces() ?: return priv
             for (ni in ifaces) {
                 if (!ni.isUp || ni.isLoopback) continue
                 for (addr in ni.inetAddresses) {
                     val host = addr.hostAddress ?: continue
                     if (host.contains(':')) continue // skip IPv6 for now
-                    if (host.startsWith("127.")) continue
-                    out.add(host)
+                    if (host.startsWith("127.") || host.startsWith("169.254.")) continue
+                    val isPriv = host.startsWith("10.") || host.startsWith("192.168.") ||
+                        (host.startsWith("172.") && run {
+                            val second = host.substringAfter('.').substringBefore('.').toIntOrNull() ?: -1
+                            second in 16..31
+                        })
+                    if (isPriv) priv.add(host) else other.add(host)
                 }
             }
         } catch (_: Exception) {
         }
-        return out
+        return priv + other
     }
 
     private fun err(msg: String) = JSONObject().put("ok", false).put("error", msg)
