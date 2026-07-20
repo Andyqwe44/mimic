@@ -1,5 +1,11 @@
 # Archive notes
 
+## 2026-07-20 — PagePager 统一 animateTo（Android v0.1.63）
+
+**确认设计**：单一 `animateTo(target)` 封装系统 `scrollTo({ behavior:'smooth' })`；跟手仍原生 `overflow-x`；**废除 snap settle 第二条时间线**。末次 `animateTo` 胜出（从当前小数 x 续播）。状态表 README U1–U6。
+
+前序 v0.1.52–0.1.62 双路径（snap + smooth）竞态史见下节。
+
 ## 2026-07-20 — Peer LAN UDP MPC2 抗花屏（PC 0.3.79 / Android 0.1.62）
 
 同网媒体改 **UDP MPC2**：16B 头、XOR FEC(4+1)、NACK≤2、重组超时 80ms。控制 JSON 仍 LAN TCP。

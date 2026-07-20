@@ -181,7 +181,7 @@ svg.lucide {
   }
 }
 
-/* PagePager uses native overflow-x + scroll-snap; hide scrollbar chrome. */
+/* PagePager: native overflow-x follow + animateTo(scrollTo smooth); hide scrollbar. */
 [data-page-pager]::-webkit-scrollbar {
   display: none;
 }

@@ -117,25 +117,19 @@ docs/
 
 ### Page 导航（底部栏 / 横滑 · `PagePager`）
 
-两条路径都走**浏览器原生滚动**：
+**单一入口** `animateTo(target)`：封装系统 `scrollTo({ behavior: 'smooth' })`（compositor，帧率不掉）。  
+跟手用原生 `overflow-x`；**松手与底栏点选都只走 `animateTo`**。`scroll-snap` 永不 settle（避免第二条时间线竞态）。
 
-| 操作 | 机制 |
-|------|------|
-| 手指横滑（过 slop + H 轴）+ 松手 | `overflow-x`；松手瞬间开 `scroll-snap` settle，随后关掉 |
-| 底栏点选 | `disarmSnap` → rAF → `scrollTo({ behavior: 'smooth' })` |
-| 短触 / 未过 slop | **无效** — 不 cancel nav、不武装 settle |
+坐标：`1=Monitor 2=Peers 3=Log 4=Settings`（可带小数，如 `x=2.50`）。
 
-**最后一次有效用户动作胜出**：点选一律有效；手指仅在过 `NAV.pagerAxisLockPx` 且 `resolvePagerAxis===h` 后才算。点选落地后 snap 保持关闭；`hold-correct` 每个 hold 最多一次。
-
-| # | 当前状态 | 事件 | → | 说明 |
-|---|----------|------|---|------|
-| P1 | 任意 | 底栏点选 C | **C** | disarm → rAF → smooth→C |
-| P2 | nav→C | pointerdown 未过 slop | **仍 C** | tap-ignore；必要时 nav-resume |
-| P3 | nav→C | 横滑过 slop | finger-drag | freeze 当前 x，snap 仍关（无跳格） |
-| P4 | finger-drag | finger↑ | nearest | 仅此次 drag 可 commit |
-| P5 | idle/hold | 短触未过 slop | 不变 | 不 fling |
-| P6 | snap 动画中 | 底栏点选 C | **C** | 同 P1 |
-| P7 | hold 后漂移 | — | pin×1 | 无 hold-correct 连打 |
+| # | 当前 | 事件 | 行为 |
+|---|------|------|------|
+| U1 | idle @ n | 手指拖动（过 slop + H） | 原生跟手；若正在 anim 则 freeze 当前小数 x 再跟手 |
+| U2 | 跟手 | finger↑ → 判定 T | `animateTo(T)`（系统 smooth） |
+| U3 | `animateTo(A)` 中 | 再判定 / 再点 → B | freeze 当前 x → `animateTo(B)`（末次胜出） |
+| U4 | 任意 | 底栏点 C | `animateTo(C)` |
+| U5 | 系统滚到 T | scrollend / near | pin + `commit` 一次 |
+| U6 | pending 短触 | 未过 slop | tap-ignore（不打断 anim） |
 
 ### 实现落点
 
@@ -144,7 +138,7 @@ docs/
 | Auth / Call native | `pc/client/src/peer_session.cpp` · `android/.../PeerSession.kt` |
 | Roster | `server/server.js` `devicesForUser`（`online` + `state`） |
 | Banner #9 | `shared/web/src/components/IncomingCallBanner.tsx` |
-| Page 导航 | `App.tsx` `session_end` → `Peers`；`onPeerSessionStart` → `Monitor`；`PagePager` P1–P7 |
+| Page 导航 | `App.tsx` `session_end` → `Peers`；`onPeerSessionStart` → `Monitor`；`PagePager` U1–U6 |
 | UI 投影 | `PeerPanel.tsx` |
 
 ## Build & release (PC + Server)
