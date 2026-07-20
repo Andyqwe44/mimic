@@ -143,6 +143,8 @@ export function PagePager({
 
   const settleTimer = useRef(0)
   const watchdog = useRef(0)
+  /** Last scroll event time — used to adopt in-flight snap even if settle was disarmed. */
+  const lastScrollTs = useRef(0)
 
   const progressHost = () => progressHostRef?.current ?? null
 
@@ -250,14 +252,20 @@ export function PagePager({
       return
     }
 
-    // Finger snap already settling onto this page — do not disarmSnap / restart
-    if (settleArmed() && Math.abs(frac - targetIdx) <= 0.5) {
+    // Already moving toward this page (finger snap or residual) — do not restart.
+    // settleArmed covers the common path; recent scroll covers snap after settle was cleared.
+    const recentlyScrolling = performance.now() - lastScrollTs.current < 120
+    if (
+      Math.abs(frac - targetIdx) <= 0.5
+      && (settleArmed() || recentlyScrolling)
+    ) {
       clearWatchdog()
       navIntent.current = null
       programmatic.current = false
       holdIdx.current = null
       addLog(
-        `[pager] adopt-snap→${PRIMARY_PAGES[targetIdx]} from=${frac.toFixed(2)}`,
+        `[pager] adopt-snap→${PRIMARY_PAGES[targetIdx]} from=${frac.toFixed(2)}`
+        + ` armed=${settleArmed() ? 1 : 0} recent=${recentlyScrolling ? 1 : 0}`,
       )
       return
     }
@@ -402,6 +410,7 @@ export function PagePager({
     }
 
     const onScroll = () => {
+      lastScrollTs.current = performance.now()
       const w = widthRef.current
       const dragging = fingerDown.current
         || settleArmed()

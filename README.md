@@ -120,7 +120,7 @@ docs/
 | P1 | 底栏点选 C | **C** | disarm snap → smooth→C（无硬停） |
 | P2 | 半滑松手未完 + 点 C | **C** | 同上；旧 settle 不得 commit B |
 | P3 | 手指滑到底 | nearest | 仅 `settleArmSeq===actionSeq` 可 commit |
-| P4 | A→B 松手未完 + 再点 B | **B** | adopt 原 snap，不 restart（无顿挫） |
+| P4 | A→B 松手未完 + 再点 B | **B** | adopt 原 snap（armed 或 120ms 内仍在滚），不 restart |
 
 ### 实现落点
 
