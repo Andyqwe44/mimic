@@ -397,6 +397,7 @@ export function PagePager({
       enableFingerSnap(vp)
       syncPill(vp.scrollLeft, false)
       holdIdx.current = nearest
+      settleArmSeq.current = -1
       commitIndex(nearest)
     }
 
