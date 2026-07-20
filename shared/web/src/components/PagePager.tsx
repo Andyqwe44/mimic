@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { NAV, navTapDurationMs, rubberBandPage } from '../lib/design'
+import { NAV, navTapDurationMs, resolvePagerAxis, rubberBandPage } from '../lib/design'
 import { PRIMARY_PAGES, pageIndex, type AppPage } from '../lib/pages'
 import { addLog } from '../lib/bridge'
 
@@ -121,8 +121,8 @@ function describeTarget(t: EventTarget | null): string {
 
 /**
  * Clash Royale–like settle:
- * - ~18% distance commits
- * - fling only if already moved a real distance + lasting gesture (logs: dx≈15 false flings)
+ * - ~15% distance commits
+ * - fling only if already moved a real distance + lasting gesture
  * - 折返 cancels to start
  */
 function snapTarget(
@@ -208,6 +208,7 @@ export function PagePager({
   const startPage = useRef(0)
   const peakProgress = useRef(0)
   const lastX = useRef(0)
+  const lastY = useRef(0)
   const lastT = useRef(0)
   const gestureStartT = useRef(0)
   const velocity = useRef(0)
@@ -333,6 +334,8 @@ export function PagePager({
       window.removeEventListener('pointermove', onWindowMove)
       window.removeEventListener('pointerup', onWindowUp)
       window.removeEventListener('pointercancel', onWindowUp)
+      window.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('touchcancel', onTouchEnd)
     }
 
     const settleHorizontal = () => {
@@ -363,76 +366,18 @@ export function PagePager({
       animateTo(target, dur, NAV.pagerSnapEase)
     }
 
-    const endPointer = (id: number, why: string) => {
-      if (pointerId.current !== id) {
-        addLog(`[pager] end ignore id=${id} active=${pointerId.current} why=${why}`)
-        return
-      }
-      let wasH = axisLocked.current === 'h'
-      // pointercancel before axis lock but finger already moved → still settle (half-swipe bug).
-      const moved = Math.abs(progressRef.current - startProgress.current)
-      if (!wasH && axisLocked.current === 'none' && moved >= 0.03) {
-        wasH = true
-        addLog(`[pager] ${why}: promote none→H moved=${moved.toFixed(3)}`)
-      }
-      const wasAxis = axisLocked.current
-      pointerId.current = null
-      dragging.current = false
-      axisLocked.current = 'none'
-      detachWindow()
-      if (wasH) settleHorizontal()
-      else {
-        addLog(`[pager] up axis=${wasAxis} why=${why} (no snap)`)
-        writeNavProgress(progressHost(), progressRef.current, false)
-      }
-    }
-
-    function onWindowMove(e: PointerEvent) {
-      if (pointerId.current !== e.pointerId || !dragging.current) return
+    /** Paint + velocity from a client point (pointer or touch). */
+    const applyHDrag = (clientX: number, clientY: number, timeStamp: number) => {
       const w = widthRef.current
-      if (w <= 0) {
-        addLog('[pager] move skip w=0')
-        return
-      }
-
-      const dx = e.clientX - startX.current
-      const dy = e.clientY - startY.current
-
-      if (axisLocked.current === 'none') {
-        const adx = Math.abs(dx)
-        const ady = Math.abs(dy)
-        if (adx < NAV.pagerAxisLockPx && ady < NAV.pagerAxisLockPx) return
-
-        const verticalWins = ady > adx * NAV.pagerVerticalBias
-        if (verticalWins) {
-          axisLocked.current = 'v'
-          addLog(
-            `[pager] axis=V adx=${adx.toFixed(0)} ady=${ady.toFixed(0)} `
-            + `tgt=${describeTarget(e.target)} → abandon`,
-          )
-          dragging.current = false
-          pointerId.current = null
-          detachWindow()
-          writeNavProgress(progressHost(), progressRef.current, false)
-          return
-        }
-        axisLocked.current = 'h'
-        // No setPointerCapture — Android WebView cancels the gesture (see logs: pointercancel).
-        addLog(
-          `[pager] axis=H adx=${adx.toFixed(0)} ady=${ady.toFixed(0)} `
-          + `noSwipe=${hitNoSwipe.current} tgt=${describeTarget(e.target)}`,
-        )
-      }
-
-      if (axisLocked.current !== 'h') return
-
-      e.preventDefault()
-      const dt = e.timeStamp - lastT.current
+      if (w <= 0) return
+      const dx = clientX - startX.current
+      const dt = timeStamp - lastT.current
       if (dt > 0) {
-        velocity.current = (-(e.clientX - lastX.current) / w) / dt
+        velocity.current = (-(clientX - lastX.current) / w) / dt
       }
-      lastX.current = e.clientX
-      lastT.current = e.timeStamp
+      lastX.current = clientX
+      lastY.current = clientY
+      lastT.current = timeStamp
 
       const raw = startProgress.current - dx / w
       const p = rubberBandPage(raw, pageCount)
@@ -451,25 +396,119 @@ export function PagePager({
       }
     }
 
+    /**
+     * Lock axis with ViewPager2 cone (ties / mild diagonal → H).
+     * Returns true if gesture was abandoned (V).
+     */
+    const lockAxis = (adx: number, ady: number, via: string, tgt?: EventTarget | null): boolean => {
+      if (axisLocked.current !== 'none') return false
+      const axis = resolvePagerAxis(adx, ady)
+      if (axis === 'none') return false
+      if (axis === 'v') {
+        axisLocked.current = 'v'
+        addLog(
+          `[pager] axis=V via=${via} adx=${adx.toFixed(0)} ady=${ady.toFixed(0)} `
+          + `tgt=${describeTarget(tgt ?? null)} → abandon`,
+        )
+        dragging.current = false
+        pointerId.current = null
+        detachWindow()
+        writeNavProgress(progressHost(), progressRef.current, false)
+        return true
+      }
+      axisLocked.current = 'h'
+      addLog(
+        `[pager] axis=H via=${via} adx=${adx.toFixed(0)} ady=${ady.toFixed(0)} `
+        + `noSwipe=${hitNoSwipe.current} tgt=${describeTarget(tgt ?? null)}`,
+      )
+      return false
+    }
+
+    const endPointer = (id: number, why: string) => {
+      if (pointerId.current !== id) {
+        addLog(`[pager] end ignore id=${id} active=${pointerId.current} why=${why}`)
+        return
+      }
+      let wasH = axisLocked.current === 'h'
+      // pointercancel often fires before lock on scrollable pages — recover H intent.
+      const moved = Math.abs(progressRef.current - startProgress.current)
+      const adx = Math.abs(lastX.current - startX.current)
+      const ady = Math.abs(lastY.current - startY.current)
+      if (!wasH && axisLocked.current === 'none') {
+        if (moved >= 0.02 || resolvePagerAxis(adx, ady) === 'h') {
+          wasH = true
+          addLog(
+            `[pager] ${why}: promote none→H moved=${moved.toFixed(3)} `
+            + `adx=${adx.toFixed(0)} ady=${ady.toFixed(0)}`,
+          )
+        }
+      }
+      const wasAxis = axisLocked.current
+      pointerId.current = null
+      dragging.current = false
+      axisLocked.current = 'none'
+      detachWindow()
+      if (wasH) settleHorizontal()
+      else {
+        addLog(`[pager] up axis=${wasAxis} why=${why} (no snap)`)
+        writeNavProgress(progressHost(), progressRef.current, false)
+      }
+    }
+
+    function onWindowMove(e: PointerEvent) {
+      if (pointerId.current !== e.pointerId || !dragging.current) return
+      if (widthRef.current <= 0) {
+        addLog('[pager] move skip w=0')
+        return
+      }
+
+      const dx = e.clientX - startX.current
+      const dy = e.clientY - startY.current
+      const adx = Math.abs(dx)
+      const ady = Math.abs(dy)
+
+      if (axisLocked.current === 'none') {
+        if (lockAxis(adx, ady, 'pointer', e.target)) return
+      }
+      if (axisLocked.current !== 'h') return
+
+      e.preventDefault()
+      applyHDrag(e.clientX, e.clientY, e.timeStamp)
+    }
+
     function onWindowUp(e: PointerEvent) {
       endPointer(e.pointerId, e.type)
     }
 
-    /** Block native vertical scroll once horizontal intent is clear (avoids H/V fight). */
+    /**
+     * Touch is primary on Android WebView: pointercancel often kills PointerEvents
+     * while TouchEvents still flow. Drive lock + paint from touchmove; preventDefault
+     * once H so nested vertical scroll cannot steal the gesture.
+     */
     const onTouchMove = (e: TouchEvent) => {
       if (!dragging.current || pointerId.current === null) return
-      if (axisLocked.current === 'h') {
-        e.preventDefault()
-        return
-      }
-      if (axisLocked.current !== 'none' || e.touches.length !== 1) return
+      if (e.touches.length !== 1) return
       const t = e.touches[0]
+      // Always track last point so pointercancel promote has real adx/ady.
+      lastX.current = t.clientX
+      lastY.current = t.clientY
       const adx = Math.abs(t.clientX - startX.current)
       const ady = Math.abs(t.clientY - startY.current)
-      if (adx >= NAV.pagerAxisLockPx && adx > ady * NAV.pagerVerticalBias) {
-        axisLocked.current = 'h'
-        e.preventDefault()
-        addLog(`[pager] touchmove→H adx=${adx.toFixed(0)} ady=${ady.toFixed(0)}`)
+
+      if (axisLocked.current === 'none') {
+        if (lockAxis(adx, ady, 'touch', e.target)) return
+      }
+      if (axisLocked.current !== 'h') return
+
+      e.preventDefault()
+      applyHDrag(t.clientX, t.clientY, e.timeStamp || performance.now())
+    }
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (pointerId.current === null || !dragging.current) return
+      // Finger left — settle even if pointercancel already ate pointerup.
+      if (e.type === 'touchcancel' || e.touches.length === 0) {
+        endPointer(pointerId.current, e.type)
       }
     }
 
@@ -498,6 +537,7 @@ export function PagePager({
       startPage.current = clampIndex(Math.round(progressRef.current), pageCount)
       peakProgress.current = progressRef.current
       lastX.current = e.clientX
+      lastY.current = e.clientY
       lastT.current = e.timeStamp
       gestureStartT.current = performance.now()
       velocity.current = 0
@@ -514,6 +554,8 @@ export function PagePager({
         window.addEventListener('pointermove', onWindowMove, { passive: false })
         window.addEventListener('pointerup', onWindowUp)
         window.addEventListener('pointercancel', onWindowUp)
+        window.addEventListener('touchend', onTouchEnd)
+        window.addEventListener('touchcancel', onTouchEnd)
       }
     }
 

@@ -1,10 +1,11 @@
 // ═══ Tooltip, ActionBtn, ThemeBtn — reusable UI kit ═══
-import { useState, useRef, useLayoutEffect } from 'react'
+import { useState, useRef, useLayoutEffect, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Moon, Sun } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BTN_SIZE_CLASS, btnAutoSize, H, RADIUS, TEXT } from '../lib/design'
+import { BTN_SIZE_CLASS, btnAutoSize, H, NAV, RADIUS, TEXT } from '../lib/design'
+import { isAndroidHost } from '../lib/platform'
 
 const TIP_GAP = 6
 const TIP_MARGIN = 4
@@ -20,6 +21,11 @@ type TipPlacement = 'top' | 'bottom'
  *    inside the viewport (right/left edges), without drifting away needlessly.
  * Uses real measured tip size — never estimate from string length (EN tips are
  * longer than ZH and the old estimate pulled them far left).
+ *
+ * Trigger:
+ * - PC / hover: mouseenter delay → show; mouseleave → hide
+ * - Android: long-press → show; finger up / cancel / scroll away → hide
+ *   (no hover-style pop on finger rest)
  */
 export function Tooltip({
   text,
@@ -36,6 +42,16 @@ export function Tooltip({
   const timer = useRef<number>(0)
   const anchorRef = useRef<HTMLDivElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
+  const longPress = useRef(false)
+  const android = isAndroidHost()
+
+  const hide = () => {
+    clearTimeout(timer.current)
+    timer.current = 0
+    longPress.current = false
+    setShow(false)
+    setReady(false)
+  }
 
   const placeTip = () => {
     const anchorEl = anchorRef.current
@@ -90,24 +106,73 @@ export function Tooltip({
     }
   }, [show, text])
 
+  useEffect(() => () => clearTimeout(timer.current), [])
+
+  const hoverHandlers = android
+    ? {}
+    : {
+        onMouseEnter: () => {
+          timer.current = window.setTimeout(() => setShow(true), NAV.tooltipHoverMs)
+        },
+        onMouseLeave: () => hide(),
+        onMouseMove: () => {
+          if (!show) {
+            clearTimeout(timer.current)
+            timer.current = window.setTimeout(() => setShow(true), NAV.tooltipHoverMs)
+          }
+        },
+      }
+
+  const touchHandlers = android
+    ? {
+        onPointerDown: (e: React.PointerEvent) => {
+          if (e.pointerType === 'mouse') return
+          clearTimeout(timer.current)
+          longPress.current = false
+          const id = e.pointerId
+          const x0 = e.clientX
+          const y0 = e.clientY
+          timer.current = window.setTimeout(() => {
+            longPress.current = true
+            setShow(true)
+          }, NAV.tooltipLongPressMs)
+          const onMove = (ev: PointerEvent) => {
+            if (ev.pointerId !== id) return
+            // Finger drifted — cancel long-press (treat as scroll/drag, not tip).
+            if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 10) {
+              clearTimeout(timer.current)
+              timer.current = 0
+              cleanup()
+              if (longPress.current) hide()
+            }
+          }
+          const onUp = (ev: PointerEvent) => {
+            if (ev.pointerId !== id) return
+            cleanup()
+            hide()
+          }
+          const cleanup = () => {
+            window.removeEventListener('pointermove', onMove)
+            window.removeEventListener('pointerup', onUp)
+            window.removeEventListener('pointercancel', onUp)
+          }
+          window.addEventListener('pointermove', onMove)
+          window.addEventListener('pointerup', onUp)
+          window.addEventListener('pointercancel', onUp)
+        },
+        onContextMenu: (e: React.MouseEvent) => {
+          // Suppress Android system context menu when long-press is for our tip.
+          e.preventDefault()
+        },
+      }
+    : {}
+
   return (
     <div
       ref={anchorRef}
       className={`relative ${className?.includes('w-full') ? 'flex' : 'inline-flex'} ${className || ''}`}
-      onMouseEnter={() => {
-        timer.current = window.setTimeout(() => setShow(true), 300)
-      }}
-      onMouseLeave={() => {
-        clearTimeout(timer.current)
-        setShow(false)
-        setReady(false)
-      }}
-      onMouseMove={() => {
-        if (!show) {
-          clearTimeout(timer.current)
-          timer.current = window.setTimeout(() => setShow(true), 300)
-        }
-      }}
+      {...hoverHandlers}
+      {...touchHandlers}
     >
       {children}
       {show &&

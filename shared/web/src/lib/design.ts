@@ -157,25 +157,49 @@ export const NAV = {
   bottomGap: 'gap-1',
   bottomGapRem: 0.25,
   /**
-   * Paged horizontal track (Clash Royale–style).
-   * Logs showed tiny dx≈15 + weak fling falsely committing — tighten fling gates.
+   * Paged horizontal track (Clash Royale / ViewPager2–style).
+   * No OS API in WebView — axis lock mirrors Android: after touchSlop, dominate
+   * axis wins; ties → H (pager owns horizontal). See resolvePagerAxis().
    */
-  pagerAxisLockPx: 12,
-  /** Prefer H unless V clearly dominates */
-  pagerVerticalBias: 1.25,
+  /** ~8px ≈ ViewConfiguration touchSlop at 1x; slightly diagonal still locks H */
+  pagerAxisLockPx: 8,
+  /**
+   * H cone: lock H when adx >= ady * cone (1.0 = 45°).
+   * <1 prefers H on mild diagonals (抖音/B站 nested H-pager feel).
+   */
+  pagerHCone: 0.85,
   pagerRubber: 0.38,
   pagerRubberMax: 0.28,
-  /** ~18% width to commit by distance */
-  pagerSnapThreshold: 0.18,
+  /** ~15% width to commit by distance */
+  pagerSnapThreshold: 0.15,
   /** Fling must be clearly fast AND already moved a real distance (see minDelta/minMs) */
   pagerFlingPagesPerMs: 0.0022,
   pagerFlingStaleMs: 60,
-  pagerFlingMinDelta: 0.14,
-  pagerFlingMinMs: 90,
-  pagerReverseCancel: 0.1,
+  pagerFlingMinDelta: 0.12,
+  pagerFlingMinMs: 80,
+  pagerReverseCancel: 0.12,
   pagerSnapMs: 220,
   pagerSnapEase: [0.22, 0.9, 0.28, 1] as const,
+  /** Android long-press tooltip (PC keeps hover 300ms) */
+  tooltipHoverMs: 300,
+  tooltipLongPressMs: 450,
 } as const
+
+/**
+ * ViewPager2-style axis resolve after touch slop.
+ * Returns 'none' until slop; then H if within horizontal cone, else V.
+ */
+export function resolvePagerAxis(
+  adx: number,
+  ady: number,
+  slop = NAV.pagerAxisLockPx,
+  hCone = NAV.pagerHCone,
+): 'none' | 'h' | 'v' {
+  if (adx < slop && ady < slop) return 'none'
+  // Mild diagonal → H (adx >= ady * 0.85 ≈ up to ~40° from horizontal)
+  if (adx >= ady * hCone) return 'h'
+  return 'v'
+}
 
 /** Duration (ms) for programmatic page jump by |page delta|. */
 export function navTapDurationMs(pageDelta: number): number {
