@@ -24,8 +24,9 @@ type TipPlacement = 'top' | 'bottom'
  *
  * Trigger:
  * - PC / hover: mouseenter delay → show; mouseleave → hide
- * - Android: long-press → show; finger up / cancel / scroll away → hide
- *   (no hover-style pop on finger rest)
+ * - Android: long-press → show; tip stays while finger is down (even if moved
+ *   aside to uncover text). Only real finger-up (touchend) dismisses.
+ *   Ignore pointercancel after show — WebView cancels pointer on move/scroll.
  */
 export function Tooltip({
   text,
@@ -43,12 +44,14 @@ export function Tooltip({
   const anchorRef = useRef<HTMLDivElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const longPress = useRef(false)
+  const holding = useRef(false)
   const android = isAndroidHost()
 
   const hide = () => {
     clearTimeout(timer.current)
     timer.current = 0
     longPress.current = false
+    holding.current = false
     setShow(false)
     setReady(false)
   }
@@ -99,10 +102,9 @@ export function Tooltip({
     placeTip()
     const onResize = () => placeTip()
     window.addEventListener('resize', onResize)
-    window.addEventListener('scroll', onResize, true)
+    // Tip is fixed to first place — do NOT re-place on scroll (would feel like chase).
     return () => {
       window.removeEventListener('resize', onResize)
-      window.removeEventListener('scroll', onResize, true)
     }
   }, [show, text])
 
@@ -129,39 +131,74 @@ export function Tooltip({
           if (e.pointerType === 'mouse') return
           clearTimeout(timer.current)
           longPress.current = false
+          holding.current = true
           const id = e.pointerId
           const x0 = e.clientX
           const y0 = e.clientY
           timer.current = window.setTimeout(() => {
+            if (!holding.current) return
             longPress.current = true
             setShow(true)
           }, NAV.tooltipLongPressMs)
+
           const onMove = (ev: PointerEvent) => {
             if (ev.pointerId !== id) return
-            // Before tip shows: cancel long-press if finger drifts (treat as scroll).
-            // After tip shows: keep tip — finger may move aside to uncover the text.
+            // Tip already up — finger may slide aside to uncover text; keep tip.
             if (longPress.current) return
+            // Before tip: cancel long-press if this is a scroll/drag.
             if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 10) {
               clearTimeout(timer.current)
               timer.current = 0
             }
           }
-          const onUp = (ev: PointerEvent) => {
+
+          /** Only real finger-up dismisses. pointercancel is ignored after tip shows. */
+          const onPointerUp = (ev: PointerEvent) => {
             if (ev.pointerId !== id) return
             cleanup()
             hide()
           }
+          const onPointerCancel = (ev: PointerEvent) => {
+            if (ev.pointerId !== id) return
+            if (longPress.current) {
+              // WebView cancelled the pointer (move/scroll) — tip stays until touchend.
+              return
+            }
+            cleanup()
+            hide()
+          }
+          const onTouchEnd = (ev: TouchEvent) => {
+            if (!holding.current) return
+            // touchcancel while tip is up: finger may still be down (WebView steal) — keep tip.
+            if (ev.type === 'touchcancel' && longPress.current) return
+            if (ev.touches.length > 0) return
+            cleanup()
+            hide()
+          }
+          const onTouchMove = (ev: TouchEvent) => {
+            // Once tip is showing, block scroll/pager from stealing the gesture.
+            if (longPress.current) {
+              ev.preventDefault()
+            }
+          }
+
           const cleanup = () => {
+            holding.current = false
             window.removeEventListener('pointermove', onMove)
-            window.removeEventListener('pointerup', onUp)
-            window.removeEventListener('pointercancel', onUp)
+            window.removeEventListener('pointerup', onPointerUp)
+            window.removeEventListener('pointercancel', onPointerCancel)
+            window.removeEventListener('touchend', onTouchEnd)
+            window.removeEventListener('touchcancel', onTouchEnd)
+            window.removeEventListener('touchmove', onTouchMove, true)
           }
           window.addEventListener('pointermove', onMove)
-          window.addEventListener('pointerup', onUp)
-          window.addEventListener('pointercancel', onUp)
+          window.addEventListener('pointerup', onPointerUp)
+          window.addEventListener('pointercancel', onPointerCancel)
+          window.addEventListener('touchend', onTouchEnd)
+          window.addEventListener('touchcancel', onTouchEnd)
+          window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false })
         },
         onContextMenu: (e: React.MouseEvent) => {
-          // Suppress Android system context menu when long-press is for our tip.
           e.preventDefault()
         },
       }

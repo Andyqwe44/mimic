@@ -1,6 +1,5 @@
-// Paged horizontal track — Clash Royale–style snap slots.
-// Finger down: 1:1 free drag. Release: distance (~20%) OR fling; 折返 cancels to start.
-// Page count = PRIMARY_PAGES.length. Debug: addLog('[pager] …') — keep until swipe bug closed.
+// Paged horizontal track — native overflow-x + CSS scroll-snap (same compositor path as vertical).
+// Finger drag is browser scrolling (60/120fps). JS only syncs the nav pill + commits page index.
 import {
   Children,
   useEffect,
@@ -9,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { NAV, navTapDurationMs, resolvePagerAxis, rubberBandPage } from '../lib/design'
+import { NAV, navTapDurationMs } from '../lib/design'
 import { PRIMARY_PAGES, pageIndex, type AppPage } from '../lib/pages'
 import { addLog } from '../lib/bridge'
 
@@ -97,80 +96,6 @@ function clampIndex(i: number, pageCount: number): number {
   return Math.max(0, Math.min(pageCount - 1, i))
 }
 
-/** Describe event target for Android log dumps (DOM intercept diagnosis). */
-function describeTarget(t: EventTarget | null): string {
-  if (!(t instanceof Element)) return String(t)
-  const tag = t.tagName.toLowerCase()
-  const id = t.id ? `#${t.id}` : ''
-  const cls = typeof t.className === 'string' && t.className
-    ? `.${t.className.trim().split(/\s+/).slice(0, 4).join('.')}`
-    : ''
-  const noSwipe = t.closest('[data-no-page-swipe]')
-  const scroll = t.closest('.overflow-y-auto, .overflow-y-scroll, .overflow-auto, [data-page-scroll]')
-  const parts = [`${tag}${id}${cls.slice(0, 80)}`]
-  if (noSwipe) {
-    const ns = noSwipe as Element
-    parts.push(`noSwipe=<${ns.tagName.toLowerCase()}${ns.className && typeof ns.className === 'string' ? '.' + ns.className.trim().split(/\s+/).slice(0, 2).join('.') : ''}>`)
-  }
-  if (scroll) {
-    const s = scroll as Element
-    parts.push(`scroll=<${s.tagName.toLowerCase()}>`)
-  }
-  return parts.join(' ')
-}
-
-/**
- * Clash Royale–like settle:
- * - ~15% distance commits
- * - fling only if already moved a real distance + lasting gesture
- * - 折返 cancels to start
- */
-function snapTarget(
-  progress: number,
-  velocity: number,
-  pageCount: number,
-  startPage: number,
-  peakProgress: number,
-  moveAgeMs: number,
-  gestureMs: number,
-): { target: number; reason: string } {
-  if (pageCount <= 0) return { target: 0, reason: 'empty' }
-  if (progress < 0) return { target: 0, reason: 'edgeL' }
-  if (progress > pageCount - 1) return { target: pageCount - 1, reason: 'edgeR' }
-
-  const start = clampIndex(startPage, pageCount)
-  const delta = progress - start
-  const peakDelta = peakProgress - start
-  const thr = NAV.pagerSnapThreshold
-  const retreated = Math.abs(peakDelta) - Math.abs(delta)
-
-  if (retreated >= NAV.pagerReverseCancel && Math.abs(delta) < thr) {
-    return {
-      target: start,
-      reason: `reverse peakΔ=${peakDelta.toFixed(2)} nowΔ=${delta.toFixed(2)} ret=${retreated.toFixed(2)}`,
-    }
-  }
-
-  const flingOk = moveAgeMs <= NAV.pagerFlingStaleMs
-    && gestureMs >= NAV.pagerFlingMinMs
-    && Math.abs(delta) >= NAV.pagerFlingMinDelta
-  const fling = NAV.pagerFlingPagesPerMs
-  if (flingOk && velocity >= fling && delta > 0) {
-    return { target: clampIndex(start + 1, pageCount), reason: `fling+ v=${velocity.toFixed(5)} Δ=${delta.toFixed(2)}` }
-  }
-  if (flingOk && velocity <= -fling && delta < 0) {
-    return { target: clampIndex(start - 1, pageCount), reason: `fling- v=${velocity.toFixed(5)} Δ=${delta.toFixed(2)}` }
-  }
-
-  if (delta >= thr) {
-    return { target: clampIndex(start + 1, pageCount), reason: `dist+ Δ=${delta.toFixed(2)}≥${thr}` }
-  }
-  if (delta <= -thr) {
-    return { target: clampIndex(start - 1, pageCount), reason: `dist- Δ=${delta.toFixed(2)}≤-${thr}` }
-  }
-  return { target: start, reason: `stay Δ=${delta.toFixed(2)}<${thr}` }
-}
-
 export function PagePager({
   page,
   onPageChange,
@@ -187,7 +112,6 @@ export function PagePager({
   const index = clampIndex(pageIndex(page), pageCount)
 
   const viewportRef = useRef<HTMLDivElement>(null)
-  const trackRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(0)
   const progressRef = useRef(index)
   const indexRef = useRef(index)
@@ -197,25 +121,13 @@ export function PagePager({
 
   const animRaf = useRef(0)
   const reduceMotion = useRef(prefersReducedMotion())
-  const skipPropAnim = useRef(false)
-
-  const pointerId = useRef<number | null>(null)
-  const dragging = useRef(false)
-  const axisLocked = useRef<'none' | 'h' | 'v'>('none')
-  const startX = useRef(0)
-  const startY = useRef(0)
-  const startProgress = useRef(0)
-  const startPage = useRef(0)
-  const peakProgress = useRef(0)
-  const lastX = useRef(0)
-  const lastY = useRef(0)
-  const lastT = useRef(0)
-  const gestureStartT = useRef(0)
-  const velocity = useRef(0)
-  const windowListening = useRef(false)
-  const hitNoSwipe = useRef(false)
-  /** Touch path owns paint on phones — avoid pointer+touch double-apply (halves FPS). */
-  const touchOwnsDrag = useRef(false)
+  /** Ignore next page-prop scroll (we already scrolled / committed). */
+  const skipPropScroll = useRef(false)
+  /** True while finger is down on the pager. */
+  const fingerDown = useRef(false)
+  /** True while snap inertia may still be running after lift. */
+  const userScrolling = useRef(false)
+  const settleTimer = useRef(0)
 
   const progressHost = () => progressHostRef?.current ?? null
 
@@ -226,54 +138,57 @@ export function PagePager({
     }
   }
 
-  const paint = (p: number, isDragging: boolean) => {
-    progressRef.current = p
-    const track = trackRef.current
+  const syncPill = (scrollLeft: number, dragging: boolean) => {
     const w = widthRef.current
-    if (track && w > 0) {
-      track.style.transform = `translate3d(${-p * w}px,0,0)`
-    }
-    writeNavProgress(progressHost(), p, isDragging)
-  }
-
-  const animateTo = (
-    target: number,
-    durationMs: number,
-    ease: readonly [number, number, number, number],
-  ) => {
-    cancelAnim()
-    const from = progressRef.current
-    if (reduceMotion.current || Math.abs(from - target) < 0.001) {
-      paint(target, false)
-      return
-    }
-    const [x1, y1, x2, y2] = ease
-    const t0 = performance.now()
-    const tick = (now: number) => {
-      if (dragging.current && axisLocked.current === 'h') {
-        animRaf.current = 0
-        return
-      }
-      const t = Math.min(1, (now - t0) / durationMs)
-      const e = bezierEase(t, x1, y1, x2, y2)
-      paint(from + (target - from) * e, true)
-      if (t < 1) {
-        animRaf.current = requestAnimationFrame(tick)
-        return
-      }
-      animRaf.current = 0
-      paint(target, false)
-    }
-    animRaf.current = requestAnimationFrame(tick)
+    if (w <= 0) return
+    const p = scrollLeft / w
+    progressRef.current = p
+    writeNavProgress(progressHost(), p, dragging)
   }
 
   const commitIndex = (next: number) => {
     const i = clampIndex(next, pageCount)
     if (i !== indexRef.current) {
-      skipPropAnim.current = true
+      skipPropScroll.current = true
       addLog(`[pager] commit ${PRIMARY_PAGES[indexRef.current]}→${PRIMARY_PAGES[i]}`)
       onPageChangeRef.current(PRIMARY_PAGES[i])
     }
+  }
+
+  /** Programmatic jump (bottom-nav tap) — rAF on scrollLeft only; finger uses native scroll. */
+  const animateScrollTo = (targetIdx: number, durationMs: number) => {
+    const vp = viewportRef.current
+    const w = widthRef.current
+    if (!vp || w <= 0) return
+    cancelAnim()
+    const targetLeft = targetIdx * w
+    const from = vp.scrollLeft
+    if (reduceMotion.current || Math.abs(from - targetLeft) < 1) {
+      vp.scrollLeft = targetLeft
+      syncPill(targetLeft, false)
+      return
+    }
+    const [x1, y1, x2, y2] = NAV.tapEase
+    const t0 = performance.now()
+    const tick = (now: number) => {
+      if (userScrolling.current) {
+        animRaf.current = 0
+        return
+      }
+      const t = Math.min(1, (now - t0) / durationMs)
+      const e = bezierEase(t, x1, y1, x2, y2)
+      const left = from + (targetLeft - from) * e
+      vp.scrollLeft = left
+      syncPill(left, true)
+      if (t < 1) {
+        animRaf.current = requestAnimationFrame(tick)
+        return
+      }
+      animRaf.current = 0
+      vp.scrollLeft = targetLeft
+      syncPill(targetLeft, false)
+    }
+    animRaf.current = requestAnimationFrame(tick)
   }
 
   useEffect(() => {
@@ -289,19 +204,15 @@ export function PagePager({
     if (!vp) return
     const measure = () => {
       const w = vp.clientWidth
-      if (w <= 0) {
-        addLog(`[pager] measure w=0 (page=${PRIMARY_PAGES[indexRef.current]})`)
-        return
-      }
+      if (w <= 0) return
+      const prevW = widthRef.current
       widthRef.current = w
       invalidateNavPillLayout()
-      if (dragging.current && axisLocked.current === 'h') {
-        paint(progressRef.current, true)
-        return
+      // Keep current page after resize (don't animate).
+      if (prevW > 0 && Math.abs(prevW - w) > 0.5) {
+        vp.scrollLeft = indexRef.current * w
       }
-      if (dragging.current) return
-      cancelAnim()
-      paint(indexRef.current, false)
+      syncPill(vp.scrollLeft, false)
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -309,19 +220,23 @@ export function PagePager({
     return () => ro.disconnect()
   }, [progressHostRef])
 
+  // Bottom-nav / external page change → scroll to slot.
   useLayoutEffect(() => {
-    if (skipPropAnim.current) {
-      skipPropAnim.current = false
+    if (skipPropScroll.current) {
+      skipPropScroll.current = false
       return
     }
-    if (dragging.current && axisLocked.current === 'h') return
-    if (Math.abs(progressRef.current - index) < 0.001) {
-      paint(index, false)
+    const vp = viewportRef.current
+    const w = widthRef.current
+    if (!vp || w <= 0) return
+    const targetLeft = index * w
+    if (Math.abs(vp.scrollLeft - targetLeft) < 1) {
+      syncPill(targetLeft, false)
       return
     }
     const delta = Math.abs(index - progressRef.current)
-    addLog(`[pager] prop→anim idx=${index} from=${progressRef.current.toFixed(2)}`)
-    animateTo(index, navTapDurationMs(delta), NAV.tapEase)
+    addLog(`[pager] prop→scroll idx=${index} from=${progressRef.current.toFixed(2)}`)
+    animateScrollTo(index, navTapDurationMs(delta))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index])
 
@@ -329,238 +244,73 @@ export function PagePager({
     const vp = viewportRef.current
     if (!vp) return
 
-    const detachWindow = () => {
-      if (!windowListening.current) return
-      windowListening.current = false
-      window.removeEventListener('pointermove', onWindowMove)
-      window.removeEventListener('pointerup', onWindowUp)
-      window.removeEventListener('pointercancel', onWindowUp)
-      window.removeEventListener('touchend', onTouchEnd)
-      window.removeEventListener('touchcancel', onTouchEnd)
-    }
-
-    const settleHorizontal = () => {
-      const now = performance.now()
-      const moveAge = now - lastT.current
-      const gestureMs = now - gestureStartT.current
-      const { target, reason } = snapTarget(
-        progressRef.current,
-        velocity.current,
-        pageCount,
-        startPage.current,
-        peakProgress.current,
-        moveAge,
-        gestureMs,
-      )
-      addLog(
-        `[pager] up axis=h page=${PRIMARY_PAGES[startPage.current]} `
-        + `p=${progressRef.current.toFixed(3)} peak=${peakProgress.current.toFixed(3)} `
-        + `v=${velocity.current.toFixed(5)} age=${moveAge.toFixed(0)} gest=${gestureMs.toFixed(0)} `
-        + `→${PRIMARY_PAGES[target] ?? target} (${reason}) `
-        + `noSwipe=${hitNoSwipe.current}`,
-      )
-      const delta = Math.abs(target - progressRef.current)
-      const dur = delta < 0.15
-        ? NAV.pagerSnapMs
-        : navTapDurationMs(Math.max(delta, 0.5))
-      commitIndex(target)
-      animateTo(target, dur, NAV.pagerSnapEase)
-    }
-
-    /** Paint + velocity from a client point (pointer or touch). */
-    const applyHDrag = (clientX: number, clientY: number, timeStamp: number) => {
+    const settleFromScroll = () => {
       const w = widthRef.current
       if (w <= 0) return
-      const dx = clientX - startX.current
-      const dt = timeStamp - lastT.current
-      if (dt > 0) {
-        velocity.current = (-(clientX - lastX.current) / w) / dt
+      const nearest = clampIndex(Math.round(vp.scrollLeft / w), pageCount)
+      // Snap may still be settling — force exact slot if slightly off.
+      const exact = nearest * w
+      if (Math.abs(vp.scrollLeft - exact) > 1) {
+        vp.scrollTo({ left: exact, behavior: 'smooth' })
       }
-      lastX.current = clientX
-      lastY.current = clientY
-      lastT.current = timeStamp
-
-      const raw = startProgress.current - dx / w
-      const p = rubberBandPage(raw, pageCount)
-      if (Math.abs(p - startPage.current) >= Math.abs(peakProgress.current - startPage.current)) {
-        peakProgress.current = p
-      }
-      // Direct DOM transform only — no React, no addLog (logs killed H-swipe FPS).
-      paint(p, true)
+      syncPill(vp.scrollLeft, false)
+      commitIndex(nearest)
+      userScrolling.current = false
     }
 
-    /**
-     * Lock axis with ViewPager2 cone (ties / mild diagonal → H).
-     * Returns true if gesture was abandoned (V).
-     */
-    const lockAxis = (adx: number, ady: number, via: string, tgt?: EventTarget | null): boolean => {
-      if (axisLocked.current !== 'none') return false
-      const axis = resolvePagerAxis(adx, ady)
-      if (axis === 'none') return false
-      if (axis === 'v') {
-        axisLocked.current = 'v'
-        addLog(
-          `[pager] axis=V via=${via} adx=${adx.toFixed(0)} ady=${ady.toFixed(0)} `
-          + `tgt=${describeTarget(tgt ?? null)} → abandon`,
-        )
-        dragging.current = false
-        pointerId.current = null
-        detachWindow()
-        writeNavProgress(progressHost(), progressRef.current, false)
-        return true
-      }
-      axisLocked.current = 'h'
-      addLog(
-        `[pager] axis=H via=${via} adx=${adx.toFixed(0)} ady=${ady.toFixed(0)} `
-        + `noSwipe=${hitNoSwipe.current} tgt=${describeTarget(tgt ?? null)}`,
-      )
-      return false
+    const onScroll = () => {
+      syncPill(vp.scrollLeft, fingerDown.current || userScrolling.current)
+      if (fingerDown.current) return
+      if (settleTimer.current) window.clearTimeout(settleTimer.current)
+      // Fallback when scrollend is missing / delayed (older WebViews).
+      settleTimer.current = window.setTimeout(settleFromScroll, 100)
     }
 
-    const endPointer = (id: number, why: string) => {
-      if (pointerId.current !== id) {
-        addLog(`[pager] end ignore id=${id} active=${pointerId.current} why=${why}`)
-        return
+    const onScrollEnd = () => {
+      if (fingerDown.current) return
+      if (settleTimer.current) {
+        window.clearTimeout(settleTimer.current)
+        settleTimer.current = 0
       }
-      let wasH = axisLocked.current === 'h'
-      // pointercancel often fires before lock on scrollable pages — recover H intent.
-      const moved = Math.abs(progressRef.current - startProgress.current)
-      const adx = Math.abs(lastX.current - startX.current)
-      const ady = Math.abs(lastY.current - startY.current)
-      if (!wasH && axisLocked.current === 'none') {
-        if (moved >= 0.02 || resolvePagerAxis(adx, ady) === 'h') {
-          wasH = true
-          addLog(
-            `[pager] ${why}: promote none→H moved=${moved.toFixed(3)} `
-            + `adx=${adx.toFixed(0)} ady=${ady.toFixed(0)}`,
-          )
-        }
-      }
-      const wasAxis = axisLocked.current
-      pointerId.current = null
-      dragging.current = false
-      axisLocked.current = 'none'
-      detachWindow()
-      if (wasH) settleHorizontal()
-      else {
-        addLog(`[pager] up axis=${wasAxis} why=${why} (no snap)`)
-        writeNavProgress(progressHost(), progressRef.current, false)
-      }
+      settleFromScroll()
     }
 
-    function onWindowMove(e: PointerEvent) {
-      if (pointerId.current !== e.pointerId || !dragging.current) return
-      // On touch devices touchmove already paints — skip duplicate pointermove.
-      if (touchOwnsDrag.current) return
-      if (widthRef.current <= 0) return
-
-      const dx = e.clientX - startX.current
-      const dy = e.clientY - startY.current
-      const adx = Math.abs(dx)
-      const ady = Math.abs(dy)
-
-      if (axisLocked.current === 'none') {
-        if (lockAxis(adx, ady, 'pointer', e.target)) return
-      }
-      if (axisLocked.current !== 'h') return
-
-      e.preventDefault()
-      applyHDrag(e.clientX, e.clientY, e.timeStamp)
-    }
-
-    function onWindowUp(e: PointerEvent) {
-      endPointer(e.pointerId, e.type)
-    }
-
-    /**
-     * Touch is primary on Android WebView: pointercancel often kills PointerEvents
-     * while TouchEvents still flow. Drive lock + paint from touchmove; preventDefault
-     * once H so nested vertical scroll cannot steal the gesture.
-     */
-    const onTouchMove = (e: TouchEvent) => {
-      if (!dragging.current || pointerId.current === null) return
-      if (e.touches.length !== 1) return
-      touchOwnsDrag.current = true
-      const t = e.touches[0]
-      // Always track last point so pointercancel promote has real adx/ady.
-      lastX.current = t.clientX
-      lastY.current = t.clientY
-      const adx = Math.abs(t.clientX - startX.current)
-      const ady = Math.abs(t.clientY - startY.current)
-
-      if (axisLocked.current === 'none') {
-        if (lockAxis(adx, ady, 'touch', e.target)) return
-      }
-      if (axisLocked.current !== 'h') return
-
-      e.preventDefault()
-      applyHDrag(t.clientX, t.clientY, e.timeStamp || performance.now())
-    }
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (pointerId.current === null || !dragging.current) return
-      // Finger left — settle even if pointercancel already ate pointerup.
-      if (e.type === 'touchcancel' || e.touches.length === 0) {
-        endPointer(pointerId.current, e.type)
-      }
-    }
-
-    const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return
-      if (pointerId.current !== null) {
-        addLog(`[pager] down ignore (busy id=${pointerId.current})`)
-        return
-      }
-
-      const noSwipeEl = e.target instanceof Element
-        ? e.target.closest('[data-no-page-swipe]')
-        : null
-      hitNoSwipe.current = !!noSwipeEl
-      if (noSwipeEl) {
-        addLog(`[pager] down on no-swipe zone tgt=${describeTarget(e.target)}`)
-      }
-
+    const onPointerDown = () => {
+      fingerDown.current = true
+      userScrolling.current = true
       cancelAnim()
-      pointerId.current = e.pointerId
-      dragging.current = true
-      axisLocked.current = 'none'
-      startX.current = e.clientX
-      startY.current = e.clientY
-      startProgress.current = progressRef.current
-      startPage.current = clampIndex(Math.round(progressRef.current), pageCount)
-      peakProgress.current = progressRef.current
-      lastX.current = e.clientX
-      lastY.current = e.clientY
-      lastT.current = e.timeStamp
-      gestureStartT.current = performance.now()
-      velocity.current = 0
-      touchOwnsDrag.current = e.pointerType === 'touch'
-
-      addLog(
-        `[pager] down id=${e.pointerId} type=${e.pointerType} `
-        + `page=${PRIMARY_PAGES[startPage.current]} p=${progressRef.current.toFixed(3)} `
-        + `w=${widthRef.current} tgt=${describeTarget(e.target)}`,
-      )
-
-      if (!windowListening.current) {
-        windowListening.current = true
-        window.addEventListener('pointermove', onWindowMove, { passive: false })
-        window.addEventListener('pointerup', onWindowUp)
-        window.addEventListener('pointercancel', onWindowUp)
-        window.addEventListener('touchend', onTouchEnd)
-        window.addEventListener('touchcancel', onTouchEnd)
+      if (settleTimer.current) {
+        window.clearTimeout(settleTimer.current)
+        settleTimer.current = 0
       }
     }
+    const onPointerUp = () => {
+      fingerDown.current = false
+      userScrolling.current = true
+      // Snap may run after lift — settle via scrollend / debounce.
+      if (settleTimer.current) window.clearTimeout(settleTimer.current)
+      settleTimer.current = window.setTimeout(settleFromScroll, 120)
+    }
 
-    vp.addEventListener('pointerdown', onPointerDown, { capture: true, passive: true })
-    vp.addEventListener('touchmove', onTouchMove, { capture: true, passive: false })
-    addLog(`[pager] listeners ready pages=${pageCount} idx=${indexRef.current}`)
-    paint(indexRef.current, false)
+    vp.addEventListener('scroll', onScroll, { passive: true })
+    vp.addEventListener('scrollend', onScrollEnd as EventListener)
+    vp.addEventListener('pointerdown', onPointerDown, { passive: true })
+    vp.addEventListener('pointerup', onPointerUp, { passive: true })
+    vp.addEventListener('pointercancel', onPointerUp, { passive: true })
+    addLog(`[pager] native-scroll ready pages=${pageCount} idx=${indexRef.current}`)
+    // Seed position without smooth (first paint).
+    if (widthRef.current > 0) {
+      vp.scrollLeft = indexRef.current * widthRef.current
+      syncPill(vp.scrollLeft, false)
+    }
 
     return () => {
-      vp.removeEventListener('pointerdown', onPointerDown, true)
-      vp.removeEventListener('touchmove', onTouchMove, true)
-      detachWindow()
+      vp.removeEventListener('scroll', onScroll)
+      vp.removeEventListener('scrollend', onScrollEnd as EventListener)
+      vp.removeEventListener('pointerdown', onPointerDown)
+      vp.removeEventListener('pointerup', onPointerUp)
+      vp.removeEventListener('pointercancel', onPointerUp)
+      if (settleTimer.current) window.clearTimeout(settleTimer.current)
       cancelAnim()
     }
   }, [pageCount, progressHostRef])
@@ -568,19 +318,27 @@ export function PagePager({
   return (
     <div
       ref={viewportRef}
-      className="flex-1 min-h-0 overflow-hidden"
+      className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
       data-page-pager
-      style={{ touchAction: 'pan-y' }}
+      style={{
+        scrollSnapType: 'x mandatory',
+        WebkitOverflowScrolling: 'touch',
+        overscrollBehaviorX: 'contain',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+      }}
     >
-      <div
-        ref={trackRef}
-        className="flex h-full w-full will-change-transform"
-      >
+      <div className="flex h-full w-full">
         {panels.map((panel, i) => (
           <div
             key={PRIMARY_PAGES[i] ?? i}
             className="h-full shrink-0 flex flex-col min-h-0 overflow-hidden"
-            style={{ flex: '0 0 100%', width: '100%' }}
+            style={{
+              flex: '0 0 100%',
+              width: '100%',
+              scrollSnapAlign: 'start',
+              scrollSnapStop: 'always',
+            }}
             aria-hidden={i !== index}
           >
             {panel}

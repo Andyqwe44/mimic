@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.47",
-    "mimicReleaseNote":  "Pager: higher H-swipe FPS (no drag logs / no double paint); tip stays while finger down",
+    "version":  "0.1.48",
+    "mimicReleaseNote":  "Pager: native overflow-x scroll-snap (system H scroll); tip stays until finger up",
     "description":  "Mimic Android shell 闂?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",

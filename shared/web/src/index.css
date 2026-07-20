@@ -181,7 +181,7 @@ svg.lucide {
   }
 }
 
-/* PagePager is transform-based (no overflow scroll); keep scrollbar hidden if any. */
+/* PagePager uses native overflow-x + scroll-snap; hide scrollbar chrome. */
 [data-page-pager]::-webkit-scrollbar {
   display: none;
 }
