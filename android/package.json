@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.48",
-    "mimicReleaseNote":  "Pager: native overflow-x scroll-snap (system H scroll); tip stays until finger up",
+    "version":  "0.1.49",
+    "mimicReleaseNote":  "Nav tap: linear panel+pill sync; tip touchmove only if cancelable",
     "description":  "Mimic Android shell 闂?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",

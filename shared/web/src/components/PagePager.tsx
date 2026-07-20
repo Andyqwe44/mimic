@@ -67,25 +67,6 @@ export function writeNavProgress(
   pill.style.transform = `translate3d(${fractional * pillLayout.pitch}px,0,0)`
 }
 
-function bezierEase(t: number, x1: number, y1: number, x2: number, y2: number): number {
-  if (t <= 0) return 0
-  if (t >= 1) return 1
-  let x = t
-  for (let i = 0; i < 6; i++) {
-    const cx = 3 * x1
-    const bx = 3 * (x2 - x1) - cx
-    const ax = 1 - cx - bx
-    const dx = ((ax * x + bx) * x + cx) * x - t
-    const d = (3 * ax * x + 2 * bx) * x + cx
-    if (Math.abs(d) < 1e-6) break
-    x -= dx / d
-  }
-  const cy = 3 * y1
-  const by = 3 * (y2 - y1) - cy
-  const ay = 1 - cy - by
-  return ((ay * x + by) * x + cy) * x
-}
-
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -127,6 +108,8 @@ export function PagePager({
   const fingerDown = useRef(false)
   /** True while snap inertia may still be running after lift. */
   const userScrolling = useRef(false)
+  /** True during bottom-nav tap rAF animation (ignore settle / keep snap off). */
+  const programmaticAnim = useRef(false)
   const settleTimer = useRef(0)
 
   const progressHost = () => progressHostRef?.current ?? null
@@ -136,6 +119,9 @@ export function PagePager({
       cancelAnimationFrame(animRaf.current)
       animRaf.current = 0
     }
+    programmaticAnim.current = false
+    const vp = viewportRef.current
+    if (vp) vp.style.scrollSnapType = 'x mandatory'
   }
 
   const syncPill = (scrollLeft: number, dragging: boolean) => {
@@ -155,7 +141,10 @@ export function PagePager({
     }
   }
 
-  /** Programmatic jump (bottom-nav tap) — rAF on scrollLeft only; finger uses native scroll. */
+  /**
+   * Bottom-nav tap: linear scrollLeft + pill in lockstep.
+   * Temporarily disable scroll-snap so the browser doesn't fight the rAF curve.
+   */
   const animateScrollTo = (targetIdx: number, durationMs: number) => {
     const vp = viewportRef.current
     const w = widthRef.current
@@ -168,16 +157,24 @@ export function PagePager({
       syncPill(targetLeft, false)
       return
     }
-    const [x1, y1, x2, y2] = NAV.tapEase
+    programmaticAnim.current = true
+    vp.style.scrollSnapType = 'none'
+    if (settleTimer.current) {
+      window.clearTimeout(settleTimer.current)
+      settleTimer.current = 0
+    }
     const t0 = performance.now()
     const tick = (now: number) => {
-      if (userScrolling.current) {
+      if (fingerDown.current) {
+        // User grabbed mid-jump — hand off to native scroll.
         animRaf.current = 0
+        programmaticAnim.current = false
+        vp.style.scrollSnapType = 'x mandatory'
         return
       }
       const t = Math.min(1, (now - t0) / durationMs)
-      const e = bezierEase(t, x1, y1, x2, y2)
-      const left = from + (targetLeft - from) * e
+      // Linear — panel and blue pill share the same scrollLeft progress.
+      const left = from + (targetLeft - from) * t
       vp.scrollLeft = left
       syncPill(left, true)
       if (t < 1) {
@@ -187,6 +184,8 @@ export function PagePager({
       animRaf.current = 0
       vp.scrollLeft = targetLeft
       syncPill(targetLeft, false)
+      programmaticAnim.current = false
+      vp.style.scrollSnapType = 'x mandatory'
     }
     animRaf.current = requestAnimationFrame(tick)
   }
@@ -259,15 +258,15 @@ export function PagePager({
     }
 
     const onScroll = () => {
-      syncPill(vp.scrollLeft, fingerDown.current || userScrolling.current)
-      if (fingerDown.current) return
+      syncPill(vp.scrollLeft, fingerDown.current || userScrolling.current || programmaticAnim.current)
+      if (fingerDown.current || programmaticAnim.current) return
       if (settleTimer.current) window.clearTimeout(settleTimer.current)
       // Fallback when scrollend is missing / delayed (older WebViews).
       settleTimer.current = window.setTimeout(settleFromScroll, 100)
     }
 
     const onScrollEnd = () => {
-      if (fingerDown.current) return
+      if (fingerDown.current || programmaticAnim.current) return
       if (settleTimer.current) {
         window.clearTimeout(settleTimer.current)
         settleTimer.current = 0
@@ -279,6 +278,9 @@ export function PagePager({
       fingerDown.current = true
       userScrolling.current = true
       cancelAnim()
+      // cancelAnim clears flags via programmatic reset; keep finger-down true
+      fingerDown.current = true
+      userScrolling.current = true
       if (settleTimer.current) {
         window.clearTimeout(settleTimer.current)
         settleTimer.current = 0

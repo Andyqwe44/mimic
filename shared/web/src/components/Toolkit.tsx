@@ -176,8 +176,9 @@ export function Tooltip({
             hide()
           }
           const onTouchMove = (ev: TouchEvent) => {
-            // Once tip is showing, block scroll/pager from stealing the gesture.
-            if (longPress.current) {
+            // Tip up: only cancel if the event is still cancelable (avoid console spam
+            // when scrolling already owns the gesture: cancelable=false).
+            if (longPress.current && ev.cancelable) {
               ev.preventDefault()
             }
           }
