@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.42",
-    "mimicReleaseNote":  "Pager: free drag until release; start-page snap + regret; no transform reset",
+    "version":  "0.1.43",
+    "mimicReleaseNote":  "Fix pager: no setPointerCapture kill; window tracking; snap by >50% coverage",
     "description":  "Mimic Android shell 闂?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",
