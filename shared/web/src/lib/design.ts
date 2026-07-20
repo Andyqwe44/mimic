@@ -148,11 +148,11 @@ export const NAV = {
   settleEase: 'cubic-bezier(0.25, 0.85, 0.3, 1)',
   /**
    * Bottom-nav tap: fixed duration for any distance (far jumps = higher peak speed).
-   * Ease-out: rush to speed, then decelerate to a stop.
+   * CSS `ease` — slight ease-in, then soft decelerate (browser default transition feel).
    */
-  tapDurMs: 280,
-  /** cubic-bezier ease-out (fast → slow) */
-  tapEase: [0.16, 1, 0.3, 1] as const,
+  tapDurMs: 380,
+  /** cubic-bezier matching CSS `ease` */
+  tapEase: [0.25, 0.1, 0.25, 1] as const,
   /** grid gap-1 between bottom tabs */
   bottomGap: 'gap-1',
   bottomGapRem: 0.25,
