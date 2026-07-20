@@ -102,15 +102,16 @@ docs/
 
 ### Page 导航（底部栏 / 横滑 · `PagePager`）
 
-手指横滑与底栏点选是两条路径；**点选期间 scroll 不得按 nearest 覆盖 React page**（否则半滑 + 点「设置」会落到对等/日志）。
+手指横滑与底栏点选是两条路径；**最后一次用户动作胜出**。点选用 CSS `ease` 定时长（`NAV.tapDurMs`）rAF，从**当前** `scrollLeft` 插值到目标（半滑再点不闪切）。
 
 | # | 当前 | 事件 | → Page | scroll / pill | 说明 |
 |---|------|------|--------|---------------|------|
-| P1 | 任意主页 | 底栏点选 `setPage(T)` | **T** | 停 fling → native smooth → `navIntent=T` | page 已是 T；scroll 只跟随 |
-| P2 | `navIntent=T` | scrollend / 到位 / watchdog | **T**（不变） | 精确 `scrollLeft=T·w`，清 intent | **禁止** `commit(nearest≠T)` |
+| P1 | 任意 | 底栏点选 T（`navSeq++`） | **T** | 冻 fling → ease(当前→T·w) | 含同页再点；page 已是 T 也重跑 |
+| P2 | `navIntent=T` | ease 结束 | **T**（不变） | 末帧即到位，清 intent | **禁止** `commit(nearest≠T)` |
 | P3 | `navIntent=T` | 手指按下 pager | 保持至松手 settle | 取消 intent，交还手指 | 用户接管 |
 | P4 | 无 intent | 手指滑 + settle | `round(scrollLeft/w)` | snap 到整数格 | 手指路径：scroll → page |
-| P5 | 滑向 Peers 未完成 | 底栏点 Settings | **Settings** | 同 P1；丢弃半页 nearest | 修 Settings→Peers 竞态 |
+| P5 | Settings 半滑向 Log | 再点 Settings | **Settings** | ease 回到 Settings | 同页 `navSeq` 避免 settle→Log |
+| P6 | 半滑向任意 | 点选其它页 U | **U** | ease(半页位置→U) | 距离差驱动同一 ease 曲线 |
 
 ### 实现落点
 

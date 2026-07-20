@@ -45,6 +45,12 @@ export default function App() {
 
   // ═══ UI state ═══
   const [page, setPage] = useState<AppPage>('Peers')
+  /** Bumped on every PrimaryNav tap (even same page) so PagePager re-eases from mid-swipe. */
+  const [navSeq, setNavSeq] = useState(0)
+  const selectNavPage = useCallback((p: AppPage) => {
+    setPage(p)
+    setNavSeq((n) => n + 1)
+  }, [])
   const [navExpanded, setNavExpanded] = useState(
     () => (typeof boot.navExpanded === 'boolean' ? boot.navExpanded : true),
   )
@@ -1036,7 +1042,7 @@ export default function App() {
       <div className="flex-1 min-h-0">
         <AppShell
           page={page}
-          setPage={setPage}
+          setPage={selectNavPage}
           shellMode={shellMode}
           navExpanded={navExpanded}
           onToggleNavExpand={() => setNavExpanded((v) => !v)}
@@ -1258,7 +1264,12 @@ export default function App() {
                 return <div className="flex-1 flex flex-col min-h-0">{devToolsPane}</div>
               }
               return (
-                <PagePager page={page} onPageChange={setPage} progressHostRef={shellProgressRef}>
+                <PagePager
+                  page={page}
+                  navSeq={navSeq}
+                  onPageChange={setPage}
+                  progressHostRef={shellProgressRef}
+                >
                   {monitorPane}
                   {controlPane}
                   {logPane}

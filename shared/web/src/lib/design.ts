@@ -150,7 +150,7 @@ export const NAV = {
    * Bottom-nav tap: fixed duration for any distance (far jumps = higher peak speed).
    * CSS `ease` — slight ease-in, then soft decelerate (browser default transition feel).
    */
-  tapDurMs: 380,
+  tapDurMs: 350,
   /** cubic-bezier matching CSS `ease` */
   tapEase: [0.25, 0.1, 0.25, 1] as const,
   /** grid gap-1 between bottom tabs */
