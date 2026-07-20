@@ -146,13 +146,13 @@ export const NAV = {
   /** Shared settle duration for page track + nav pill (ms) — legacy single-step */
   settleMs: 300,
   settleEase: 'cubic-bezier(0.25, 0.85, 0.3, 1)',
-  /** Tap jump duration: clamp(min, base + perPage * pages, max) */
-  tapDurMin: 160,
-  tapDurBase: 140,
-  tapDurPerPage: 55,
-  tapDurMax: 280,
-  /** CSS cubic-bezier control points matching settleEase */
-  tapEase: [0.25, 0.85, 0.3, 1] as const,
+  /**
+   * Bottom-nav tap: fixed duration for any distance (far jumps = higher peak speed).
+   * Ease-out: rush to speed, then decelerate to a stop.
+   */
+  tapDurMs: 280,
+  /** cubic-bezier ease-out (fast → slow) */
+  tapEase: [0.16, 1, 0.3, 1] as const,
   /** grid gap-1 between bottom tabs */
   bottomGap: 'gap-1',
   bottomGapRem: 0.25,
@@ -201,13 +201,9 @@ export function resolvePagerAxis(
   return 'v'
 }
 
-/** Duration (ms) for programmatic page jump by |page delta|. */
-export function navTapDurationMs(pageDelta: number): number {
-  const pages = Math.max(1, Math.abs(pageDelta))
-  return Math.min(
-    NAV.tapDurMax,
-    Math.max(NAV.tapDurMin, NAV.tapDurBase + NAV.tapDurPerPage * pages),
-  )
+/** Fixed tap duration (ms) — distance only changes peak velocity, not time. */
+export function navTapDurationMs(_pageDelta?: number): number {
+  return NAV.tapDurMs
 }
 
 /**

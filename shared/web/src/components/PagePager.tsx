@@ -77,6 +77,26 @@ function clampIndex(i: number, pageCount: number): number {
   return Math.max(0, Math.min(pageCount - 1, i))
 }
 
+/** Solve cubic-bezier Y for time t in [0,1] (CSS easing). */
+function bezierEase(t: number, x1: number, y1: number, x2: number, y2: number): number {
+  if (t <= 0) return 0
+  if (t >= 1) return 1
+  let x = t
+  for (let i = 0; i < 6; i++) {
+    const cx = 3 * x1
+    const bx = 3 * (x2 - x1) - cx
+    const ax = 1 - cx - bx
+    const dx = ((ax * x + bx) * x + cx) * x - t
+    const d = (3 * ax * x + 2 * bx) * x + cx
+    if (Math.abs(d) < 1e-6) break
+    x -= dx / d
+  }
+  const cy = 3 * y1
+  const by = 3 * (y2 - y1) - cy
+  const ay = 1 - cy - by
+  return ((ay * x + by) * x + cy) * x
+}
+
 export function PagePager({
   page,
   onPageChange,
@@ -142,7 +162,8 @@ export function PagePager({
   }
 
   /**
-   * Bottom-nav tap: linear scrollLeft + pill in lockstep.
+   * Bottom-nav tap: fixed-duration ease-out; panel + pill lockstep.
+   * Longer jumps reach higher peak speed; wall-clock time stays the same.
    * Temporarily disable scroll-snap so the browser doesn't fight the rAF curve.
    */
   const animateScrollTo = (targetIdx: number, durationMs: number) => {
@@ -163,18 +184,18 @@ export function PagePager({
       window.clearTimeout(settleTimer.current)
       settleTimer.current = 0
     }
+    const [x1, y1, x2, y2] = NAV.tapEase
     const t0 = performance.now()
     const tick = (now: number) => {
       if (fingerDown.current) {
-        // User grabbed mid-jump — hand off to native scroll.
         animRaf.current = 0
         programmaticAnim.current = false
         vp.style.scrollSnapType = 'x mandatory'
         return
       }
       const t = Math.min(1, (now - t0) / durationMs)
-      // Linear — panel and blue pill share the same scrollLeft progress.
-      const left = from + (targetLeft - from) * t
+      const e = bezierEase(t, x1, y1, x2, y2)
+      const left = from + (targetLeft - from) * e
       vp.scrollLeft = left
       syncPill(left, true)
       if (t < 1) {

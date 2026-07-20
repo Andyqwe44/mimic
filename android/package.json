@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.49",
-    "mimicReleaseNote":  "Nav tap: linear panel+pill sync; tip touchmove only if cancelable",
+    "version":  "0.1.50",
+    "mimicReleaseNote":  "About links open in system browser (open_url), not in-app WebView",
     "description":  "Mimic Android shell 闂?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",
