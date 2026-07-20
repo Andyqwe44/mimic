@@ -1,7 +1,7 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.61",
+    "version":  "0.1.62",
     "mimicReleaseNote":  "LAN UDP MPC2 media: FEC+NACK, force-IDR on drop, anti-tearing",
     "description":  "Mimic Android shell 鈥?Capacitor WebView hosting shared/web",
     "scripts":  {
