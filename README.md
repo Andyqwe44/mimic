@@ -117,8 +117,8 @@ docs/
 
 ### Page 导航（底部栏 / 横滑 · `PagePager`）
 
-**MAA-Meow / ViewPager 单 owner**（Web `translate3d`，无 Compose）：一个小数 offset。  
-跟手直接写 transform；松手 / 底栏只走 `settleTo(T)`（末次 `animSeq` 胜出，对齐 Compose `MutatorMutex`）。
+**MAA-Meow / ViewPager 单 owner**（Web `scrollLeft` 承载 offset，**不用** `translate3d`——Android WebView 上 transform 常导致命中区留在第 1 页，后三页滑不动）。  
+跟手 / 松手 / 底栏只走 `settleTo(T)`（末次 `animSeq` 胜出）。
 
 动画对齐 MAA：`cubic-bezier(0.32, 0.72, 0, 1)`，时长 `100×页距+100` ms（邻页 200ms）。
 

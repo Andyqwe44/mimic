@@ -1,8 +1,8 @@
 ﻿{
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.67",
-    "mimicReleaseNote":  "PagePager: MAA single-owner translate3d+settleTo; drop dead MimicHostPlugin",
+    "version":  "0.1.68",
+    "mimicReleaseNote":  "PagePager: scrollLeft hit-test fix (Peers/Log/Settings swipe)",
     "description":  "Mimic Android shell 閳?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",

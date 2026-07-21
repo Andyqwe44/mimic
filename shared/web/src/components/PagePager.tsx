@@ -1,5 +1,7 @@
-// MAA-Meow / ViewPager single-owner: one fractional offset.
-// Drag = translate3d finger-follow; settleTo(T) = rAF + MAA cubic-bezier (last wins).
+// MAA-Meow / ViewPager single-owner: one fractional offset (scrollLeft — not translate3d).
+// Android WebView: transform moves pixels but hit-testing often stays at layout x=0..W
+// (only Monitor swipes; Peers/Log/Settings look visible but receive no touches).
+// Drag = scrollLeft finger-follow; settleTo(T) = rAF + MAA cubic-bezier (last wins).
 import {
   Children,
   useEffect,
@@ -214,11 +216,15 @@ export function PagePager({
   }
 
   const applyFrac = (frac: number, dragging: boolean) => {
-    const track = trackRef.current
+    const vp = viewportRef.current
     const w = widthRef.current
-    if (!track || w <= 0) return
+    if (!vp || w <= 0) return
     progressRef.current = frac
-    track.style.transform = `translate3d(${-frac * w}px,0,0)`
+    // Layout scroll (not transform) so hit-testing matches the visible page.
+    const left = frac * w
+    if (Math.abs(vp.scrollLeft - left) > 0.5) {
+      vp.scrollLeft = left
+    }
     writeNavProgress(progressHost(), frac, dragging)
   }
 
@@ -467,6 +473,8 @@ export function PagePager({
 
     const onPointerDown = (e: PointerEvent) => {
       if (ptrPhase.current !== 'none') return
+      const t = e.target
+      if (t instanceof Element && t.closest('[data-no-page-swipe]')) return
       ptrPhase.current = 'pending'
       ptrStartX.current = e.clientX
       ptrStartY.current = e.clientY
@@ -542,11 +550,25 @@ export function PagePager({
     const onPointerUp = (e: PointerEvent) => endPointer(e, 'up')
     const onPointerCancel = (e: PointerEvent) => endPointer(e, 'cancel')
 
-    vp.addEventListener('pointerdown', onPointerDown, { passive: true })
-    vp.addEventListener('pointermove', onPointerMove, { passive: false })
-    vp.addEventListener('pointerup', onPointerUp, { passive: true })
-    vp.addEventListener('pointercancel', onPointerCancel, { passive: true })
-    pagerLog(`[pager] ready axis ${axisLegend()} mode=maa-single-owner`)
+    const onScrollNative = () => {
+      // Kill compositor fling when we are not dragging/settling (single owner).
+      if (ptrPhase.current === 'dragging' || animTarget.current !== null) return
+      const w = widthRef.current
+      const hold = holdIdx.current
+      if (w <= 0 || hold === null) return
+      const exact = hold * w
+      if (Math.abs(vp.scrollLeft - exact) > 1) {
+        vp.scrollLeft = exact
+      }
+    }
+
+    // Capture phase: nested overflow-y pages must not steal H-drag before pager sees it.
+    vp.addEventListener('scroll', onScrollNative, { passive: true })
+    vp.addEventListener('pointerdown', onPointerDown, { passive: true, capture: true })
+    vp.addEventListener('pointermove', onPointerMove, { passive: false, capture: true })
+    vp.addEventListener('pointerup', onPointerUp, { passive: true, capture: true })
+    vp.addEventListener('pointercancel', onPointerCancel, { passive: true, capture: true })
+    pagerLog(`[pager] ready axis ${axisLegend()} mode=maa-single-owner(scrollLeft)`)
     pagerLog(`[pager] ready at ${fmtX(indexRef.current)} pages=${pageCount}`)
     if (widthRef.current > 0) {
       applyFrac(indexRef.current, false)
@@ -554,10 +576,11 @@ export function PagePager({
     }
 
     return () => {
-      vp.removeEventListener('pointerdown', onPointerDown)
-      vp.removeEventListener('pointermove', onPointerMove)
-      vp.removeEventListener('pointerup', onPointerUp)
-      vp.removeEventListener('pointercancel', onPointerCancel)
+      vp.removeEventListener('scroll', onScrollNative)
+      vp.removeEventListener('pointerdown', onPointerDown, true)
+      vp.removeEventListener('pointermove', onPointerMove, true)
+      vp.removeEventListener('pointerup', onPointerUp, true)
+      vp.removeEventListener('pointercancel', onPointerCancel, true)
       clearSettleRaf()
       animTarget.current = null
     }
@@ -567,23 +590,20 @@ export function PagePager({
   return (
     <div
       ref={viewportRef}
-      className="flex-1 min-h-0 overflow-hidden"
+      className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
       data-page-pager
       style={{
+        // scrollLeft owns offset (hit-test = layout). Block native fling; we set scrollLeft.
         touchAction: 'pan-y',
         overscrollBehaviorX: 'none',
+        WebkitOverflowScrolling: 'auto',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
         WebkitUserSelect: 'none',
         userSelect: 'none',
       }}
     >
-      <div
-        ref={trackRef}
-        className="flex h-full will-change-transform"
-        style={{
-          transform: 'translate3d(0,0,0)',
-          backfaceVisibility: 'hidden',
-        }}
-      >
+      <div ref={trackRef} className="flex h-full">
         {panels.map((panel, i) => (
           <div
             key={PRIMARY_PAGES[i] ?? i}

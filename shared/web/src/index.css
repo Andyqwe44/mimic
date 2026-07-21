@@ -181,7 +181,7 @@ svg.lucide {
   }
 }
 
-/* PagePager: MAA single-owner translate3d; hide any leftover scrollbar chrome. */
+/* PagePager: scrollLeft single-owner track; hide scrollbar chrome. */
 [data-page-pager]::-webkit-scrollbar {
   display: none;
 }
