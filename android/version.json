@@ -8,8 +8,8 @@
     "setup_apk":  "MimicAndroid_Setup_v0.1.76.apk",
     "client_apk":  "MimicClient_Android_v0.1.76.apk",
     "apk":  "MimicClient_Android_v0.1.76.apk",
-    "client_sha256":  "d2bc6102bc6c2f9e3c3f795cb3827065221ac06e807ea7cc75477954037b589a",
-    "client_size":  6781674,
+    "client_sha256":  "508a30eaecffef5b9430f7a7aecbba364f8bb4332e25d32384ecf728c0327a34",
+    "client_size":  6973847,
     "has_apk":  true,
     "has_client_apk":  true,
     "message":  "Full APK update (PackageInstaller). SHA-256 verified before install."
