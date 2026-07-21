@@ -117,17 +117,25 @@ docs/
 
 ### Page 导航（底部栏 / 横滑 · `PagePager`）
 
-**皇室战争 / ViewPager 单 owner**（复刻 **v0.1.64**）：一个小数 `offset`（`translate3d`，走 compositor）。  
-跟手 = 手指直接写 offset；松手 / 底栏点选 = 唯一 `settleTo(T)`（rAF + cubic-bezier）。无 `overflow-x` fling、无 snap 第二条时间线。
+两条路径都走**浏览器原生滚动**（复刻 **v0.1.65** / 同 v0.1.61）：
 
-| # | 当前 | 事件 | 行为 |
-|---|------|------|------|
-| C1 | Idle @ n | 横滑过 slop + H | Dragging，跟手写 offset；若正在 settle 则冻在当前小数再跟手 |
-| C2 | Dragging | finger↑ → 判定 T | `settleTo(T)` |
-| C3 | Settling→A | 底栏点 C | 冻当前 x → `settleTo(C)` |
-| C4 | Settling→A | 再横滑 | 冻当前 x → Dragging |
-| C5 | Idle / Settling | 底栏点 C | `settleTo(C)` |
-| C6 | pending 短触 | 未过 slop | tap-ignore |
+| 操作 | 机制 |
+|------|------|
+| 手指横滑（过 slop + H 轴）+ 松手 | `overflow-x`；松手瞬间开 `scroll-snap` settle，随后关掉 |
+| 底栏点选 | `disarmSnap` → rAF → `scrollTo({ behavior: 'smooth' })` |
+| 短触 / 未过 slop | **无效** — 不 cancel nav、不武装 settle |
+
+**最后一次有效用户动作胜出**：点选一律有效；手指仅在过 `NAV.pagerAxisLockPx` 且 `resolvePagerAxis===h` 后才算。点选落地后 snap 保持关闭；`hold-correct` 每个 hold 最多一次。
+
+| # | 当前状态 | 事件 | → | 说明 |
+|---|----------|------|---|------|
+| P1 | 任意 | 底栏点选 C | **C** | disarm → rAF → smooth→C |
+| P2 | nav→C | pointerdown 未过 slop | **仍 C** | tap-ignore；必要时 nav-resume |
+| P3 | nav→C | 横滑过 slop | finger-drag | freeze 当前 x，snap 仍关（无跳格） |
+| P4 | finger-drag | finger↑ | nearest | 仅此次 drag 可 commit |
+| P5 | idle/hold | 短触未过 slop | 不变 | 不 fling |
+| P6 | snap 动画中 | 底栏点选 C | **C** | 同 P1 |
+| P7 | hold 后漂移 | — | pin×1 | 无 hold-correct 连打 |
 
 ### 实现落点
 
@@ -136,7 +144,7 @@ docs/
 | Auth / Call native | `pc/client/src/peer_session.cpp` · `android/.../PeerSession.kt` |
 | Roster | `server/server.js` `devicesForUser`（`online` + `state`） |
 | Banner #9 | `shared/web/src/components/IncomingCallBanner.tsx` |
-| Page 导航 | `App.tsx` `session_end` → `Peers`；`onPeerSessionStart` → `Monitor`；`PagePager` C1–C6（v0.1.64） |
+| Page 导航 | `App.tsx` `session_end` → `Peers`；`onPeerSessionStart` → `Monitor`；`PagePager` P1–P7（v0.1.65） |
 | UI 投影 | `PeerPanel.tsx` |
 
 ## Build & release (PC + Server)

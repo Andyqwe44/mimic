@@ -1,8 +1,12 @@
 # Archive notes
 
+## 2026-07-21 — PagePager 恢复 v0.1.65（Android v0.1.71）
+
+用户更正：最满意的是 v0.1.65（原生 overflow-x + snap / 底栏 smooth，P1–P7）。手工 checkout `PagePager` / `design.ts` / `index.css` 自 `android-v0.1.65`。非 git revert 整仓。
+
 ## 2026-07-21 — PagePager 恢复 v0.1.64（Android v0.1.70）
 
-用户指定 v0.1.64 手感最佳：手工 checkout `PagePager` / `design.ts` / `index.css` 自 `android-v0.1.64`（translate3d 单 owner）。非 git revert 整仓。
+用户曾指定 v0.1.64；后更正为 0.1.65。手工 checkout 自 `android-v0.1.64`（translate3d 单 owner）。
 
 ## 2026-07-21 — PagePager MAA 单 owner + 轻 Kotlin（Android v0.1.67）
 
