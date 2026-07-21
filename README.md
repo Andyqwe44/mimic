@@ -119,27 +119,29 @@ docs/
 
 轴：`x ∈ [0,5]` — 槽 0/5 为回弹空白，槽 1…4 为监视/对等/日志/设置。胶囊小地图同轴（`pillTranslateX = x * pitch`，槽 0/5 出屏）；底栏标签**不高亮**，只靠胶囊表示位置。
 
-两条路径（**原生横滑跟手** + 松手 lockH 后 B1）：
+两条路径都走**浏览器原生滚动**（N0，无速度衔接；行为对齐 **v0.1.74**）：
 
 | 操作 | 机制 |
 |------|------|
-| 手指横滑 | 按下时 `unlockH`；原生 `overflow-x` 跟手；`pointercancel` **不**吸附 |
-| 手指抬起 | `touchend`：`lockH`（`overflow-x:hidden`，**保持锁死**）→ B1；Δ≤0.25 instant，否则 smooth |
-| 底栏点选 | 同上（大跨度 smooth；近距 instant）；落地后仍 lockH |
-| Idle | 保持 lockH，**禁止**与惯性对打纠偏（旧 idle-repin 会造成抽搐） |
+| 手指横滑（过 slop + H 轴）+ 松手 | 原生 `overflow-x` 跟手；松手按 B1 选目标 → `scrollTo(smooth)` |
+| 底栏点选 | 取消旧动画 → 从当前 x → `scrollTo({ behavior: 'smooth' })` |
+| 选目标 | **T1** 立刻 `onPageChange`；动画只追视觉 |
 
-**松手选页（B1）**：±0.15 / round / 空白回弹。无 fling 续滑。
+**松手选页（B1 混合）**：从整数内容页起滑 → 相对出发页 ±0.15（越过则至少进一步并用 round）；打断 ease 后 / 小数位 → `round(x)`；`x<1→1`，`x>4→4`。不按速度 fling。
+
+**最后一次有效动作胜出**：点选可打断 settle；ease 中 pointerdown **立刻挺住**（B2-A）；短触按打断点 + B1 落地（不透明 resume）。
 
 | # | 当前状态 | 事件 | → | 说明 |
 |---|----------|------|---|------|
-| P1 | 任意 | 底栏点选 C | **C** | Δ≤0.25 instant，否则 smooth→C（全程 lockH） |
-| P2 | nav→C | pointerdown | 挺住 | unlock + 取消旧 smooth |
-| P3 | idle | 横滑 | 原生跟手 | unlock 后跟手；cancel 只表示浏览器接管 |
-| P4 | 横滑中 | touchend | B1 | lockH→立刻吸附 |
-| P5 | 卡缝短触 | touchend | B1 | 同上 |
-| P6 | settle 中 | 点选 D | **D** | retarget |
-| P7 | 分轴 | V | 放弃 H | 页内竖滑 |
-| P8 | idle | — | 锁死 | lockH 直到下次按下 |
+| P1 | 任意 | 底栏点选 C | **C** | 从当前 x smooth→C；再点同 C 不重播 |
+| P2 | nav→C | pointerdown | 挺住当前 x | 取消旧 smooth |
+| P2a | 挺住后短触 up | B1 选页 | 如 2.25→2 | 不 resume 旧 C |
+| P3 | 挺住 / idle | 横滑过 slop | finger / native-pan | 跟手；Android 常 pointercancel，等滚动停稳再吸附 |
+| P4 | finger / cancel | scroll idle | B1 目标 | **不**在 cancel 瞬间吸附；`SCROLL_IDLE_MS` 后按真实 x |
+| P5 | idle / 卡缝 | 短触 | B1 | 不在槽上则吸附（不再忽略） |
+| P5b | idle | 无手势漂移 | B1 | scroll 发现离槽/空白 → 等停稳吸附 |
+| P6 | settle→C 中 | 点选 D | **D** | 从当前 x 重新 smooth（速度从 0） |
+| P7 | 任意 | 先分轴锁轴 | — | H/V 互斥；第二指忽略 |
 
 ### 实现落点
 

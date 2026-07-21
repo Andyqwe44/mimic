@@ -1,8 +1,8 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.78",
-    "mimicReleaseNote":  "PagePager: lockH until next press (fix idle-repin twitch)",
+    "version":  "0.1.79",
+    "mimicReleaseNote":  "PagePager: restore v0.1.74 behavior (scroll-idle settle)",
     "description":  "Mimic Android shell 闁?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",
