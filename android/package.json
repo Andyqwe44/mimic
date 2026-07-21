@@ -1,7 +1,7 @@
 {
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.76",
+    "version":  "0.1.77",
     "mimicReleaseNote":  "PagePager: hard kill fling, pin 2 frames, idle re-pin, per-frame x log",
     "description":  "Mimic Android shell 闁?Capacitor WebView hosting shared/web",
     "scripts":  {
