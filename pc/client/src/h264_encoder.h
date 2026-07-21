@@ -19,6 +19,8 @@ struct H264Packet {
     int h = 0;
     /// Capture/encode stamp (GetTickCount64 low 32) for glass-to-glass latency.
     uint32_t ts_ms = 0;
+    /// Monotonic send-side sequence (also packed into flags[16..31] on the wire).
+    uint32_t seq = 0;
 };
 
 class H264Encoder {

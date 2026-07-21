@@ -1684,9 +1684,11 @@ void peer_send_h264(const H264Packet& pkt) {
     // Dependency gate: after drop/loss, suppress delta until an IDR is sent.
     if (g_media_broken.load() && !pkt.keyframe) {
         if (g_cb.on_need_key) g_cb.on_need_key();
+        LOG_DEBUG("peer", "[TxH264] drop delta seq=%u (media_broken)", pkt.seq);
         return;
     }
-    uint32_t flags = pkt.keyframe ? 1u : 0u;
+    // flags: bit0=key, bits16..31=seq (for RX correlation / reorder detect)
+    uint32_t flags = (pkt.keyframe ? 1u : 0u) | ((pkt.seq & 0xffffu) << 16);
     std::vector<uint8_t> body(16 + pkt.annexb.size());
     uint32_t meta[4] = { (uint32_t)pkt.w, (uint32_t)pkt.h, flags, pkt.ts_ms };
     memcpy(body.data(), meta, 16);
@@ -1698,6 +1700,13 @@ void peer_send_h264(const H264Packet& pkt) {
         g_media_broken.store(false);
     }
     if (!g_media_ready.load() && !peer_udp_ready()) return;
+    static uint32_t s_log = 0;
+    uint32_t n = ++s_log;
+    if (pkt.keyframe || n <= 8 || n % 30 == 0) {
+        LOG("peer", "[TxH264] seq=%u %s bytes=%zu enc_ts=%u via=%s",
+            pkt.seq, pkt.keyframe ? "IDR" : "P", pkt.annexb.size(), pkt.ts_ms,
+            peer_udp_ready() ? "udp" : "tcp");
+    }
     lan_send_frame(1, body.data(), body.size());
 }
 

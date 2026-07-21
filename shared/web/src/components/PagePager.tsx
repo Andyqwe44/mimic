@@ -15,7 +15,7 @@ import { addLog } from '../lib/bridge'
 /** Set true only when debugging PagePager; keep false so peer video logs stay readable. */
 const PAGER_DEBUG = false
 function pagerLog(msg: string) {
-  if (PAGER_DEBUG) pagerLog(msg)
+  if (PAGER_DEBUG) addLog(msg)
 }
 
 type PillLayout = { padL: number; slotW: number; pitch: number; n: number }

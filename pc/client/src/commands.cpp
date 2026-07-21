@@ -618,11 +618,11 @@ static bool tcp_send_all(SOCKET s, const char* data, int n) {
 // H.264 body: [w:4][h:4][flags:4][reserved:4][annexb NALs...]
 // flags bit0 = keyframe. Prefer this over raw BGRA for remote controllers.
 static void tcp_broadcast_h264(const H264Packet& pkt) {
-    uint32_t flags = pkt.keyframe ? 1u : 0u;
+    uint32_t flags = (pkt.keyframe ? 1u : 0u) | ((pkt.seq & 0xffffu) << 16);
     uint32_t body_size = 16 + (uint32_t)pkt.annexb.size();
     uint8_t hdr[PROTOCOL_FRAME_HEADER];
     protocol_build_header(hdr, body_size, PAYLOAD_TYPE_H264_STREAM);
-    uint32_t meta[4] = { (uint32_t)pkt.w, (uint32_t)pkt.h, flags, 0u };
+    uint32_t meta[4] = { (uint32_t)pkt.w, (uint32_t)pkt.h, flags, pkt.ts_ms };
 
     std::lock_guard<std::mutex> lk(g_tcp_mutex);
     for (auto it = g_tcp_clients.begin(); it != g_tcp_clients.end(); ) {
@@ -860,6 +860,13 @@ static void on_wgc_gpu_frame(void* /*ctx*/, void* d3d_device, void* d3d_tex, int
     int interval = g_h264.hardware() ? kRemoteEncodeMinIntervalMsHw : kRemoteEncodeMinIntervalMsSw;
     ULONGLONG now = GetTickCount64();
     if (now - s_last_enc_ms < (ULONGLONG)interval) return;
+
+    // Static WGC refresh (no new compositor frame for a while) → force IDR so
+    // controller does not keep a torn/ghost last P-frame after motion stops.
+    static ULONGLONG s_prev_cb_ms = 0;
+    if (s_prev_cb_ms != 0 && now - s_prev_cb_ms >= 180)
+        g_h264_need_key.store(true);
+    s_prev_cb_ms = now;
     s_last_enc_ms = now;
 
     if (g_h264_need_key.exchange(false))
@@ -874,7 +881,13 @@ static void on_wgc_gpu_frame(void* /*ctx*/, void* d3d_device, void* d3d_tex, int
             s_enc_w = s_enc_h = 0;
             return;
         }
-        if (!g_h264.encode_texture(enc_tex, ew, eh, pkts) || pkts.empty()) return;
+        if (!g_h264.encode_texture(enc_tex, ew, eh, pkts) || pkts.empty()) {
+            static uint32_t s_enc_empty = 0;
+            uint32_t n = ++s_enc_empty;
+            if (n <= 5 || n % 60 == 0)
+                LOG_WARN("cmd", "H264 encode empty/fail #%u (WGC tex %dx%d)", n, ew, eh);
+            return;
+        }
     } else {
         // Soft path: Map staging → scale → encode_bgra (keeps latency bounded).
         static ComPtr<ID3D11Texture2D> s_staging;
@@ -917,7 +930,20 @@ static void on_wgc_gpu_frame(void* /*ctx*/, void* d3d_device, void* d3d_tex, int
         }
         if (!g_h264.encode_bgra(px, pw, ph, pkts) || pkts.empty()) return;
     }
-    for (const auto& p : pkts) broadcast_h264_all(p);
+    static std::atomic<uint32_t> s_tx_seq{0};
+    static ULONGLONG s_last_tx_ms = 0;
+    ULONGLONG tx_gap = s_last_tx_ms ? (now - s_last_tx_ms) : 0;
+    s_last_tx_ms = now;
+    for (auto& p : pkts) {
+        p.seq = s_tx_seq.fetch_add(1) + 1;
+        if (p.keyframe || p.seq <= 8 || p.seq % 30 == 0 || tx_gap >= 180) {
+            LOG("cmd",
+                "[TxH264] seq=%u %s bytes=%zu %dx%d enc_ts=%u hw=%d tx_gap=%llums",
+                p.seq, p.keyframe ? "IDR" : "P", p.annexb.size(), p.w, p.h, p.ts_ms,
+                (int)g_h264.hardware(), (unsigned long long)tx_gap);
+        }
+        broadcast_h264_all(p);
+    }
 }
 
 static void tcp_broadcast_bgra_fallback(const uint8_t* bgra, int w, int h) {

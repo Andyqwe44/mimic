@@ -74,6 +74,7 @@ export function PeerRemoteView({
   const gapMaxRef = useRef(0)
   const gapNRef = useRef(0)
   const lastTsMsRef = useRef(-1)
+  const lastWireSeqRef = useRef(-1)
   const skewSumRef = useRef(0)
   const skewNRef = useRef(0)
   const transportRef = useRef('none')
@@ -208,6 +209,7 @@ export function PeerRemoteView({
       gapMaxRef.current = 0
       gapNRef.current = 0
       lastTsMsRef.current = -1
+      lastWireSeqRef.current = -1
       skewSumRef.current = 0
       skewNRef.current = 0
       decodeErrRef.current = 0
@@ -237,6 +239,7 @@ export function PeerRemoteView({
       const h = d.h || view.getUint32(4, true)
       const flags = d.flags ?? view.getUint32(8, true)
       const tsMs = view.getUint32(12, true)
+      const seq = (flags >>> 16) & 0xffff
       const annexb = d.bytes.subarray(16)
       const nowRecv = performance.now()
       let gap = 0
@@ -253,6 +256,21 @@ export function PeerRemoteView({
           skewNRef.current++
         }
       }
+      // Reorder / gap detect via wire seq (low 16 bits).
+      const prevSeq = lastWireSeqRef.current
+      let reorder = false
+      let seqGap = 0
+      if (prevSeq >= 0) {
+        const expect = (prevSeq + 1) & 0xffff
+        if (seq !== expect) {
+          seqGap = (seq - expect + 0x10000) & 0xffff
+          if (seqGap > 0x8000) {
+            reorder = true
+            seqGap = (expect - seq + 0x10000) & 0xffff
+          }
+        }
+      }
+      lastWireSeqRef.current = seq
       lastRecvTsRef.current = nowRecv
       lastTsMsRef.current = tsMs
 
@@ -280,9 +298,19 @@ export function PeerRemoteView({
       if (flagKey !== nalKey) flagKeyMismatchRef.current++
       const key = flagKey || nalKey
       recvCountRef.current++
+      const kind = key ? 'IDR' : 'P'
+      if (key || recvCountRef.current <= 8 || recvCountRef.current % 30 === 0 || gap >= 180 || seqGap > 0) {
+        addLog(
+          `[RxH264] seq=${seq} ${kind} bytes=${annexb.byteLength} enc_ts=${tsMs} ` +
+            `recv_ms=${nowRecv.toFixed(0)} gap=${gap.toFixed(0)}ms ` +
+            `q=${decoder.decodeQueueSize} needKey=${needKeyRef.current ? 1 : 0}` +
+            (seqGap > 0 ? ` SEQ_GAP=${seqGap}${reorder ? ' REORDER' : ''}` : ''),
+        )
+      }
       if (needKeyRef.current && !key) {
         requestKeyframe('sync')
         deltaDropRef.current++
+        addLog(`[RxH264] DROP delta seq=${seq} (waiting IDR)`)
         return
       }
       if (!key && decoder.decodeQueueSize > 10) {
@@ -292,6 +320,7 @@ export function PeerRemoteView({
           dropCountRef.current = 0
           try { decoder.flush() } catch { /* */ }
           requestKeyframe('backpressure')
+          addLog(`[RxH264] DROP+flush seq=${seq} backpressure q=${decoder.decodeQueueSize}`)
         }
         return
       }
@@ -310,7 +339,7 @@ export function PeerRemoteView({
           if (keyRecvRef.current <= 3 || keyRecvRef.current % 30 === 0) {
             const nals = scanAnnexB(annexb).map((n) => n.type).join(',')
             addLog(
-              `[Decode] IDR #${keyRecvRef.current} ${w}x${h} bytes=${annexb.byteLength} ` +
+              `[Decode] IDR #${keyRecvRef.current} seq=${seq} ${w}x${h} bytes=${annexb.byteLength} ` +
                 `flagKey=${flagKey ? 1 : 0} nalKey=${nalKey ? 1 : 0} ` +
                 `sps=${spsSeenRef.current ? 1 : 0} pps=${ppsSeenRef.current ? 1 : 0} nals=[${nals}]`,
             )
@@ -323,7 +352,7 @@ export function PeerRemoteView({
         requestKeyframe('decode')
         const msg = e instanceof Error ? e.message : String(e)
         setStatus(t('peer.decode_error', { msg }))
-        addLog(`[Decode] decode() throw #${decodeErrRef.current}: ${msg} (freeze)`)
+        addLog(`[Decode] decode() throw #${decodeErrRef.current} seq=${seq}: ${msg} (freeze)`)
         setDiagTick((n) => n + 1)
       }
       const nowDiag = performance.now()

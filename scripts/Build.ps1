@@ -24,7 +24,7 @@ $Ver = Get-AppVersion
 # (that churn defeated incremental updates: every release re-downloaded all 12
 # DLLs). Bump this ONLY when a lib's source actually changes. Combined with
 # /Brepro (deterministic PE), same source ??same bytes ??same sha256 ??not in diff.
-$LibVer = '1.0.0'
+$LibVer = '1.0.1'
 Enter-BuildShell
 
 function Build-Logger {

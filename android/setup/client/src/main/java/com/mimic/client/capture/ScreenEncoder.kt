@@ -176,16 +176,18 @@ class ScreenEncoder(
                                 }
                                 lastFrameMs = now
                                 encodeCount++
-                                if (now - lastEncodeLogMs >= 2000 || encodeCount <= 3) {
-                                    lastEncodeLogMs = now
+                                val packed = H264AnnexB.pack(w, h, key, ts, annex)
+                                val seq = java.nio.ByteBuffer.wrap(packed, 8, 4)
+                                    .order(java.nio.ByteOrder.LITTLE_ENDIAN).int ushr 16
+                                if (key || encodeCount <= 8 || encodeCount % 30 == 0 || gapMaxMs >= 180) {
                                     Log.i(
                                         tag,
-                                        "encode #$encodeCount key=$key bytes=${annex.size} " +
-                                            "gapMax=${gapMaxMs}ms",
+                                        "[TxH264] seq=$seq ${if (key) "IDR" else "P"} " +
+                                            "bytes=${annex.size} enc_ts=$ts gapMax=${gapMaxMs}ms #$encodeCount",
                                     )
                                     gapMaxMs = 0
                                 }
-                                onFrame(H264AnnexB.pack(w, h, key, ts, annex))
+                                onFrame(packed)
                             }
                         }
                     } finally {
