@@ -78,10 +78,36 @@ struct WgcStreamHandle {
             if (!want_cpu && cb) {
                 Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
                 int tw = 0, th = 0;
+                // Keep last GPU frame for static-content refresh (WGC stops FrameArrived
+                // when pixels don't change — without this, H.264 never gets a clean IDR
+                // and the controller can show a "ghost" / torn last P-frame forever).
+                static Microsoft::WRL::ComPtr<ID3D11Texture2D> s_last_tex;
+                static int s_last_w = 0, s_last_h = 0;
+                static ULONGLONG s_last_arrive_ms = 0;
+                static ULONGLONG s_last_refresh_ms = 0;
+                constexpr ULONGLONG kStaticRefreshMs = 200; // ~5fps keepalive while static
+
                 if (!cap.wait_frame_gpu(tex, tw, th, 100)) {
                     if (!running) break;
+                    ULONGLONG now = GetTickCount64();
+                    if (s_last_tex && s_last_w >= 16 && s_last_h >= 16 &&
+                        s_last_arrive_ms > 0 &&
+                        now - s_last_arrive_ms >= kStaticRefreshMs &&
+                        now - s_last_refresh_ms >= kStaticRefreshMs) {
+                        s_last_refresh_ms = now;
+                        LOG_DEBUG("wgc-worker",
+                                  "static refresh (no FrameArrived %llums) %dx%d",
+                                  (unsigned long long)(now - s_last_arrive_ms),
+                                  s_last_w, s_last_h);
+                        cb(ctx, (void*)cap.d3d_device(), (void*)s_last_tex.Get(),
+                           s_last_w, s_last_h);
+                    }
                     continue;
                 }
+                s_last_tex = tex;
+                s_last_w = tw;
+                s_last_h = th;
+                s_last_arrive_ms = GetTickCount64();
                 dbg++;
                 if (dbg % 30 == 0)
                     LOG("wgc-worker", "%d gpu-frames %dx%d", dbg, tw, th);

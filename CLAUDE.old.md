@@ -1,12 +1,16 @@
 # Archive notes
 
+## 2026-07-21 — PagePager 回退到 v0.1.61 行为（Android v0.1.65）
+
+本轮 `animateTo`（0.1.63）与皇室战争 `translate3d`（0.1.64）手工改回对话前终态：原生 `overflow-x` + snap settle / 底栏 `scrollTo(smooth)`（P1–P7，同 v0.1.61）。非 git revert。
+
 ## 2026-07-21 — PagePager 皇室战争单 owner（Android v0.1.64）
 
-`translate3d` 跟手 + 唯一 `settleTo`（rAF+bezier）。无 overflow-x fling / snap。状态表 README C1–C6。
+`translate3d` 跟手 + 唯一 `settleTo`（rAF+bezier）。已由 0.1.65 回退。
 
 ## 2026-07-20 — PagePager 统一 animateTo（Android v0.1.63）
 
-单一 `animateTo` 封装 `scrollTo(smooth)` + 原生 overflow 跟手；仍有 fling 残留竞态 → 被 0.1.64 取代。
+单一 `animateTo` 封装 `scrollTo(smooth)` + 原生 overflow 跟手。已由 0.1.65 回退。
 
 前序 v0.1.52–0.1.62 双路径（snap + smooth）竞态史见下节。
 

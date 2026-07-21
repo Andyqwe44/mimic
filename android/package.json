@@ -1,8 +1,8 @@
 ﻿{
     "name":  "mimic-android",
     "private":  true,
-    "version":  "0.1.64",
-    "mimicReleaseNote":  "PagePager: Clash Royale single-owner translate3d + settleTo",
+    "version":  "0.1.65",
+    "mimicReleaseNote":  "PagePager: restore v0.1.61 native overflow-x + snap (rollback 63/64)",
     "description":  "Mimic Android shell 閳?Capacitor WebView hosting shared/web",
     "scripts":  {
                     "build:web":  "npm --prefix ../shared/web run build",
