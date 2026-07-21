@@ -220,11 +220,8 @@ export function PagePager({
     const w = widthRef.current
     if (!vp || w <= 0) return
     progressRef.current = frac
-    // Layout scroll (not transform) so hit-testing matches the visible page.
-    const left = frac * w
-    if (Math.abs(vp.scrollLeft - left) > 0.5) {
-      vp.scrollLeft = left
-    }
+    // Programmatic scrollLeft only (overflow-x:hidden) — no native fling fight.
+    vp.scrollLeft = frac * w
     writeNavProgress(progressHost(), frac, dragging)
   }
 
@@ -452,16 +449,22 @@ export function PagePager({
       return (b.frac - a.frac) / dt
     }
 
-    const beginDrag = (clientX: number) => {
+    const beginDrag = (clientX: number, pointerId: number) => {
       if (ptrPhase.current === 'dragging') return
       ptrPhase.current = 'dragging'
       holdIdx.current = null
       velSamples.current = []
 
       const was = freezeSettle()
-      const frac = progressRef.current
+      // Sync from real scrollLeft (may have tiny drift before capture).
+      const w = widthRef.current
+      const frac = w > 0 ? vp.scrollLeft / w : progressRef.current
+      progressRef.current = frac
       dragOriginFrac.current = frac
       dragStartClientX.current = clientX
+      try {
+        vp.setPointerCapture(pointerId)
+      } catch { /* ignore */ }
 
       if (was !== null) {
         pagerLog(`[pager] drag-grab ${fmtX(frac)} was→${fmtTarget(was)}`)
@@ -479,9 +482,7 @@ export function PagePager({
       ptrStartX.current = e.clientX
       ptrStartY.current = e.clientY
       ptrId.current = e.pointerId
-      try {
-        vp.setPointerCapture(e.pointerId)
-      } catch { /* ignore */ }
+      // Do NOT capture yet — let nested overflow-y scroll until H-lock.
       pagerLog(
         `[pager] pointer↓ pending ${fmtX(progressRef.current)}`
         + (animTarget.current !== null ? ` settle→${fmtTarget(animTarget.current)}` : ''),
@@ -500,17 +501,15 @@ export function PagePager({
         if (axis === 'v') {
           ptrPhase.current = 'none'
           ptrId.current = null
-          try {
-            vp.releasePointerCapture(e.pointerId)
-          } catch { /* ignore */ }
           pagerLog(`[pager] tap-ignore axis=v ${fmtX(progressRef.current)}`)
           return
         }
-        beginDrag(e.clientX)
+        beginDrag(e.clientX, e.pointerId)
       }
 
       if (ptrPhase.current !== 'dragging') return
       e.preventDefault()
+      e.stopPropagation()
       const w = widthRef.current
       if (w <= 0) return
       const dxPx = e.clientX - dragStartClientX.current
@@ -527,7 +526,9 @@ export function PagePager({
       ptrPhase.current = 'none'
       ptrId.current = null
       try {
-        vp.releasePointerCapture(e.pointerId)
+        if (vp.hasPointerCapture?.(e.pointerId)) {
+          vp.releasePointerCapture(e.pointerId)
+        }
       } catch { /* ignore */ }
 
       if (phase === 'pending') {
@@ -537,7 +538,9 @@ export function PagePager({
       }
       if (phase !== 'dragging') return
 
-      const frac = progressRef.current
+      const w = widthRef.current
+      const frac = w > 0 ? vp.scrollLeft / w : progressRef.current
+      progressRef.current = frac
       const vel = readVel()
       const target = resolveReleaseTarget(frac, vel, pageCount, dragOriginFrac.current)
       pagerLog(
@@ -551,8 +554,8 @@ export function PagePager({
     const onPointerCancel = (e: PointerEvent) => endPointer(e, 'cancel')
 
     const onScrollNative = () => {
-      // Kill compositor fling when we are not dragging/settling (single owner).
-      if (ptrPhase.current === 'dragging' || animTarget.current !== null) return
+      // Only pin when fully idle — never during pending/drag/settle (was causing twitch).
+      if (ptrPhase.current !== 'none' || animTarget.current !== null) return
       const w = widthRef.current
       const hold = holdIdx.current
       if (w <= 0 || hold === null) return
@@ -562,13 +565,13 @@ export function PagePager({
       }
     }
 
-    // Capture phase: nested overflow-y pages must not steal H-drag before pager sees it.
+    // Capture phase for H-drag; vertical still reaches children until beginDrag.
     vp.addEventListener('scroll', onScrollNative, { passive: true })
     vp.addEventListener('pointerdown', onPointerDown, { passive: true, capture: true })
     vp.addEventListener('pointermove', onPointerMove, { passive: false, capture: true })
     vp.addEventListener('pointerup', onPointerUp, { passive: true, capture: true })
     vp.addEventListener('pointercancel', onPointerCancel, { passive: true, capture: true })
-    pagerLog(`[pager] ready axis ${axisLegend()} mode=maa-single-owner(scrollLeft)`)
+    pagerLog(`[pager] ready axis ${axisLegend()} mode=maa-single-owner(scrollLeft-hidden)`)
     pagerLog(`[pager] ready at ${fmtX(indexRef.current)} pages=${pageCount}`)
     if (widthRef.current > 0) {
       applyFrac(indexRef.current, false)
@@ -590,13 +593,12 @@ export function PagePager({
   return (
     <div
       ref={viewportRef}
-      className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden"
+      className="flex-1 min-h-0 overflow-x-hidden overflow-y-hidden"
       data-page-pager
       style={{
-        // scrollLeft owns offset (hit-test = layout). Block native fling; we set scrollLeft.
+        // hidden = no native H fling; we only set scrollLeft in applyFrac.
         touchAction: 'pan-y',
         overscrollBehaviorX: 'none',
-        WebkitOverflowScrolling: 'auto',
         scrollbarWidth: 'none',
         msOverflowStyle: 'none',
         WebkitUserSelect: 'none',
