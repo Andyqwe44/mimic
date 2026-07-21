@@ -136,9 +136,10 @@ docs/
 | P1 | 任意 | 底栏点选 C | **C** | 从当前 x smooth→C；再点同 C 不重启 |
 | P2 | nav→C | pointerdown | 挺住当前 x | 取消旧 smooth |
 | P2a | 挺住后短触 up | B1 选页 | 例 2.25→2 | 不 resume 旧 C |
-| P3 | 挺住 / idle | 横滑过 slop | finger-follow | 原生跟手 |
-| P4 | finger-follow | finger↑ | B1 目标 | 再 smooth；T1 commit |
-| P5 | idle | 短触未过 slop | 不变 | — |
+| P3 | 挺住 / idle | 横滑过 slop | finger / native-pan | 跟手；Android 常 pointercancel，等滚动停稳再吸附 |
+| P4 | finger / cancel | scroll idle | B1 目标 | **不**在 cancel 瞬间吸附；`SCROLL_IDLE_MS` 后按真实 x |
+| P5 | idle / 卡缝 | 短触 | B1 | 不在槽上则吸附（不再忽略） |
+| P5b | idle | 无手势漂移 | B1 | scroll 发现离槽/空白 → 等停稳吸附 |
 | P6 | settle→C 中 | 点选 D | **D** | 从当前 x 重新 smooth（速度从 0） |
 | P7 | 任意 | 先分轴锁轴 | — | H/V 互斥；第二指忽略 |
 

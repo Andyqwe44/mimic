@@ -1,5 +1,8 @@
 // Native overflow-x (6 slots: blank|4 content|blank) · nav/settle = scrollTo(smooth).
 // Pill minimap: same axis x∈[0,5], pillTranslateX = x * pitch. No velocity continuity (N0).
+//
+// Android WebView: H-lock often fires pointercancel while native pan continues.
+// Do NOT settle on cancel immediately — wait for scroll idle, then B1 settle.
 import {
   Children,
   useEffect,
@@ -12,21 +15,22 @@ import { NAV, resolvePagerAxis } from '../lib/design'
 import { PRIMARY_PAGES, pageIndex, type AppPage } from '../lib/pages'
 import { addLog } from '../lib/bridge'
 
-/** Debug pager gestures + axis x into Log panel (Android/PC). Keep true while tuning. */
+/** Debug pager gestures + axis x into Log panel. Keep true while tuning. */
 const PAGER_DEBUG = true
 function pagerLog(msg: string) {
   if (PAGER_DEBUG) addLog(msg)
 }
 
-/** Content pages + left/right bounce blanks. */
 const BLANK_SLOTS = 2
 const CONTENT_COUNT = PRIMARY_PAGES.length
 const SLOT_COUNT = CONTENT_COUNT + BLANK_SLOTS
-/** First content slot on axis x (Monitor). */
 const X_MIN = 1
-/** Last content slot on axis x (Settings). */
 const X_MAX = CONTENT_COUNT
 const SNAP_EPS = NAV.pagerSnapThreshold
+/** Treat as "on a page slot" for origin / short-tap. */
+const ON_SLOT_EPS = 0.05
+/** After pointercancel / finger-up, wait for native scroll to go quiet. */
+const SCROLL_IDLE_MS = 140
 
 type PillLayout = { padL: number; slotW: number; pitch: number; n: number }
 type PtrPhase = 'none' | 'pending' | 'dragging'
@@ -36,15 +40,10 @@ let pillHost: HTMLElement | null = null
 let pillLayout: PillLayout | null = null
 let pillDragging = false
 
-/** Call after nav resize / PRIMARY_PAGES length change. */
 export function invalidateNavPillLayout() {
   pillLayout = null
 }
 
-/**
- * Measure visible 4-tab track; pill origin is slot 0 (one pitch left of first tab).
- * Axis x∈[0,5] → translate = x * pitch (unified with main pager).
- */
 function measurePillLayout(pill: HTMLElement): PillLayout {
   const track = pill.parentElement
   const nContent = CONTENT_COUNT
@@ -57,15 +56,11 @@ function measurePillLayout(pill: HTMLElement): PillLayout {
   const innerW = Math.max(0, track.clientWidth - padL - padR)
   const slotW = (innerW - (nContent - 1) * gapPx) / nContent
   const pitch = slotW + gapPx
-  // Slot 0 left edge = first tab left − pitch
   pill.style.left = `${padL - pitch}px`
   pill.style.width = `${slotW}px`
   return { padL, slotW, pitch, n: SLOT_COUNT }
 }
 
-/**
- * @param axisX fractional slot on 0…5 (same as pager scrollLeft/width)
- */
 export function writeNavProgress(
   host: HTMLElement | null,
   axisX: number,
@@ -96,12 +91,10 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
-/** AppPage → axis x (1…4). */
 function pageToAxis(page: AppPage): number {
   return pageIndex(page) + X_MIN
 }
 
-/** Axis slot → AppPage (content only). */
 function axisToPage(slot: number): AppPage {
   const i = clamp(Math.round(slot) - X_MIN, 0, CONTENT_COUNT - 1)
   return PRIMARY_PAGES[i]
@@ -124,11 +117,18 @@ function fmtTarget(axis: number): string {
   return `${axis}(${axisToPage(axis)})`
 }
 
+function isOnContentSlot(x: number): boolean {
+  if (x < X_MIN - ON_SLOT_EPS || x > X_MAX + ON_SLOT_EPS) return false
+  const r = Math.round(x)
+  if (r < X_MIN || r > X_MAX) return false
+  return Math.abs(x - r) <= ON_SLOT_EPS
+}
+
 /**
  * B1 hybrid settle target.
  * - Bounce blanks → nearest content edge.
- * - After ease interrupt / fractional: round(x).
- * - From integer content origin: dead-zone ±SNAP_EPS else round with at-least-one-step.
+ * - interrupted / null origin / not near origin slot → round(x).
+ * - From integer content origin: dead-zone ±SNAP_EPS else step+round.
  */
 function pickSettleTarget(
   x: number,
@@ -143,19 +143,32 @@ function pickSettleTarget(
   }
 
   const origin = clamp(Math.round(originX), X_MIN, X_MAX)
-  const nearOrigin = Math.abs(originX - origin) < 0.02
-  if (nearOrigin && !interruptedEase) {
-    const delta = x - origin
-    if (delta > SNAP_EPS) {
-      return clamp(Math.max(origin + 1, Math.round(x)), X_MIN, X_MAX)
-    }
-    if (delta < -SNAP_EPS) {
-      return clamp(Math.min(origin - 1, Math.round(x)), X_MIN, X_MAX)
-    }
-    return origin
+  if (Math.abs(originX - origin) > ON_SLOT_EPS) {
+    return clamp(Math.round(x), X_MIN, X_MAX)
   }
 
-  return clamp(Math.round(x), X_MIN, X_MAX)
+  const delta = x - origin
+  if (delta > SNAP_EPS) {
+    return clamp(Math.max(origin + 1, Math.round(x)), X_MIN, X_MAX)
+  }
+  if (delta < -SNAP_EPS) {
+    return clamp(Math.min(origin - 1, Math.round(x)), X_MIN, X_MAX)
+  }
+  return origin
+}
+
+/** Capture B1 origin from current x + hold (ignore stale hold after drift). */
+function resolveDragOrigin(
+  x: number,
+  hold: number | null,
+  interruptedEase: boolean,
+): number | null {
+  if (interruptedEase) return null
+  if (hold !== null && Math.abs(x - hold) <= ON_SLOT_EPS) {
+    return clamp(hold, X_MIN, X_MAX)
+  }
+  if (isOnContentSlot(x)) return clamp(Math.round(x), X_MIN, X_MAX)
+  return null
 }
 
 function cancelScrollAtCurrent(vp: HTMLElement) {
@@ -175,7 +188,6 @@ export function PagePager({
   children,
 }: {
   page: AppPage
-  /** Bumped on every bottom/side nav tap (even same page) so retap re-scrolls. */
   navSeq?: number
   onPageChange: (p: AppPage) => void
   progressHostRef?: RefObject<HTMLElement | null>
@@ -196,18 +208,19 @@ export function PagePager({
 
   const actionSeq = useRef(0)
   const navActionSeq = useRef(-1)
-  /** Target axis slot for in-flight smooth (1…4). */
   const navIntent = useRef<number | null>(null)
   const programmatic = useRef(false)
-  /** Settled content axis; used for resize pin. */
   const holdAxis = useRef<number | null>(targetAxis)
 
-  /**
-   * Finger drag started from this axis (integer content) → B1 ±0.15 path.
-   * Null after ease-interrupt freeze (B2-A → round on short tap).
-   */
   const dragOriginX = useRef<number | null>(null)
+  /** Origin snapped at pointerdown (before cancel/drift). */
+  const ptrOriginX = useRef<number | null>(null)
   const interruptedEase = useRef(false)
+
+  /**
+   * Native pan still moving after pointercancel/up — settle when scroll goes idle.
+   */
+  const awaitingScrollIdle = useRef(false)
 
   const settleTimer = useRef(0)
   const watchdog = useRef(0)
@@ -235,7 +248,6 @@ export function PagePager({
     const now = performance.now()
     const dt = now - lastProgLogTs.current
     const dx = Number.isFinite(lastProgLogX.current) ? Math.abs(x - lastProgLogX.current) : 99
-    // Debug: denser x samples while finger/nav moving
     const minDt = PAGER_DEBUG ? 48 : 32
     const minDx = PAGER_DEBUG ? 0.02 : 0.03
     if (!force && dt < minDt && dx < minDx) return
@@ -243,13 +255,15 @@ export function PagePager({
     lastProgLogX.current = x
     const intent = navIntent.current
     const intentStr = intent !== null ? ` intent→${fmtTarget(intent)}` : ''
-    const mode = fingerDragging.current
-      ? 'finger'
-      : programmatic.current || intent !== null
-        ? 'nav-smooth'
-        : ptrPhase.current === 'pending'
-          ? 'pending'
-          : 'idle'
+    const mode = awaitingScrollIdle.current
+      ? 'await-idle'
+      : fingerDragging.current
+        ? 'finger'
+        : programmatic.current || intent !== null
+          ? 'nav-smooth'
+          : ptrPhase.current === 'pending'
+            ? 'pending'
+            : 'idle'
     pagerLog(`[pager] x=${x.toFixed(3)} ${fmtX(x)} | ${why} | mode=${mode}${intentStr}`)
   }
 
@@ -282,7 +296,6 @@ export function PagePager({
     writeNavProgress(progressHost(), x, dragging)
   }
 
-  /** T1: commit page as soon as target is chosen. */
   const commitAxis = (axis: number) => {
     const a = clamp(Math.round(axis), X_MIN, X_MAX)
     const next = axisToPage(a)
@@ -307,6 +320,7 @@ export function PagePager({
     clearSettleTimer()
     clearNavRaf()
     programmatic.current = false
+    awaitingScrollIdle.current = false
     if (target === null || !vp || w <= 0) {
       navIntent.current = null
       return
@@ -323,6 +337,7 @@ export function PagePager({
     holdAxis.current = target
     interruptedEase.current = false
     dragOriginX.current = null
+    ptrOriginX.current = null
     pagerLog(
       `[pager] intent-done →${fmtTarget(target)} (${reason}) from ${fmtX(before)}`,
     )
@@ -332,10 +347,6 @@ export function PagePager({
   const finishNavScrollRef = useRef(finishNavScroll)
   finishNavScrollRef.current = finishNavScroll
 
-  /**
-   * Smooth to content axis (1…4). T1 commits immediately.
-   * Same-target in-flight: adopt (no restart).
-   */
   const nativeScrollTo = (targetAxisSlot: number) => {
     const vp = viewportRef.current
     const w = widthRef.current
@@ -346,8 +357,10 @@ export function PagePager({
     const from = vp.scrollLeft
     const x = from / w
 
+    awaitingScrollIdle.current = false
+    clearSettleTimer()
+
     if (Math.abs(from - targetLeft) < 1) {
-      clearSettleTimer()
       clearWatchdog()
       clearNavRaf()
       navIntent.current = null
@@ -360,14 +373,12 @@ export function PagePager({
       return
     }
 
-    // P1: ease→C, tap C again → do not restart
     if (navIntent.current === target && programmatic.current) {
       pagerLog(`[pager] adopt-nav ${fmtX(x)} keep→${fmtTarget(target)}`)
       commitAxis(target)
       return
     }
 
-    clearSettleTimer()
     clearWatchdog()
     clearNavRaf()
 
@@ -378,11 +389,11 @@ export function PagePager({
     fingerDragging.current = false
     interruptedEase.current = false
     dragOriginX.current = null
+    ptrOriginX.current = null
 
     navIntent.current = target
     commitAxis(target)
 
-    // Always ease (B10).
     programmatic.current = true
     pagerLog(
       `[pager] nav-smooth 从 x=${x.toFixed(3)} →${fmtTarget(target)} `
@@ -411,7 +422,6 @@ export function PagePager({
   const nativeScrollToRef = useRef(nativeScrollTo)
   nativeScrollToRef.current = nativeScrollTo
 
-  /** Freeze in-flight smooth (B2); mark interrupted for B1 round on short-tap. */
   const freezeEase = (why: string) => {
     const vp = viewportRef.current
     if (!vp) return
@@ -420,6 +430,7 @@ export function PagePager({
     clearWatchdog()
     clearNavRaf()
     clearSettleTimer()
+    awaitingScrollIdle.current = false
     cancelScrollAtCurrent(vp)
     syncPill(vp.scrollLeft, false)
     programmatic.current = false
@@ -433,23 +444,45 @@ export function PagePager({
     )
   }
 
-  /** After finger-up / short-tap: pick target, T1 commit, smooth. */
-  const settleToPicked = (x: number) => {
+  const settleToPicked = (x: number, why: string) => {
+    awaitingScrollIdle.current = false
+    clearSettleTimer()
     const origin = dragOriginX.current
     const interrupted = interruptedEase.current
     const target = pickSettleTarget(x, origin, interrupted)
     const rule = interrupted || origin === null
       ? 'round'
-      : Math.abs(x - (origin ?? x)) <= SNAP_EPS
+      : Math.abs(x - origin) <= SNAP_EPS
         ? `stay(±${SNAP_EPS})`
         : `step+round(±${SNAP_EPS})`
     interruptedEase.current = false
     dragOriginX.current = null
+    ptrOriginX.current = null
     pagerLog(
-      `[pager] 松手选页 x=${x.toFixed(3)} origin=${origin ?? 'null'} `
+      `[pager] 吸附(${why}) x=${x.toFixed(3)} origin=${origin ?? 'null'} `
       + `interrupted=${interrupted ? 1 : 0} rule=${rule} →${fmtTarget(target)}`,
     )
     nativeScrollToRef.current(target)
+  }
+
+  const settleToPickedRef = useRef(settleToPicked)
+  settleToPickedRef.current = settleToPicked
+
+  /** Debounce: native pan / momentum finished → B1. */
+  const armScrollIdleSettle = (why: string) => {
+    awaitingScrollIdle.current = true
+    clearSettleTimer()
+    settleTimer.current = window.setTimeout(() => {
+      settleTimer.current = 0
+      if (!awaitingScrollIdle.current) return
+      if (programmatic.current || navIntent.current !== null) {
+        awaitingScrollIdle.current = false
+        return
+      }
+      const x = readX()
+      pagerLog(`[pager] 滚动停稳(${why}) x=${x.toFixed(3)} →吸附`)
+      settleToPickedRef.current(x, `idle:${why}`)
+    }, SCROLL_IDLE_MS)
   }
 
   useLayoutEffect(() => {
@@ -462,7 +495,6 @@ export function PagePager({
       widthRef.current = w
       invalidateNavPillLayout()
       if (prevW <= 0) {
-        // First layout — land on content slot (not blank 0).
         const i = holdAxis.current ?? navIntent.current ?? pageToAxis(pageRef.current)
         vp.scrollLeft = i * w
         holdAxis.current = i
@@ -509,6 +541,7 @@ export function PagePager({
       if (ptrPhase.current === 'dragging') return
       ptrPhase.current = 'dragging'
       fingerDragging.current = true
+      awaitingScrollIdle.current = false
       clearSettleTimer()
 
       actionSeq.current += 1
@@ -518,17 +551,19 @@ export function PagePager({
       if (wasNav) {
         freezeEase('drag-takeover')
       }
-      // Origin for B1 ±0.15 only if we started from settled content (not interrupt).
-      if (!interruptedEase.current) {
-        const hold = holdAxis.current
-        dragOriginX.current = hold !== null ? hold : Math.round(x)
-      } else {
-        dragOriginX.current = null
-      }
+
+      // Prefer origin captured at pointerdown; re-resolve if stale vs current x.
+      const fromPtr = ptrOriginX.current
+      const origin = resolveDragOrigin(
+        x,
+        fromPtr ?? holdAxis.current,
+        interruptedEase.current,
+      )
+      dragOriginX.current = origin
       holdAxis.current = null
       pagerLog(
         `[pager] 横滑开始 x=${x.toFixed(3)} seq=${actionSeq.current}`
-        + ` origin=${dragOriginX.current ?? 'round'} interrupted=${interruptedEase.current ? 1 : 0}`,
+        + ` origin=${origin ?? 'round'} interrupted=${interruptedEase.current ? 1 : 0}`,
       )
       logProgress('drag-start', true)
     }
@@ -536,10 +571,41 @@ export function PagePager({
     const onScroll = () => {
       const w = widthRef.current
       const moving = fingerDragging.current
+        || awaitingScrollIdle.current
         || programmatic.current
         || navIntent.current !== null
       syncPill(vp.scrollLeft, moving)
       if (moving) logProgress('tick')
+
+      // Native pan after cancel: keep resetting idle timer until quiet.
+      if (awaitingScrollIdle.current && !programmatic.current && navIntent.current === null) {
+        armScrollIdleSettle('scroll')
+        return
+      }
+
+      // Idle drift (no gesture): force snap if off-slot / blank.
+      if (
+        !fingerDragging.current
+        && ptrPhase.current === 'none'
+        && !awaitingScrollIdle.current
+        && !programmatic.current
+        && navIntent.current === null
+        && w > 0
+      ) {
+        const x = vp.scrollLeft / w
+        const hold = holdAxis.current
+        const drifted = hold === null
+          || Math.abs(x - hold) > ON_SLOT_EPS
+          || x < X_MIN - ON_SLOT_EPS
+          || x > X_MAX + ON_SLOT_EPS
+        if (drifted) {
+          dragOriginX.current = null
+          interruptedEase.current = true
+          pagerLog(`[pager] 检测到漂移 x=${x.toFixed(3)} hold=${hold ?? 'null'} →等停稳`)
+          armScrollIdleSettle('drift')
+        }
+        return
+      }
 
       if (fingerDragging.current || ptrPhase.current === 'pending') return
 
@@ -554,6 +620,10 @@ export function PagePager({
 
     const onScrollEnd = () => {
       logProgress('scrollend', true)
+      if (awaitingScrollIdle.current && !programmatic.current && navIntent.current === null) {
+        armScrollIdleSettle('scrollend')
+        return
+      }
       if (fingerDragging.current || ptrPhase.current === 'pending') return
       if (navIntent.current !== null || programmatic.current) {
         finishNavScrollRef.current('scrollend', navActionSeq.current)
@@ -562,6 +632,13 @@ export function PagePager({
 
     const onPointerDown = (e: PointerEvent) => {
       if (ptrPhase.current !== 'none') return
+      // New touch cancels pending idle-settle from prior cancel (will re-evaluate).
+      if (awaitingScrollIdle.current) {
+        clearSettleTimer()
+        awaitingScrollIdle.current = false
+        pagerLog(`[pager] 按下取消待吸附 x=${readX().toFixed(3)}`)
+      }
+
       ptrPhase.current = 'pending'
       ptrStartX.current = e.clientX
       ptrStartY.current = e.clientY
@@ -570,16 +647,19 @@ export function PagePager({
 
       const x0 = readX()
       const easing = navIntent.current !== null || programmatic.current
+      ptrOriginX.current = resolveDragOrigin(x0, holdAxis.current, false)
+
       pagerLog(
         `[pager] 按下 content `
         + `cx=${e.clientX.toFixed(0)} cy=${e.clientY.toFixed(0)} `
-        + `x=${x0.toFixed(3)} easing=${easing ? 1 : 0}`
+        + `x=${x0.toFixed(3)} easing=${easing ? 1 : 0} `
+        + `origin=${ptrOriginX.current ?? 'round'}`
         + (navIntent.current !== null ? ` intent→${fmtTarget(navIntent.current)}` : ''),
       )
 
-      // B2: ease in flight → freeze immediately
       if (easing) {
         freezeEase('pointerdown')
+        ptrOriginX.current = null
       }
 
       logProgress('pointer-down', true)
@@ -590,9 +670,7 @@ export function PagePager({
       if (ptrId.current !== null && e.pointerId !== ptrId.current) return
       const dx = e.clientX - ptrStartX.current
       const dy = e.clientY - ptrStartY.current
-      const adx = Math.abs(dx)
-      const ady = Math.abs(dy)
-      const axis = resolvePagerAxis(adx, ady)
+      const axis = resolvePagerAxis(Math.abs(dx), Math.abs(dy))
       if (axis === 'none') return
       if (axis === 'v') {
         ptrPhase.current = 'none'
@@ -601,8 +679,11 @@ export function PagePager({
           `[pager] 轴锁定=竖滑(放弃横滑) Δx=${dx.toFixed(0)} Δy=${dy.toFixed(0)} `
           + `x=${readX().toFixed(3)} interrupted=${interruptedEase.current ? 1 : 0}`,
         )
-        if (interruptedEase.current) {
-          settleToPicked(readX())
+        // Mid-page or freeze: snap; else leave vertical scroll alone if on-slot.
+        const x = readX()
+        if (interruptedEase.current || !isOnContentSlot(x)) {
+          dragOriginX.current = null
+          settleToPickedRef.current(x, 'axis-v')
         }
         return
       }
@@ -618,20 +699,26 @@ export function PagePager({
       ptrPhase.current = 'none'
       ptrId.current = null
       const x = widthRef.current > 0 ? vp.scrollLeft / widthRef.current : progressRef.current
-      const dx = e.clientX - ptrStartX.current
-      const dy = e.clientY - ptrStartY.current
+      // cancel often zeros client coords — don't trust Δ for cancel
+      const dx = reason === 'cancel' ? NaN : e.clientX - ptrStartX.current
 
       if (phase === 'pending') {
         fingerDragging.current = false
         pagerLog(
           `[pager] 短触抬起(${reason}) phase=pending `
-          + `Δx=${dx.toFixed(0)} Δy=${dy.toFixed(0)} x=${x.toFixed(3)} `
-          + `interrupted=${interruptedEase.current ? 1 : 0}`,
+          + `x=${x.toFixed(3)} interrupted=${interruptedEase.current ? 1 : 0} `
+          + `onSlot=${isOnContentSlot(x) ? 1 : 0}`,
         )
-        if (interruptedEase.current) {
-          settleToPicked(x)
+        // B2-A freeze, or stranded mid-page / blank → always settle.
+        if (interruptedEase.current || !isOnContentSlot(x)) {
+          dragOriginX.current = interruptedEase.current ? null : ptrOriginX.current
+          if (!isOnContentSlot(x)) {
+            dragOriginX.current = null
+            interruptedEase.current = true
+          }
+          settleToPickedRef.current(x, reason === 'cancel' ? 'short-cancel' : 'short-tap')
         } else {
-          pagerLog(`[pager] 短触忽略(未打断ease/未过slop) x=${x.toFixed(3)}`)
+          pagerLog(`[pager] 短触忽略(已在槽上) x=${x.toFixed(3)}`)
         }
         logProgress('tap-end', true)
         return
@@ -640,12 +727,17 @@ export function PagePager({
       if (phase !== 'dragging') return
 
       fingerDragging.current = false
+      if (dragOriginX.current === null && ptrOriginX.current !== null) {
+        dragOriginX.current = ptrOriginX.current
+      }
       pagerLog(
-        `[pager] 手指抬起(${reason}) phase=dragging `
-        + `Δx=${dx.toFixed(0)} Δy=${dy.toFixed(0)} x=${x.toFixed(3)}`,
+        `[pager] 手指结束(${reason}) phase=dragging x=${x.toFixed(3)} `
+        + `Δx=${Number.isFinite(dx) ? dx.toFixed(0) : 'n/a'} `
+        + `→等待原生滚动停稳`,
       )
-      logProgress('finger-up', true)
-      settleToPicked(x)
+      logProgress('finger-end', true)
+      // Critical: cancel ≠ settle now — native overflow often continues.
+      armScrollIdleSettle(reason)
     }
 
     const onPointerUp = (e: PointerEvent) => endPointer(e, 'up')
@@ -659,7 +751,8 @@ export function PagePager({
     vp.addEventListener('pointercancel', onPointerCancel, { passive: true })
     pagerLog(
       `[pager] ready 轴0..${SLOT_COUNT - 1} 内容${X_MIN}..${X_MAX} `
-      + `当前x=${pageToAxis(pageRef.current)} (${pageRef.current})`,
+      + `当前x=${pageToAxis(pageRef.current)} (${pageRef.current}) `
+      + `idleMs=${SCROLL_IDLE_MS}`,
     )
 
     if (widthRef.current > 0) {
@@ -681,6 +774,7 @@ export function PagePager({
       clearNavRaf()
       programmatic.current = false
       navIntent.current = null
+      awaitingScrollIdle.current = false
     }
   }, [progressHostRef])
 
@@ -699,7 +793,6 @@ export function PagePager({
       }}
     >
       <div className="flex h-full w-full">
-        {/* Slot 0 — left bounce blank */}
         <div
           key="blank-l"
           className="h-full shrink-0"
@@ -719,7 +812,6 @@ export function PagePager({
             {panel}
           </div>
         ))}
-        {/* Slot 5 — right bounce blank */}
         <div
           key="blank-r"
           className="h-full shrink-0"
